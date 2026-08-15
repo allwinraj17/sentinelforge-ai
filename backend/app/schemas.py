@@ -1,5 +1,6 @@
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
+from typing import Any
 
 
 class UserCreate(BaseModel):
@@ -24,3 +25,9 @@ class UserOut(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class AIAnalyzeRequest(BaseModel):
+    api_key: str
+    provider: str = "openai"
+    findings: list[dict[str, Any]]

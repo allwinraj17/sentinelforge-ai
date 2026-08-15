@@ -20,9 +20,9 @@ class Scan(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    source_type = Column(String, nullable=False)   # "zip" or "github_url"
-    source_reference = Column(String, nullable=True)  # repo URL, or original filename
-    status = Column(String, default="pending")     # pending, scanning, analyzing, completed, failed
+    source_type = Column(String, nullable=False)
+    source_reference = Column(String, nullable=True)
+    status = Column(String, default="pending")
     risk_score = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
@@ -36,8 +36,8 @@ class Finding(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     scan_id = Column(Integer, ForeignKey("scans.id"), nullable=False)
-    category = Column(String, nullable=False)      # code, dependency, infrastructure
-    severity = Column(String, nullable=False)       # critical, high, medium, low
+    category = Column(String, nullable=False)
+    severity = Column(String, nullable=False)
     title = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     file_path = Column(String, nullable=True)

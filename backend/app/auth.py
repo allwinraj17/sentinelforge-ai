@@ -4,9 +4,9 @@ from passlib.context import CryptContext
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-SECRET_KEY = "CHANGE_THIS_TO_A_RANDOM_SECRET"  # move to .env next
+SECRET_KEY = "c166d5fa32dff13ab02d0da351d8bef93aaff9d08599355af8046f15ec2f139c"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
 
 def hash_password(password: str) -> str:
