@@ -7,9 +7,15 @@ function App() {
   const [findings, setFindings] = useState(null)
   const [error, setError] = useState(null)
 
+  const [showKeyModal, setShowKeyModal] = useState(false)
+  const [apiKey, setApiKey] = useState('')
+  const [analyzing, setAnalyzing] = useState(false)
+  const [analysis, setAnalysis] = useState(null)
+
   const handleFileChange = (e) => {
     setFile(e.target.files[0])
     setFindings(null)
+    setAnalysis(null)
     setError(null)
   }
 
@@ -17,6 +23,7 @@ function App() {
     if (!file) return
     setScanning(true)
     setError(null)
+    setAnalysis(null)
 
     const formData = new FormData()
     formData.append('file', file)
@@ -33,6 +40,33 @@ function App() {
       setError(err.message)
     } finally {
       setScanning(false)
+    }
+  }
+
+  const handleAnalyze = async () => {
+    if (!apiKey || !findings) return
+    setAnalyzing(true)
+    setError(null)
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/scan/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          api_key: apiKey,
+          provider: 'openai',
+          findings: findings.findings,
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || 'Analysis failed')
+      setAnalysis(data.analysis)
+      setShowKeyModal(false)
+      setApiKey('')
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setAnalyzing(false)
     }
   }
 
@@ -61,6 +95,42 @@ function App() {
               </li>
             ))}
           </ul>
+
+          {findings.findings_count > 0 && !analysis && (
+            <button onClick={() => setShowKeyModal(true)}>
+              Analyze with AI
+            </button>
+          )}
+        </div>
+      )}
+
+      {analysis && (
+        <div className="analysis">
+          <h2>AI Analysis</h2>
+          <pre>{analysis}</pre>
+        </div>
+      )}
+
+      {showKeyModal && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <h3>Enter your OpenAI API Key</h3>
+            <p className="modal-note">
+              Your key is used only for this analysis and is never stored.
+            </p>
+            <input
+              type="password"
+              placeholder="sk-..."
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+            />
+            <div className="modal-actions">
+              <button onClick={() => setShowKeyModal(false)}>Cancel</button>
+              <button onClick={handleAnalyze} disabled={!apiKey || analyzing}>
+                {analyzing ? 'Analyzing...' : 'Analyze'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
