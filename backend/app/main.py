@@ -7,7 +7,7 @@ from app.database import engine, Base
 from app import models
 from app.scanner import extract_zip_to_temp, run_semgrep_scan, cleanup_temp
 from app.schemas import AIAnalyzeRequest
-from app.ai_service import analyze_with_openai
+from app.ai_service import analyze_with_gemini
 
 Base.metadata.create_all(bind=engine)
 
@@ -15,7 +15,7 @@ app = FastAPI(title="SentinelForge AI")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.cors_origins],
+    allow_origins=[origin.strip() for origin in settings.cors_origins.split(",")],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,7 +57,7 @@ async def analyze_findings(request: AIAnalyzeRequest):
         raise HTTPException(status_code=400, detail="No findings to analyze")
 
     try:
-        analysis = await analyze_with_openai(request.api_key, request.findings)
+        analysis = await analyze_with_gemini(request.api_key, request.findings)
         return {"analysis": analysis}
     except httpx.HTTPStatusError as e:
         raise HTTPException(status_code=400, detail=f"AI provider error: {e.response.text}")

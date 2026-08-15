@@ -1,7 +1,7 @@
 import httpx
 
 
-async def analyze_with_openai(api_key: str, findings: list[dict]) -> str:
+async def analyze_with_gemini(api_key: str, findings: list[dict]) -> str:
     findings_summary = "\n".join(
         f"- {f.get('check_id', 'unknown')}: {f.get('extra', {}).get('message', '')} "
         f"(file: {f.get('path', '')}, line: {f.get('start', {}).get('line', '')})"
@@ -21,17 +21,12 @@ Findings:
 
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}",
+            headers={"Content-Type": "application/json"},
             json={
-                "model": "gpt-4o-mini",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 2000,
+                "contents": [{"parts": [{"text": prompt}]}]
             },
         )
         response.raise_for_status()
         data = response.json()
-        return data["choices"][0]["message"]["content"]
+        return data["candidates"][0]["content"]["parts"][0]["text"]

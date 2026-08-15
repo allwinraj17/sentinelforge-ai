@@ -56,7 +56,7 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           api_key: apiKey,
-          provider: 'openai',
+          provider: 'gemini',
           findings: findings.findings,
         }),
       })
@@ -116,13 +116,13 @@ function App() {
       {showKeyModal && (
         <div className="modal-overlay">
           <div className="modal">
-            <h3>Enter your OpenAI API Key</h3>
+            <h3>Enter your Gemini API Key</h3>
             <p className="modal-note">
               Your key is used only for this analysis and is never stored.
             </p>
             <input
               type="password"
-              placeholder="sk-..."
+              placeholder="AIza..."
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
             />
