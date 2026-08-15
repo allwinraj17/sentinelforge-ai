@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import './App.css'
 
+const API_URL = 'https://sentinelforge-ai.onrender.com'
+
 function App() {
   const [file, setFile] = useState(null)
   const [scanning, setScanning] = useState(false)
@@ -29,7 +31,7 @@ function App() {
     formData.append('file', file)
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/scan/upload', {
+      const response = await fetch(`${API_URL}/scan/upload`, {
         method: 'POST',
         body: formData,
       })
@@ -49,7 +51,7 @@ function App() {
     setError(null)
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/scan/analyze', {
+      const response = await fetch(`${API_URL}/scan/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
