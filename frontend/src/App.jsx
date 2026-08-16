@@ -15,7 +15,7 @@ function App() {
     if (!selectedFile) return
 
     if (!selectedFile.name.toLowerCase().endsWith('.zip')) {
-      setError('Please select a ZIP repository.')
+      setError('Please select a ZIP file.')
       setFile(null)
       return
     }
@@ -97,6 +97,7 @@ function App() {
       <aside className="sidebar">
 
         <div className="brand">
+
           <div className="brand-icon">
             🛡
           </div>
@@ -105,6 +106,7 @@ function App() {
             <h1>SentinelForge</h1>
             <span>AI Security Platform</span>
           </div>
+
         </div>
 
         <nav>
@@ -134,12 +136,14 @@ function App() {
         <div className="sidebar-bottom">
 
           <div className="system-status">
+
             <span className="status-dot"></span>
 
             <div>
               <strong>Backend Online</strong>
               <small>Render API connected</small>
             </div>
+
           </div>
 
         </div>
@@ -156,11 +160,13 @@ function App() {
         <header className="topbar">
 
           <div>
+
             <span className="breadcrumb">
               Dashboard / Security Scanner
             </span>
 
-            <h2>Repository Security</h2>
+            <h2>Code Security</h2>
+
           </div>
 
           <div className="online">
@@ -192,7 +198,7 @@ function App() {
               </h3>
 
               <p>
-                Upload a ZIP repository and SentinelForge
+                Upload a ZIP file and SentinelForge
                 will scan your source code for security
                 vulnerabilities.
               </p>
@@ -213,10 +219,13 @@ function App() {
             <div className="section-title">
 
               <div>
-                <h3>Scan Repository</h3>
+
+                <h3>Scan Code</h3>
+
                 <p>
                   Upload your project as a ZIP file
                 </p>
+
               </div>
 
               <span className="supported">
@@ -242,7 +251,7 @@ function App() {
               <h4>
                 {file
                   ? file.name
-                  : 'Drop your repository here'}
+                  : 'Drop your ZIP file here'}
               </h4>
 
               <p>
@@ -263,7 +272,7 @@ function App() {
               {scanning ? (
                 <>
                   <span className="spinner"></span>
-                  Scanning Repository...
+                  Scanning Code...
                 </>
               ) : (
                 <>
@@ -286,8 +295,11 @@ function App() {
               <span>!</span>
 
               <div>
+
                 <strong>Scan Error</strong>
+
                 <p>{error}</p>
+
               </div>
 
             </div>
@@ -312,10 +324,13 @@ function App() {
                   </div>
 
                   <div>
+
                     <span>Total Findings</span>
+
                     <strong>
                       {findings.findings_count}
                     </strong>
+
                   </div>
 
                 </div>
@@ -328,7 +343,9 @@ function App() {
                   </div>
 
                   <div>
+
                     <span>High Risk</span>
+
                     <strong>
                       {
                         findings.findings.filter(
@@ -337,6 +354,7 @@ function App() {
                         ).length
                       }
                     </strong>
+
                   </div>
 
                 </div>
@@ -349,7 +367,9 @@ function App() {
                   </div>
 
                   <div>
+
                     <span>Files Affected</span>
+
                     <strong>
                       {
                         new Set(
@@ -359,6 +379,7 @@ function App() {
                         ).size
                       }
                     </strong>
+
                   </div>
 
                 </div>
@@ -371,8 +392,13 @@ function App() {
                   </div>
 
                   <div>
+
                     <span>Scanner</span>
-                    <strong>Semgrep</strong>
+
+                    <strong>
+                      Semgrep
+                    </strong>
+
                   </div>
 
                 </div>
@@ -387,7 +413,10 @@ function App() {
                 <div className="section-title">
 
                   <div>
-                    <h3>Security Findings</h3>
+
+                    <h3>
+                      Security Findings
+                    </h3>
 
                     <p>
                       Detected vulnerabilities in{' '}
@@ -395,6 +424,7 @@ function App() {
                         {findings.filename}
                       </strong>
                     </p>
+
                   </div>
 
                   <span className="finding-count">
@@ -415,8 +445,8 @@ function App() {
                     </h3>
 
                     <p>
-                      Your repository passed the
-                      current security checks.
+                      Your code passed the current
+                      security checks.
                     </p>
 
                   </div>
@@ -444,9 +474,11 @@ function App() {
                           >
 
                             <div className="finding-severity">
+
                               {severity === 'HIGH'
                                 ? '!'
                                 : '•'}
+
                             </div>
 
 
@@ -454,7 +486,9 @@ function App() {
 
                               <div className="finding-heading">
 
-                                <h4>{name}</h4>
+                                <h4>
+                                  {name}
+                                </h4>
 
                                 <span
                                   className={`severity ${severity.toLowerCase()}`}
@@ -506,6 +540,7 @@ function App() {
                           </div>
 
                         )
+
                       }
                     )}
 
