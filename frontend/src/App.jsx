@@ -26,7 +26,10 @@ function App() {
   }
 
   const handleScan = async () => {
-    if (!file) return
+    if (!file) {
+      setError('Please select a ZIP file first.')
+      return
+    }
 
     setScanning(true)
     setError(null)
@@ -41,18 +44,66 @@ function App() {
         body: formData,
       })
 
-      const data = await response.json()
+      let data
 
-      if (!response.ok) {
-        throw new Error(data.detail || 'Security scan failed.')
+      try {
+        data = await response.json()
+      } catch {
+        throw new Error(
+          `Backend returned an invalid response (${response.status}).`
+        )
       }
 
-      setFindings(data)
+      if (!response.ok) {
+        throw new Error(
+          data?.detail ||
+          data?.message ||
+          `Security scan failed (${response.status}).`
+        )
+      }
+
+      if (!data) {
+        throw new Error('The backend returned an empty response.')
+      }
+
+      setFindings({
+        ...data,
+        findings: Array.isArray(data.findings)
+          ? data.findings
+          : [],
+        findings_count:
+          typeof data.findings_count === 'number'
+            ? data.findings_count
+            : Array.isArray(data.findings)
+              ? data.findings.length
+              : 0,
+        risk_assessments: Array.isArray(data.risk_assessments)
+          ? data.risk_assessments
+          : [],
+        overall_risk:
+          data.overall_risk || {
+            overall_score: 0,
+            overall_level: 'SECURE',
+            total_findings: 0,
+            critical: 0,
+            high: 0,
+            medium: 0,
+            low: 0,
+          },
+      })
     } catch (err) {
-      setError(
-        err.message ||
-        'Unable to connect to SentinelForge backend.'
-      )
+      console.error('Scan request error:', err)
+
+      if (err instanceof TypeError) {
+        setError(
+          'Unable to connect to the SentinelForge backend. Please check the backend connection and try again.'
+        )
+      } else {
+        setError(
+          err.message ||
+          'Unable to complete the security scan.'
+        )
+      }
     } finally {
       setScanning(false)
     }
@@ -76,7 +127,10 @@ function App() {
     const vulnerabilities =
       finding?.extra?.metadata?.vulnerability_class
 
-    if (Array.isArray(vulnerabilities) && vulnerabilities.length > 0) {
+    if (
+      Array.isArray(vulnerabilities) &&
+      vulnerabilities.length > 0
+    ) {
       return vulnerabilities[0]
     }
 
@@ -87,6 +141,12 @@ function App() {
     if (!path) return 'Unknown file'
 
     return path.split('/').pop()
+  }
+
+  const getRiskClass = (level) => {
+    if (!level) return 'medium'
+
+    return level.toLowerCase()
   }
 
   return (
@@ -313,6 +373,87 @@ function App() {
 
             <>
 
+              {/* PHASE 2 RISK OVERVIEW */}
+
+              {findings.overall_risk && (
+
+                <div className="risk-overview">
+
+                  <div className="risk-overview-header">
+
+                    <div>
+
+                      <span className="hero-label">
+                        RISK ASSESSMENT
+                      </span>
+
+                      <h3>
+                        Overall Security Risk
+                      </h3>
+
+                    </div>
+
+                    <div
+                      className={`overall-risk-badge ${getRiskClass(
+                        findings.overall_risk.overall_level
+                      )}`}
+                    >
+                      {findings.overall_risk.overall_level}
+                    </div>
+
+                  </div>
+
+
+                  <div className="risk-score">
+
+                    <div className="risk-score-number">
+                      {findings.overall_risk.overall_score}
+                    </div>
+
+                    <div className="risk-score-label">
+                      / 10 Risk Score
+                    </div>
+
+                  </div>
+
+
+                  <div className="risk-breakdown">
+
+                    <div>
+                      <span>Critical</span>
+                      <strong>
+                        {findings.overall_risk.critical}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>High</span>
+                      <strong>
+                        {findings.overall_risk.high}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>Medium</span>
+                      <strong>
+                        {findings.overall_risk.medium}
+                      </strong>
+                    </div>
+
+                    <div>
+                      <span>Low</span>
+                      <strong>
+                        {findings.overall_risk.low}
+                      </strong>
+                    </div>
+
+                  </div>
+
+                </div>
+
+              )}
+
+
               {/* STATISTICS */}
 
               <div className="stats">
@@ -466,6 +607,9 @@ function App() {
                             finding
                           )
 
+                        const assessment =
+                          findings.risk_assessments?.[index]
+
                         return (
 
                           <div
@@ -509,6 +653,68 @@ function App() {
                               </p>
 
 
+                              {/* PHASE 2 DETAILS */}
+
+                              {assessment && (
+
+                                <div className="risk-details">
+
+                                  <div className="risk-detail">
+
+                                    <span>
+                                      Risk Score
+                                    </span>
+
+                                    <strong>
+                                      {assessment.risk_score}/10
+                                    </strong>
+
+                                  </div>
+
+
+                                  <div className="risk-detail">
+
+                                    <span>
+                                      Exploitability
+                                    </span>
+
+                                    <strong>
+                                      {assessment.exploitability}
+                                    </strong>
+
+                                  </div>
+
+
+                                  <div className="risk-detail-wide">
+
+                                    <span>
+                                      Impact
+                                    </span>
+
+                                    <p>
+                                      {assessment.impact}
+                                    </p>
+
+                                  </div>
+
+
+                                  <div className="risk-detail-wide">
+
+                                    <span>
+                                      Recommendation
+                                    </span>
+
+                                    <p>
+                                      {assessment.recommendation}
+                                    </p>
+
+                                  </div>
+
+                                </div>
+
+                              )}
+
+
                               <div className="finding-meta">
 
                                 <span>
@@ -525,7 +731,10 @@ function App() {
                                 </span>
 
                                 <span>
-                                  CWE-89
+                                  {
+                                    assessment?.cwe ||
+                                    'Security'
+                                  }
                                 </span>
 
                               </div>
