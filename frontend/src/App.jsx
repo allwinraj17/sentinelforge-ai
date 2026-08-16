@@ -9,23 +9,28 @@ function App() {
   const [findings, setFindings] = useState(null)
   const [error, setError] = useState(null)
 
-  const [showKeyModal, setShowKeyModal] = useState(false)
-  const [apiKey, setApiKey] = useState('')
-  const [analyzing, setAnalyzing] = useState(false)
-  const [analysis, setAnalysis] = useState(null)
-
   const handleFileChange = (e) => {
-    setFile(e.target.files[0])
+    const selectedFile = e.target.files[0]
+
+    if (!selectedFile) return
+
+    if (!selectedFile.name.toLowerCase().endsWith('.zip')) {
+      setError('Please select a ZIP repository.')
+      setFile(null)
+      return
+    }
+
+    setFile(selectedFile)
     setFindings(null)
-    setAnalysis(null)
     setError(null)
   }
 
   const handleScan = async () => {
     if (!file) return
+
     setScanning(true)
     setError(null)
-    setAnalysis(null)
+    setFindings(null)
 
     const formData = new FormData()
     formData.append('file', file)
@@ -35,106 +40,489 @@ function App() {
         method: 'POST',
         body: formData,
       })
-      if (!response.ok) throw new Error('Scan failed')
+
       const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.detail || 'Security scan failed.')
+      }
+
       setFindings(data)
     } catch (err) {
-      setError(err.message)
+      setError(
+        err.message ||
+        'Unable to connect to SentinelForge backend.'
+      )
     } finally {
       setScanning(false)
     }
   }
 
-  const handleAnalyze = async () => {
-    if (!apiKey || !findings) return
-    setAnalyzing(true)
-    setError(null)
+  const getSeverity = (finding) => {
+    const severity =
+      finding?.extra?.severity ||
+      finding?.extra?.metadata?.severity
 
-    try {
-      const response = await fetch(`${API_URL}/scan/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          api_key: apiKey,
-          provider: 'gemini',
-          findings: findings.findings,
-        }),
-      })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.detail || 'Analysis failed')
-      setAnalysis(data.analysis)
-      setShowKeyModal(false)
-      setApiKey('')
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setAnalyzing(false)
+    if (!severity) return 'MEDIUM'
+
+    if (severity === 'ERROR') return 'HIGH'
+    if (severity === 'WARNING') return 'MEDIUM'
+    if (severity === 'INFO') return 'LOW'
+
+    return severity.toUpperCase()
+  }
+
+  const getVulnerabilityName = (finding) => {
+    const vulnerabilities =
+      finding?.extra?.metadata?.vulnerability_class
+
+    if (Array.isArray(vulnerabilities) && vulnerabilities.length > 0) {
+      return vulnerabilities[0]
     }
+
+    return 'Security Vulnerability'
+  }
+
+  const getFileName = (path) => {
+    if (!path) return 'Unknown file'
+
+    return path.split('/').pop()
   }
 
   return (
     <div className="app">
-      <h1>SentinelForge AI</h1>
-      <p className="subtitle">Automated Software Repository Security Analysis</p>
 
-      <div className="upload-section">
-        <input type="file" accept=".zip" onChange={handleFileChange} />
-        <button onClick={handleScan} disabled={!file || scanning}>
-          {scanning ? 'Scanning...' : 'START SECURITY SCAN'}
-        </button>
-      </div>
+      {/* SIDEBAR */}
 
-      {error && <p className="error">{error}</p>}
+      <aside className="sidebar">
 
-      {findings && (
-        <div className="results">
-          <h2>Scan Results</h2>
-          <p>{findings.findings_count} finding(s) in {findings.filename}</p>
-          <ul>
-            {findings.findings.map((f, i) => (
-              <li key={i}>
-                <strong>{f.check_id}</strong> — {f.extra?.message} ({f.path}:{f.start?.line})
-              </li>
-            ))}
-          </ul>
+        <div className="brand">
+          <div className="brand-icon">
+            🛡
+          </div>
 
-          {findings.findings_count > 0 && !analysis && (
-            <button onClick={() => setShowKeyModal(true)}>
-              Analyze with AI
-            </button>
-          )}
-        </div>
-      )}
-
-      {analysis && (
-        <div className="analysis">
-          <h2>AI Analysis</h2>
-          <pre>{analysis}</pre>
-        </div>
-      )}
-
-      {showKeyModal && (
-        <div className="modal-overlay">
-          <div className="modal">
-            <h3>Enter your Gemini API Key</h3>
-            <p className="modal-note">
-              Your key is used only for this analysis and is never stored.
-            </p>
-            <input
-              type="password"
-              placeholder="AIza..."
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
-            <div className="modal-actions">
-              <button onClick={() => setShowKeyModal(false)}>Cancel</button>
-              <button onClick={handleAnalyze} disabled={!apiKey || analyzing}>
-                {analyzing ? 'Analyzing...' : 'Analyze'}
-              </button>
-            </div>
+          <div>
+            <h1>SentinelForge</h1>
+            <span>AI Security Platform</span>
           </div>
         </div>
-      )}
+
+        <nav>
+
+          <div className="nav-item active">
+            <span>▣</span>
+            Dashboard
+          </div>
+
+          <div className="nav-item">
+            <span>⌕</span>
+            Security Scan
+          </div>
+
+          <div className="nav-item">
+            <span>▤</span>
+            Reports
+          </div>
+
+          <div className="nav-item">
+            <span>⚙</span>
+            Settings
+          </div>
+
+        </nav>
+
+        <div className="sidebar-bottom">
+
+          <div className="system-status">
+            <span className="status-dot"></span>
+
+            <div>
+              <strong>Backend Online</strong>
+              <small>Render API connected</small>
+            </div>
+          </div>
+
+        </div>
+
+      </aside>
+
+
+      {/* MAIN */}
+
+      <main className="main">
+
+        {/* TOP BAR */}
+
+        <header className="topbar">
+
+          <div>
+            <span className="breadcrumb">
+              Dashboard / Security Scanner
+            </span>
+
+            <h2>Repository Security</h2>
+          </div>
+
+          <div className="online">
+            <span></span>
+            Production
+          </div>
+
+        </header>
+
+
+        {/* CONTENT */}
+
+        <section className="content">
+
+          {/* HERO */}
+
+          <div className="hero">
+
+            <div>
+
+              <div className="hero-label">
+                SECURITY ANALYSIS
+              </div>
+
+              <h3>
+                Protect your code before
+                <br />
+                it reaches production.
+              </h3>
+
+              <p>
+                Upload a ZIP repository and SentinelForge
+                will scan your source code for security
+                vulnerabilities.
+              </p>
+
+            </div>
+
+            <div className="hero-shield">
+              🛡
+            </div>
+
+          </div>
+
+
+          {/* UPLOAD */}
+
+          <div className="upload-card">
+
+            <div className="section-title">
+
+              <div>
+                <h3>Scan Repository</h3>
+                <p>
+                  Upload your project as a ZIP file
+                </p>
+              </div>
+
+              <span className="supported">
+                ZIP ONLY
+              </span>
+
+            </div>
+
+
+            <label className="drop-zone">
+
+              <input
+                type="file"
+                accept=".zip"
+                onChange={handleFileChange}
+                hidden
+              />
+
+              <div className="upload-icon">
+                ↑
+              </div>
+
+              <h4>
+                {file
+                  ? file.name
+                  : 'Drop your repository here'}
+              </h4>
+
+              <p>
+                {file
+                  ? `${(file.size / 1024 / 1024).toFixed(2)} MB`
+                  : 'or click to browse files'}
+              </p>
+
+            </label>
+
+
+            <button
+              className="scan-button"
+              onClick={handleScan}
+              disabled={!file || scanning}
+            >
+
+              {scanning ? (
+                <>
+                  <span className="spinner"></span>
+                  Scanning Repository...
+                </>
+              ) : (
+                <>
+                  Start Security Scan
+                  <span>→</span>
+                </>
+              )}
+
+            </button>
+
+          </div>
+
+
+          {/* ERROR */}
+
+          {error && (
+
+            <div className="error-box">
+
+              <span>!</span>
+
+              <div>
+                <strong>Scan Error</strong>
+                <p>{error}</p>
+              </div>
+
+            </div>
+
+          )}
+
+
+          {/* RESULTS */}
+
+          {findings && (
+
+            <>
+
+              {/* STATISTICS */}
+
+              <div className="stats">
+
+                <div className="stat-card">
+
+                  <div className="stat-icon">
+                    ◉
+                  </div>
+
+                  <div>
+                    <span>Total Findings</span>
+                    <strong>
+                      {findings.findings_count}
+                    </strong>
+                  </div>
+
+                </div>
+
+
+                <div className="stat-card danger">
+
+                  <div className="stat-icon">
+                    !
+                  </div>
+
+                  <div>
+                    <span>High Risk</span>
+                    <strong>
+                      {
+                        findings.findings.filter(
+                          (f) =>
+                            getSeverity(f) === 'HIGH'
+                        ).length
+                      }
+                    </strong>
+                  </div>
+
+                </div>
+
+
+                <div className="stat-card">
+
+                  <div className="stat-icon">
+                    #
+                  </div>
+
+                  <div>
+                    <span>Files Affected</span>
+                    <strong>
+                      {
+                        new Set(
+                          findings.findings.map(
+                            (f) => f.path
+                          )
+                        ).size
+                      }
+                    </strong>
+                  </div>
+
+                </div>
+
+
+                <div className="stat-card">
+
+                  <div className="stat-icon">
+                    ✓
+                  </div>
+
+                  <div>
+                    <span>Scanner</span>
+                    <strong>Semgrep</strong>
+                  </div>
+
+                </div>
+
+              </div>
+
+
+              {/* FINDINGS */}
+
+              <div className="findings-section">
+
+                <div className="section-title">
+
+                  <div>
+                    <h3>Security Findings</h3>
+
+                    <p>
+                      Detected vulnerabilities in{' '}
+                      <strong>
+                        {findings.filename}
+                      </strong>
+                    </p>
+                  </div>
+
+                  <span className="finding-count">
+                    {findings.findings_count} Findings
+                  </span>
+
+                </div>
+
+
+                {findings.findings.length === 0 ? (
+
+                  <div className="no-findings">
+
+                    <div>✓</div>
+
+                    <h3>
+                      No vulnerabilities detected
+                    </h3>
+
+                    <p>
+                      Your repository passed the
+                      current security checks.
+                    </p>
+
+                  </div>
+
+                ) : (
+
+                  <div className="finding-list">
+
+                    {findings.findings.map(
+                      (finding, index) => {
+
+                        const severity =
+                          getSeverity(finding)
+
+                        const name =
+                          getVulnerabilityName(
+                            finding
+                          )
+
+                        return (
+
+                          <div
+                            className="finding-card"
+                            key={index}
+                          >
+
+                            <div className="finding-severity">
+                              {severity === 'HIGH'
+                                ? '!'
+                                : '•'}
+                            </div>
+
+
+                            <div className="finding-main">
+
+                              <div className="finding-heading">
+
+                                <h4>{name}</h4>
+
+                                <span
+                                  className={`severity ${severity.toLowerCase()}`}
+                                >
+                                  {severity}
+                                </span>
+
+                              </div>
+
+
+                              <p className="finding-message">
+
+                                {
+                                  finding.extra?.message ||
+                                  'Security vulnerability detected.'
+                                }
+
+                              </p>
+
+
+                              <div className="finding-meta">
+
+                                <span>
+                                  📄{' '}
+                                  {getFileName(
+                                    finding.path
+                                  )}
+                                </span>
+
+                                <span>
+                                  Line{' '}
+                                  {finding.start?.line ||
+                                    '-'}
+                                </span>
+
+                                <span>
+                                  CWE-89
+                                </span>
+
+                              </div>
+
+                            </div>
+
+
+                            <div className="finding-arrow">
+                              →
+                            </div>
+
+                          </div>
+
+                        )
+                      }
+                    )}
+
+                  </div>
+
+                )}
+
+              </div>
+
+            </>
+
+          )}
+
+        </section>
+
+      </main>
+
     </div>
   )
 }
