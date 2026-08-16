@@ -12,27 +12,6 @@ from app.scanner import (
 )
 from app.schemas import AIAnalyzeRequest
 from app.ai_service import analyze_with_gemini
-from fastapi.middleware.cors import CORSMiddleware
-
-origins = [
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "https://sentinelforge-ai.vercel.app",
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# ============================================================
-# DATABASE
-# ============================================================
-
-Base.metadata.create_all(bind=engine)
 
 
 # ============================================================
@@ -50,19 +29,37 @@ app = FastAPI(
 # CORS
 # ============================================================
 
+# Read CORS origins from environment/config
 cors_origins = [
     origin.strip()
     for origin in settings.cors_origins.split(",")
     if origin.strip()
 ]
 
+# Always allow the local development frontend
+default_origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "https://sentinelforge-ai.vercel.app",
+]
+
+# Combine configured + default origins without duplicates
+allowed_origins = list(dict.fromkeys(cors_origins + default_origins))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ============================================================
+# DATABASE
+# ============================================================
+
+Base.metadata.create_all(bind=engine)
 
 
 # ============================================================
@@ -97,7 +94,7 @@ def health_check():
 @app.post("/scan/upload")
 async def upload_and_scan(file: UploadFile = File(...)):
     """
-    Upload a ZIP repository and run a security scan.
+    Upload a ZIP repository and run a Semgrep security scan.
     """
 
     # --------------------------------------------------------
@@ -139,11 +136,13 @@ async def upload_and_scan(file: UploadFile = File(...)):
 
         try:
             extract_dir = extract_zip_to_temp(contents)
+
         except ValueError as e:
             raise HTTPException(
                 status_code=400,
                 detail=str(e),
             )
+
         except Exception as e:
             raise HTTPException(
                 status_code=400,
@@ -156,6 +155,7 @@ async def upload_and_scan(file: UploadFile = File(...)):
 
         try:
             findings = run_semgrep_scan(extract_dir)
+
         except Exception as e:
             raise HTTPException(
                 status_code=500,
@@ -174,6 +174,7 @@ async def upload_and_scan(file: UploadFile = File(...)):
         }
 
     finally:
+
         # ----------------------------------------------------
         # Always clean temporary files
         # ----------------------------------------------------
@@ -182,8 +183,8 @@ async def upload_and_scan(file: UploadFile = File(...)):
             try:
                 cleanup_temp(extract_dir)
             except Exception:
-                # Cleanup failure should not hide the original
-                # scan result/error.
+                # Cleanup failure should never hide the
+                # original scan result/error.
                 pass
 
 
@@ -197,11 +198,19 @@ async def analyze_findings(request: AIAnalyzeRequest):
     Analyze security findings using the configured AI provider.
     """
 
+    # --------------------------------------------------------
+    # Validate findings
+    # --------------------------------------------------------
+
     if not request.findings:
         raise HTTPException(
             status_code=400,
             detail="No findings to analyze.",
         )
+
+    # --------------------------------------------------------
+    # Validate API key
+    # --------------------------------------------------------
 
     if not request.api_key:
         raise HTTPException(
@@ -210,6 +219,11 @@ async def analyze_findings(request: AIAnalyzeRequest):
         )
 
     try:
+
+        # ----------------------------------------------------
+        # Call AI service
+        # ----------------------------------------------------
+
         analysis = await analyze_with_gemini(
             request.api_key,
             request.findings,
@@ -220,7 +234,12 @@ async def analyze_findings(request: AIAnalyzeRequest):
             "analysis": analysis,
         }
 
+    # --------------------------------------------------------
+    # AI provider HTTP error
+    # --------------------------------------------------------
+
     except httpx.HTTPStatusError as e:
+
         provider_message = "AI provider request failed."
 
         try:
@@ -233,13 +252,23 @@ async def analyze_findings(request: AIAnalyzeRequest):
             detail=f"AI provider error: {provider_message}",
         )
 
+    # --------------------------------------------------------
+    # AI provider connection error
+    # --------------------------------------------------------
+
     except httpx.RequestError:
+
         raise HTTPException(
             status_code=503,
             detail="Unable to connect to the AI provider.",
         )
 
+    # --------------------------------------------------------
+    # Unexpected error
+    # --------------------------------------------------------
+
     except Exception as e:
+
         raise HTTPException(
             status_code=500,
             detail=f"AI analysis failed: {str(e)}",
