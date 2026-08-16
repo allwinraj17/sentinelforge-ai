@@ -5,17 +5,15 @@ import httpx
 from app.config import settings
 from app.database import engine, Base
 from app import models
+
 from app.scanner import (
     extract_zip_to_temp,
     run_semgrep_scan,
     cleanup_temp,
 )
+
 from app.schemas import AIAnalyzeRequest
 from app.ai_service import analyze_with_gemini
-
-# ============================================================
-# PHASE 2 - RISK ENGINE
-# ============================================================
 
 from app.risk_engine import (
     assess_findings,
@@ -35,37 +33,70 @@ app = FastAPI(
 
 
 # ============================================================
-# CORS
+# CORS CONFIGURATION
 # ============================================================
 
-# Read CORS origins from environment/config
-cors_origins = [
-    origin.strip()
+# Read origins from environment/config
+configured_origins = [
+    origin.strip().rstrip("/")
     for origin in settings.cors_origins.split(",")
     if origin.strip()
 ]
 
-# Default frontend origins
+
+# Frontend origins
 default_origins = [
+    # Local development
     "http://localhost:5173",
     "http://localhost:3000",
+
+    # Main Vercel domain
     "https://sentinelforge-ai.vercel.app",
+
+    # Current Vercel deployment
+    "https://sentinelforge-l7z3qg4an-aaa-ac6c.vercel.app",
 ]
 
+
 # Combine configured + default origins
-# and remove duplicates
 allowed_origins = list(
     dict.fromkeys(
-        cors_origins + default_origins
+        configured_origins + default_origins
     )
 )
 
+
+print("============================================================")
+print("SentinelForge AI - CORS Configuration")
+print("============================================================")
+
+for origin in allowed_origins:
+    print(f"Allowed Origin: {origin}")
+
+print("============================================================")
+
+
 app.add_middleware(
     CORSMiddleware,
+
     allow_origins=allowed_origins,
+
     allow_credentials=True,
-    allow_methods=["*"],
+
+    allow_methods=[
+        "GET",
+        "POST",
+        "PUT",
+        "DELETE",
+        "OPTIONS",
+        "PATCH",
+    ],
+
     allow_headers=["*"],
+
+    expose_headers=["*"],
+
+    max_age=600,
 )
 
 
@@ -81,10 +112,12 @@ Base.metadata.create_all(bind=engine)
 # ============================================================
 
 @app.get("/")
-def read_root():
+async def read_root():
+
     return {
         "message": "SentinelForge AI backend is running",
         "environment": settings.environment,
+        "cors": "enabled",
     }
 
 
@@ -93,7 +126,8 @@ def read_root():
 # ============================================================
 
 @app.get("/health")
-def health_check():
+async def health_check():
+
     return {
         "status": "ok",
         "service": "sentinelforge-ai-backend",
@@ -106,31 +140,39 @@ def health_check():
 # ============================================================
 
 @app.post("/scan/upload")
-async def upload_and_scan(file: UploadFile = File(...)):
+async def upload_and_scan(
+    file: UploadFile = File(...)
+):
     """
     Upload a ZIP file, scan the source code using Semgrep,
     and perform Phase 2 risk assessment.
     """
 
-    # --------------------------------------------------------
-    # Validate filename
-    # --------------------------------------------------------
+    # ========================================================
+    # VALIDATE FILE
+    # ========================================================
 
     if not file.filename:
+
         raise HTTPException(
             status_code=400,
             detail="No filename was provided.",
         )
 
+
     filename = file.filename.strip()
 
+
     if not filename.lower().endswith(".zip"):
+
         raise HTTPException(
             status_code=400,
             detail="Only .zip files are supported.",
         )
 
+
     extract_dir = None
+
 
     try:
 
@@ -140,7 +182,9 @@ async def upload_and_scan(file: UploadFile = File(...)):
 
         contents = await file.read()
 
+
         if not contents:
+
             raise HTTPException(
                 status_code=400,
                 detail="The uploaded ZIP file is empty.",
@@ -168,12 +212,16 @@ async def upload_and_scan(file: UploadFile = File(...)):
 
             raise HTTPException(
                 status_code=400,
-                detail=f"Unable to extract ZIP file: {str(e)}",
+                detail=(
+                    "Unable to extract ZIP file: "
+                    f"{str(e)}"
+                ),
             )
 
 
         # ====================================================
-        # PHASE 1 - SEMGREP SECURITY SCAN
+        # PHASE 1
+        # SEMGREP SECURITY SCAN
         # ====================================================
 
         try:
@@ -186,12 +234,16 @@ async def upload_and_scan(file: UploadFile = File(...)):
 
             raise HTTPException(
                 status_code=500,
-                detail=f"Security scan failed: {str(e)}",
+                detail=(
+                    "Security scan failed: "
+                    f"{str(e)}"
+                ),
             )
 
 
         # ====================================================
-        # PHASE 2 - RISK ASSESSMENT
+        # PHASE 2
+        # RISK ASSESSMENT
         # ====================================================
 
         try:
@@ -199,6 +251,7 @@ async def upload_and_scan(file: UploadFile = File(...)):
             risk_assessments = assess_findings(
                 findings
             )
+
 
             overall_risk = calculate_overall_risk(
                 risk_assessments
@@ -208,37 +261,34 @@ async def upload_and_scan(file: UploadFile = File(...)):
 
             raise HTTPException(
                 status_code=500,
-                detail=f"Risk assessment failed: {str(e)}",
+                detail=(
+                    "Risk assessment failed: "
+                    f"{str(e)}"
+                ),
             )
 
 
         # ====================================================
-        # RETURN SCAN + RISK RESULTS
+        # RETURN RESULTS
         # ====================================================
 
         return {
-
-            # -----------------------------------------------
-            # Basic response information
-            # -----------------------------------------------
 
             "success": True,
 
             "filename": filename,
 
-
-            # -----------------------------------------------
-            # PHASE 1 - Security Detection
-            # -----------------------------------------------
+            # ----------------------------------------------
+            # PHASE 1
+            # ----------------------------------------------
 
             "findings_count": len(findings),
 
             "findings": findings,
 
-
-            # -----------------------------------------------
-            # PHASE 2 - Risk Assessment
-            # -----------------------------------------------
+            # ----------------------------------------------
+            # PHASE 2
+            # ----------------------------------------------
 
             "risk_assessments": risk_assessments,
 
@@ -250,7 +300,7 @@ async def upload_and_scan(file: UploadFile = File(...)):
     finally:
 
         # ====================================================
-        # CLEAN TEMPORARY FILES
+        # CLEAN TEMP FILES
         # ====================================================
 
         if extract_dir:
@@ -263,8 +313,7 @@ async def upload_and_scan(file: UploadFile = File(...)):
 
             except Exception:
 
-                # Cleanup failure should never hide
-                # the original scan result/error.
+                # Never hide the original result/error
                 pass
 
 
@@ -281,9 +330,9 @@ async def analyze_findings(
     AI provider.
     """
 
-    # --------------------------------------------------------
-    # Validate findings
-    # --------------------------------------------------------
+    # ========================================================
+    # VALIDATE FINDINGS
+    # ========================================================
 
     if not request.findings:
 
@@ -293,15 +342,18 @@ async def analyze_findings(
         )
 
 
-    # --------------------------------------------------------
-    # Validate API key
-    # --------------------------------------------------------
+    # ========================================================
+    # VALIDATE API KEY
+    # ========================================================
 
     if not request.api_key:
 
         raise HTTPException(
             status_code=400,
-            detail="AI API key is required for AI analysis.",
+            detail=(
+                "AI API key is required "
+                "for AI analysis."
+            ),
         )
 
 
@@ -318,20 +370,24 @@ async def analyze_findings(
 
 
         return {
+
             "success": True,
+
             "analysis": analysis,
+
         }
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # AI PROVIDER HTTP ERROR
-    # --------------------------------------------------------
+    # ========================================================
 
     except httpx.HTTPStatusError as e:
 
         provider_message = (
             "AI provider request failed."
         )
+
 
         try:
 
@@ -344,29 +400,38 @@ async def analyze_findings(
 
         raise HTTPException(
             status_code=400,
-            detail=f"AI provider error: {provider_message}",
+            detail=(
+                "AI provider error: "
+                f"{provider_message}"
+            ),
         )
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # AI PROVIDER CONNECTION ERROR
-    # --------------------------------------------------------
+    # ========================================================
 
     except httpx.RequestError:
 
         raise HTTPException(
             status_code=503,
-            detail="Unable to connect to the AI provider.",
+            detail=(
+                "Unable to connect to "
+                "the AI provider."
+            ),
         )
 
 
-    # --------------------------------------------------------
+    # ========================================================
     # UNEXPECTED ERROR
-    # --------------------------------------------------------
+    # ========================================================
 
     except Exception as e:
 
         raise HTTPException(
             status_code=500,
-            detail=f"AI analysis failed: {str(e)}",
+            detail=(
+                "AI analysis failed: "
+                f"{str(e)}"
+            ),
         )
