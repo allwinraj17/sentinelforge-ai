@@ -216,3 +216,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# SentinelForge local environment
+.venv/
+.venv_old/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# SentinelForge test files
+test_repository/
+test_repository.zip
+
+# IDE
+.vscode/
+.idea/
