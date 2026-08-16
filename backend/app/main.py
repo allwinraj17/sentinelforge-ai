@@ -13,6 +13,15 @@ from app.scanner import (
 from app.schemas import AIAnalyzeRequest
 from app.ai_service import analyze_with_gemini
 
+# ============================================================
+# PHASE 2 - RISK ENGINE
+# ============================================================
+
+from app.risk_engine import (
+    assess_findings,
+    calculate_overall_risk,
+)
+
 
 # ============================================================
 # FASTAPI APPLICATION
@@ -20,7 +29,7 @@ from app.ai_service import analyze_with_gemini
 
 app = FastAPI(
     title="SentinelForge AI",
-    description="Multi-Agent Software Repository Security Analysis Platform",
+    description="Multi-Agent Software Code Security Analysis Platform",
     version="1.0.0",
 )
 
@@ -36,15 +45,20 @@ cors_origins = [
     if origin.strip()
 ]
 
-# Always allow the local development frontend
+# Default frontend origins
 default_origins = [
     "http://localhost:5173",
     "http://localhost:3000",
     "https://sentinelforge-ai.vercel.app",
 ]
 
-# Combine configured + default origins without duplicates
-allowed_origins = list(dict.fromkeys(cors_origins + default_origins))
+# Combine configured + default origins
+# and remove duplicates
+allowed_origins = list(
+    dict.fromkeys(
+        cors_origins + default_origins
+    )
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -94,7 +108,8 @@ def health_check():
 @app.post("/scan/upload")
 async def upload_and_scan(file: UploadFile = File(...)):
     """
-    Upload a ZIP repository and run a Semgrep security scan.
+    Upload a ZIP file, scan the source code using Semgrep,
+    and perform Phase 2 risk assessment.
     """
 
     # --------------------------------------------------------
@@ -118,9 +133,10 @@ async def upload_and_scan(file: UploadFile = File(...)):
     extract_dir = None
 
     try:
-        # ----------------------------------------------------
-        # Read uploaded file
-        # ----------------------------------------------------
+
+        # ====================================================
+        # READ UPLOADED FILE
+        # ====================================================
 
         contents = await file.read()
 
@@ -130,61 +146,125 @@ async def upload_and_scan(file: UploadFile = File(...)):
                 detail="The uploaded ZIP file is empty.",
             )
 
-        # ----------------------------------------------------
-        # Extract ZIP
-        # ----------------------------------------------------
+
+        # ====================================================
+        # EXTRACT ZIP
+        # ====================================================
 
         try:
-            extract_dir = extract_zip_to_temp(contents)
+
+            extract_dir = extract_zip_to_temp(
+                contents
+            )
 
         except ValueError as e:
+
             raise HTTPException(
                 status_code=400,
                 detail=str(e),
             )
 
         except Exception as e:
+
             raise HTTPException(
                 status_code=400,
                 detail=f"Unable to extract ZIP file: {str(e)}",
             )
 
-        # ----------------------------------------------------
-        # Run Semgrep
-        # ----------------------------------------------------
+
+        # ====================================================
+        # PHASE 1 - SEMGREP SECURITY SCAN
+        # ====================================================
 
         try:
-            findings = run_semgrep_scan(extract_dir)
+
+            findings = run_semgrep_scan(
+                extract_dir
+            )
 
         except Exception as e:
+
             raise HTTPException(
                 status_code=500,
                 detail=f"Security scan failed: {str(e)}",
             )
 
-        # ----------------------------------------------------
-        # Return results
-        # ----------------------------------------------------
+
+        # ====================================================
+        # PHASE 2 - RISK ASSESSMENT
+        # ====================================================
+
+        try:
+
+            risk_assessments = assess_findings(
+                findings
+            )
+
+            overall_risk = calculate_overall_risk(
+                risk_assessments
+            )
+
+        except Exception as e:
+
+            raise HTTPException(
+                status_code=500,
+                detail=f"Risk assessment failed: {str(e)}",
+            )
+
+
+        # ====================================================
+        # RETURN SCAN + RISK RESULTS
+        # ====================================================
 
         return {
+
+            # -----------------------------------------------
+            # Basic response information
+            # -----------------------------------------------
+
             "success": True,
+
             "filename": filename,
+
+
+            # -----------------------------------------------
+            # PHASE 1 - Security Detection
+            # -----------------------------------------------
+
             "findings_count": len(findings),
+
             "findings": findings,
+
+
+            # -----------------------------------------------
+            # PHASE 2 - Risk Assessment
+            # -----------------------------------------------
+
+            "risk_assessments": risk_assessments,
+
+            "overall_risk": overall_risk,
+
         }
+
 
     finally:
 
-        # ----------------------------------------------------
-        # Always clean temporary files
-        # ----------------------------------------------------
+        # ====================================================
+        # CLEAN TEMPORARY FILES
+        # ====================================================
 
         if extract_dir:
+
             try:
-                cleanup_temp(extract_dir)
+
+                cleanup_temp(
+                    extract_dir
+                )
+
             except Exception:
-                # Cleanup failure should never hide the
-                # original scan result/error.
+
+                # Cleanup failure should never hide
+                # the original scan result/error.
                 pass
 
 
@@ -193,9 +273,12 @@ async def upload_and_scan(file: UploadFile = File(...)):
 # ============================================================
 
 @app.post("/scan/analyze")
-async def analyze_findings(request: AIAnalyzeRequest):
+async def analyze_findings(
+    request: AIAnalyzeRequest
+):
     """
-    Analyze security findings using the configured AI provider.
+    Analyze security findings using the configured
+    AI provider.
     """
 
     # --------------------------------------------------------
@@ -203,57 +286,70 @@ async def analyze_findings(request: AIAnalyzeRequest):
     # --------------------------------------------------------
 
     if not request.findings:
+
         raise HTTPException(
             status_code=400,
             detail="No findings to analyze.",
         )
+
 
     # --------------------------------------------------------
     # Validate API key
     # --------------------------------------------------------
 
     if not request.api_key:
+
         raise HTTPException(
             status_code=400,
             detail="AI API key is required for AI analysis.",
         )
 
+
     try:
 
-        # ----------------------------------------------------
-        # Call AI service
-        # ----------------------------------------------------
+        # ====================================================
+        # CALL AI SERVICE
+        # ====================================================
 
         analysis = await analyze_with_gemini(
             request.api_key,
             request.findings,
         )
 
+
         return {
             "success": True,
             "analysis": analysis,
         }
 
+
     # --------------------------------------------------------
-    # AI provider HTTP error
+    # AI PROVIDER HTTP ERROR
     # --------------------------------------------------------
 
     except httpx.HTTPStatusError as e:
 
-        provider_message = "AI provider request failed."
+        provider_message = (
+            "AI provider request failed."
+        )
 
         try:
+
             provider_message = e.response.text
+
         except Exception:
+
             pass
+
 
         raise HTTPException(
             status_code=400,
             detail=f"AI provider error: {provider_message}",
         )
 
+
     # --------------------------------------------------------
-    # AI provider connection error
+    # AI PROVIDER CONNECTION ERROR
     # --------------------------------------------------------
 
     except httpx.RequestError:
@@ -263,8 +359,9 @@ async def analyze_findings(request: AIAnalyzeRequest):
             detail="Unable to connect to the AI provider.",
         )
 
+
     # --------------------------------------------------------
-    # Unexpected error
+    # UNEXPECTED ERROR
     # --------------------------------------------------------
 
     except Exception as e:
