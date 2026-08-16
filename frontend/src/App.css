@@ -542,7 +542,369 @@ nav {
 
   font-size: 11px;
 }
+/* ============================================================
+   PHASE 2 - RISK ASSESSMENT
+   ============================================================ */
 
+.risk-overview {
+  margin-top: 22px;
+
+  background:
+    linear-gradient(
+      135deg,
+      #0d1819,
+      #0b1018
+    );
+
+  border: 1px solid #1d3431;
+
+  border-radius: 14px;
+
+  padding: 25px;
+
+  position: relative;
+
+  overflow: hidden;
+}
+
+.risk-overview::before {
+  content: "";
+
+  position: absolute;
+
+  width: 180px;
+  height: 180px;
+
+  right: -60px;
+  top: -70px;
+
+  border-radius: 50%;
+
+  background: rgba(49, 201, 151, 0.06);
+
+  pointer-events: none;
+}
+
+.risk-overview-header {
+  display: flex;
+
+  align-items: center;
+
+  justify-content: space-between;
+
+  gap: 20px;
+
+  position: relative;
+
+  z-index: 1;
+}
+
+.risk-overview-header h3 {
+  margin: 0;
+
+  font-size: 18px;
+
+  color: #e8edf5;
+}
+
+.overall-risk-badge {
+  padding: 8px 14px;
+
+  border-radius: 6px;
+
+  font-size: 10px;
+
+  font-weight: 800;
+
+  letter-spacing: 1px;
+
+  border: 1px solid;
+}
+
+/* HIGH */
+
+.overall-risk-badge.high {
+  color: #ff7777;
+
+  background: #32191b;
+
+  border-color: #633034;
+}
+
+/* MEDIUM */
+
+.overall-risk-badge.medium {
+  color: #f0b55b;
+
+  background: #302718;
+
+  border-color: #5b4828;
+}
+
+/* LOW */
+
+.overall-risk-badge.low {
+  color: #62c7ff;
+
+  background: #152735;
+
+  border-color: #284a61;
+}
+
+/* SECURE */
+
+.overall-risk-badge.secure {
+  color: #4ce0ae;
+
+  background: #0e2922;
+
+  border-color: #195342;
+}
+
+
+/* RISK SCORE */
+
+.risk-score {
+  margin-top: 25px;
+
+  display: flex;
+
+  align-items: baseline;
+
+  gap: 8px;
+
+  position: relative;
+
+  z-index: 1;
+}
+
+.risk-score-number {
+  font-size: 46px;
+
+  line-height: 1;
+
+  font-weight: 800;
+
+  letter-spacing: -2px;
+
+  color: #f1f5fa;
+}
+
+.risk-score-label {
+  color: #667383;
+
+  font-size: 12px;
+}
+
+
+/* RISK BREAKDOWN */
+
+.risk-breakdown {
+  margin-top: 25px;
+
+  display: grid;
+
+  grid-template-columns:
+    repeat(4, 1fr);
+
+  gap: 10px;
+
+  position: relative;
+
+  z-index: 1;
+}
+
+.risk-breakdown > div {
+  background: #0a1118;
+
+  border: 1px solid #1b2732;
+
+  border-radius: 8px;
+
+  padding: 13px 14px;
+
+  display: flex;
+
+  align-items: center;
+
+  justify-content: space-between;
+
+  gap: 10px;
+}
+
+.risk-breakdown span {
+  color: #697686;
+
+  font-size: 10px;
+}
+
+.risk-breakdown strong {
+  font-size: 16px;
+
+  color: #dce4ed;
+}
+
+
+/* ============================================================
+   PHASE 2 - FINDING RISK DETAILS
+   ============================================================ */
+
+.risk-details {
+  margin-top: 15px;
+
+  padding: 15px;
+
+  border-radius: 8px;
+
+  border: 1px solid #1b2934;
+
+  background: #091017;
+
+  display: grid;
+
+  grid-template-columns:
+    repeat(2, minmax(0, 1fr));
+
+  gap: 12px;
+}
+
+.risk-detail {
+  padding: 11px;
+
+  border-radius: 7px;
+
+  background: #0c151e;
+
+  border: 1px solid #182531;
+
+  display: flex;
+
+  align-items: center;
+
+  justify-content: space-between;
+
+  gap: 10px;
+}
+
+.risk-detail span,
+.risk-detail-wide span {
+  color: #647181;
+
+  font-size: 10px;
+
+  font-weight: 600;
+
+  text-transform: uppercase;
+
+  letter-spacing: 0.5px;
+}
+
+.risk-detail strong {
+  font-size: 12px;
+
+  color: #dbe5ef;
+}
+
+.risk-detail-wide {
+  grid-column: span 2;
+
+  padding: 11px;
+
+  border-radius: 7px;
+
+  background: #0c151e;
+
+  border: 1px solid #182531;
+}
+
+.risk-detail-wide p {
+  margin: 7px 0 0;
+
+  color: #7c8998;
+
+  font-size: 11px;
+
+  line-height: 1.6;
+}
+
+
+/* ============================================================
+   PHASE 2 RESPONSIVE
+   ============================================================ */
+
+@media (max-width: 850px) {
+
+  .risk-breakdown {
+    grid-template-columns:
+      repeat(2, 1fr);
+  }
+
+  .risk-details {
+    grid-template-columns: 1fr;
+  }
+
+  .risk-detail-wide {
+    grid-column: span 1;
+  }
+
+}
+
+
+@media (max-width: 550px) {
+
+  .risk-overview {
+    padding: 18px;
+  }
+
+  .risk-overview-header {
+    align-items: flex-start;
+
+    flex-direction: column;
+  }
+
+  .overall-risk-badge {
+    align-self: flex-start;
+  }
+
+  .risk-score {
+    margin-top: 20px;
+  }
+
+  .risk-score-number {
+    font-size: 38px;
+  }
+
+  .risk-breakdown {
+    grid-template-columns:
+      repeat(2, 1fr);
+
+    gap: 7px;
+  }
+
+  .risk-breakdown > div {
+    padding: 10px;
+  }
+
+  .risk-breakdown span {
+    font-size: 9px;
+  }
+
+  .risk-breakdown strong {
+    font-size: 14px;
+  }
+
+  .risk-details {
+    padding: 10px;
+
+    gap: 8px;
+  }
+
+  .risk-detail,
+  .risk-detail-wide {
+    padding: 9px;
+  }
+
+}
 
 /* STATS */
 

@@ -9,14 +9,21 @@ function App() {
   const [findings, setFindings] = useState(null)
   const [error, setError] = useState(null)
 
-  const handleFileChange = (e) => {
-    const selectedFile = e.target.files[0]
+  // ============================================================
+  // FILE SELECTION
+  // ============================================================
 
-    if (!selectedFile) return
+  const handleFileChange = (e) => {
+    const selectedFile = e.target.files?.[0]
+
+    if (!selectedFile) {
+      return
+    }
 
     if (!selectedFile.name.toLowerCase().endsWith('.zip')) {
       setError('Please select a ZIP file.')
       setFile(null)
+      setFindings(null)
       return
     }
 
@@ -24,6 +31,10 @@ function App() {
     setFindings(null)
     setError(null)
   }
+
+  // ============================================================
+  // SECURITY SCAN
+  // ============================================================
 
   const handleScan = async () => {
     if (!file) {
@@ -57,8 +68,8 @@ function App() {
       if (!response.ok) {
         throw new Error(
           data?.detail ||
-          data?.message ||
-          `Security scan failed (${response.status}).`
+            data?.message ||
+            `Security scan failed (${response.status}).`
         )
       }
 
@@ -66,42 +77,58 @@ function App() {
         throw new Error('The backend returned an empty response.')
       }
 
+      // ----------------------------------------------------------
+      // Normalize backend response
+      // ----------------------------------------------------------
+
+      const normalizedFindings = Array.isArray(data.findings)
+        ? data.findings
+        : []
+
+      const normalizedRiskAssessments = Array.isArray(
+        data.risk_assessments
+      )
+        ? data.risk_assessments
+        : []
+
+      const normalizedOverallRisk = data.overall_risk || {
+        overall_score: 0,
+        overall_level: 'SECURE',
+        total_findings: 0,
+        critical: 0,
+        high: 0,
+        medium: 0,
+        low: 0,
+      }
+
       setFindings({
         ...data,
-        findings: Array.isArray(data.findings)
-          ? data.findings
-          : [],
+
+        findings: normalizedFindings,
+
         findings_count:
           typeof data.findings_count === 'number'
             ? data.findings_count
-            : Array.isArray(data.findings)
-              ? data.findings.length
-              : 0,
-        risk_assessments: Array.isArray(data.risk_assessments)
-          ? data.risk_assessments
-          : [],
-        overall_risk:
-          data.overall_risk || {
-            overall_score: 0,
-            overall_level: 'SECURE',
-            total_findings: 0,
-            critical: 0,
-            high: 0,
-            medium: 0,
-            low: 0,
-          },
+            : normalizedFindings.length,
+
+        risk_assessments: normalizedRiskAssessments,
+
+        overall_risk: normalizedOverallRisk,
       })
     } catch (err) {
       console.error('Scan request error:', err)
 
-      if (err instanceof TypeError) {
+      if (
+        err instanceof TypeError ||
+        err?.message?.toLowerCase().includes('fetch')
+      ) {
         setError(
           'Unable to connect to the SentinelForge backend. Please check the backend connection and try again.'
         )
       } else {
         setError(
-          err.message ||
-          'Unable to complete the security scan.'
+          err?.message ||
+            'Unable to complete the security scan.'
         )
       }
     } finally {
@@ -109,19 +136,53 @@ function App() {
     }
   }
 
+  // ============================================================
+  // SEVERITY
+  // ============================================================
+
   const getSeverity = (finding) => {
     const severity =
       finding?.extra?.severity ||
       finding?.extra?.metadata?.severity
 
-    if (!severity) return 'MEDIUM'
+    if (!severity) {
+      return 'MEDIUM'
+    }
 
-    if (severity === 'ERROR') return 'HIGH'
-    if (severity === 'WARNING') return 'MEDIUM'
-    if (severity === 'INFO') return 'LOW'
+    const normalizedSeverity = String(
+      severity
+    ).toUpperCase()
 
-    return severity.toUpperCase()
+    if (normalizedSeverity === 'ERROR') {
+      return 'HIGH'
+    }
+
+    if (normalizedSeverity === 'WARNING') {
+      return 'MEDIUM'
+    }
+
+    if (normalizedSeverity === 'INFO') {
+      return 'LOW'
+    }
+
+    if (normalizedSeverity === 'CRITICAL') {
+      return 'CRITICAL'
+    }
+
+    if (
+      ['HIGH', 'MEDIUM', 'LOW'].includes(
+        normalizedSeverity
+      )
+    ) {
+      return normalizedSeverity
+    }
+
+    return 'MEDIUM'
   }
+
+  // ============================================================
+  // VULNERABILITY NAME
+  // ============================================================
 
   const getVulnerabilityName = (finding) => {
     const vulnerabilities =
@@ -134,25 +195,142 @@ function App() {
       return vulnerabilities[0]
     }
 
+    const checkId = finding?.check_id
+
+    if (checkId) {
+      if (
+        checkId.toLowerCase().includes('sql')
+      ) {
+        return 'SQL Injection'
+      }
+
+      if (
+        checkId.toLowerCase().includes('xss')
+      ) {
+        return 'Cross-Site Scripting'
+      }
+
+      if (
+        checkId.toLowerCase().includes('command')
+      ) {
+        return 'Command Injection'
+      }
+
+      if (
+        checkId.toLowerCase().includes('secret')
+      ) {
+        return 'Hardcoded Secret'
+      }
+    }
+
     return 'Security Vulnerability'
   }
 
-  const getFileName = (path) => {
-    if (!path) return 'Unknown file'
+  // ============================================================
+  // FILE NAME
+  // ============================================================
 
-    return path.split('/').pop()
+  const getFileName = (path) => {
+    if (!path) {
+      return 'Unknown file'
+    }
+
+    return String(path).split(/[\\/]/).pop()
   }
+
+  // ============================================================
+  // RISK CLASS
+  // ============================================================
 
   const getRiskClass = (level) => {
-    if (!level) return 'medium'
+    if (!level) {
+      return 'medium'
+    }
 
-    return level.toLowerCase()
+    return String(level).toLowerCase()
   }
+
+  // ============================================================
+  // CWE FORMATTER
+  // ============================================================
+
+  const getCwe = (assessment, finding) => {
+    if (
+      Array.isArray(assessment?.cwe) &&
+      assessment.cwe.length > 0
+    ) {
+      return assessment.cwe.join(', ')
+    }
+
+    if (
+      typeof assessment?.cwe === 'string' &&
+      assessment.cwe.trim()
+    ) {
+      return assessment.cwe
+    }
+
+    const cwe =
+      finding?.extra?.metadata?.cwe
+
+    if (Array.isArray(cwe) && cwe.length > 0) {
+      return cwe.join(', ')
+    }
+
+    if (typeof cwe === 'string') {
+      return cwe
+    }
+
+    return 'Security'
+  }
+
+  // ============================================================
+  // HIGH RISK COUNT
+  // ============================================================
+
+  const getHighRiskCount = () => {
+    if (!findings) {
+      return 0
+    }
+
+    if (
+      typeof findings.overall_risk?.high ===
+      'number'
+    ) {
+      return findings.overall_risk.high
+    }
+
+    return findings.findings.filter(
+      (finding) =>
+        getSeverity(finding) === 'HIGH'
+    ).length
+  }
+
+  // ============================================================
+  // FILE COUNT
+  // ============================================================
+
+  const getFilesAffected = () => {
+    if (!findings?.findings) {
+      return 0
+    }
+
+    return new Set(
+      findings.findings.map(
+        (finding) => finding.path
+      )
+    ).size
+  }
+
+  // ============================================================
+  // RENDER
+  // ============================================================
 
   return (
     <div className="app">
 
-      {/* SIDEBAR */}
+      {/* ======================================================
+          SIDEBAR
+          ====================================================== */}
 
       <aside className="sidebar">
 
@@ -211,11 +389,15 @@ function App() {
       </aside>
 
 
-      {/* MAIN */}
+      {/* ======================================================
+          MAIN
+          ====================================================== */}
 
       <main className="main">
 
-        {/* TOP BAR */}
+        {/* ====================================================
+            TOP BAR
+            ==================================================== */}
 
         <header className="topbar">
 
@@ -230,18 +412,25 @@ function App() {
           </div>
 
           <div className="online">
+
             <span></span>
+
             Production
+
           </div>
 
         </header>
 
 
-        {/* CONTENT */}
+        {/* ====================================================
+            CONTENT
+            ==================================================== */}
 
         <section className="content">
 
-          {/* HERO */}
+          {/* ==================================================
+              HERO
+              ================================================== */}
 
           <div className="hero">
 
@@ -272,7 +461,9 @@ function App() {
           </div>
 
 
-          {/* UPLOAD */}
+          {/* ==================================================
+              UPLOAD
+              ================================================== */}
 
           <div className="upload-card">
 
@@ -316,7 +507,11 @@ function App() {
 
               <p>
                 {file
-                  ? `${(file.size / 1024 / 1024).toFixed(2)} MB`
+                  ? `${(
+                      file.size /
+                      1024 /
+                      1024
+                    ).toFixed(2)} MB`
                   : 'or click to browse files'}
               </p>
 
@@ -346,7 +541,9 @@ function App() {
           </div>
 
 
-          {/* ERROR */}
+          {/* ==================================================
+              ERROR
+              ================================================== */}
 
           {error && (
 
@@ -356,9 +553,13 @@ function App() {
 
               <div>
 
-                <strong>Scan Error</strong>
+                <strong>
+                  Scan Error
+                </strong>
 
-                <p>{error}</p>
+                <p>
+                  {error}
+                </p>
 
               </div>
 
@@ -367,96 +568,133 @@ function App() {
           )}
 
 
-          {/* RESULTS */}
+          {/* ==================================================
+              RESULTS
+              ================================================== */}
 
           {findings && (
 
             <>
 
-              {/* PHASE 2 RISK OVERVIEW */}
+              {/* =================================================
+                  PHASE 2 - OVERALL RISK ASSESSMENT
+                  ================================================= */}
 
-              {findings.overall_risk && (
+              <div className="risk-overview">
 
-                <div className="risk-overview">
+                <div className="risk-overview-header">
 
-                  <div className="risk-overview-header">
+                  <div>
 
-                    <div>
+                    <span className="hero-label">
+                      RISK ASSESSMENT
+                    </span>
 
-                      <span className="hero-label">
-                        RISK ASSESSMENT
-                      </span>
-
-                      <h3>
-                        Overall Security Risk
-                      </h3>
-
-                    </div>
-
-                    <div
-                      className={`overall-risk-badge ${getRiskClass(
-                        findings.overall_risk.overall_level
-                      )}`}
-                    >
-                      {findings.overall_risk.overall_level}
-                    </div>
+                    <h3>
+                      Overall Security Risk
+                    </h3>
 
                   </div>
 
+                  <div
+                    className={`overall-risk-badge ${getRiskClass(
+                      findings.overall_risk?.overall_level
+                    )}`}
+                  >
+                    {findings.overall_risk
+                      ?.overall_level ||
+                      'SECURE'}
+                  </div>
 
-                  <div className="risk-score">
+                </div>
 
-                    <div className="risk-score-number">
-                      {findings.overall_risk.overall_score}
-                    </div>
 
-                    <div className="risk-score-label">
-                      / 10 Risk Score
-                    </div>
+                {/* RISK SCORE */}
+
+                <div className="risk-score">
+
+                  <div className="risk-score-number">
+
+                    {findings.overall_risk
+                      ?.overall_score ?? 0}
 
                   </div>
 
+                  <div className="risk-score-label">
+                    / 10 Risk Score
+                  </div>
 
-                  <div className="risk-breakdown">
+                </div>
 
-                    <div>
-                      <span>Critical</span>
-                      <strong>
-                        {findings.overall_risk.critical}
-                      </strong>
-                    </div>
 
-                    <div>
-                      <span>High</span>
-                      <strong>
-                        {findings.overall_risk.high}
-                      </strong>
-                    </div>
+                {/* RISK BREAKDOWN */}
 
-                    <div>
-                      <span>Medium</span>
-                      <strong>
-                        {findings.overall_risk.medium}
-                      </strong>
-                    </div>
+                <div className="risk-breakdown">
 
-                    <div>
-                      <span>Low</span>
-                      <strong>
-                        {findings.overall_risk.low}
-                      </strong>
-                    </div>
+                  <div>
+
+                    <span>
+                      Critical
+                    </span>
+
+                    <strong>
+                      {findings.overall_risk
+                        ?.critical ?? 0}
+                    </strong>
+
+                  </div>
+
+                  <div>
+
+                    <span>
+                      High
+                    </span>
+
+                    <strong>
+                      {findings.overall_risk
+                        ?.high ?? 0}
+                    </strong>
+
+                  </div>
+
+                  <div>
+
+                    <span>
+                      Medium
+                    </span>
+
+                    <strong>
+                      {findings.overall_risk
+                        ?.medium ?? 0}
+                    </strong>
+
+                  </div>
+
+                  <div>
+
+                    <span>
+                      Low
+                    </span>
+
+                    <strong>
+                      {findings.overall_risk
+                        ?.low ?? 0}
+                    </strong>
 
                   </div>
 
                 </div>
 
-              )}
+              </div>
 
 
-              {/* STATISTICS */}
+              {/* =================================================
+                  STATISTICS
+                  ================================================= */}
 
               <div className="stats">
+
+                {/* TOTAL FINDINGS */}
 
                 <div className="stat-card">
 
@@ -466,7 +704,9 @@ function App() {
 
                   <div>
 
-                    <span>Total Findings</span>
+                    <span>
+                      Total Findings
+                    </span>
 
                     <strong>
                       {findings.findings_count}
@@ -477,6 +717,8 @@ function App() {
                 </div>
 
 
+                {/* HIGH RISK */}
+
                 <div className="stat-card danger">
 
                   <div className="stat-icon">
@@ -485,21 +727,20 @@ function App() {
 
                   <div>
 
-                    <span>High Risk</span>
+                    <span>
+                      High Risk
+                    </span>
 
                     <strong>
-                      {
-                        findings.findings.filter(
-                          (f) =>
-                            getSeverity(f) === 'HIGH'
-                        ).length
-                      }
+                      {getHighRiskCount()}
                     </strong>
 
                   </div>
 
                 </div>
 
+
+                {/* FILES AFFECTED */}
 
                 <div className="stat-card">
 
@@ -509,22 +750,20 @@ function App() {
 
                   <div>
 
-                    <span>Files Affected</span>
+                    <span>
+                      Files Affected
+                    </span>
 
                     <strong>
-                      {
-                        new Set(
-                          findings.findings.map(
-                            (f) => f.path
-                          )
-                        ).size
-                      }
+                      {getFilesAffected()}
                     </strong>
 
                   </div>
 
                 </div>
 
+
+                {/* SCANNER */}
 
                 <div className="stat-card">
 
@@ -534,7 +773,9 @@ function App() {
 
                   <div>
 
-                    <span>Scanner</span>
+                    <span>
+                      Scanner
+                    </span>
 
                     <strong>
                       Semgrep
@@ -547,7 +788,9 @@ function App() {
               </div>
 
 
-              {/* FINDINGS */}
+              {/* =================================================
+                  SECURITY FINDINGS
+                  ================================================= */}
 
               <div className="findings-section">
 
@@ -562,24 +805,32 @@ function App() {
                     <p>
                       Detected vulnerabilities in{' '}
                       <strong>
-                        {findings.filename}
+                        {findings.filename ||
+                          'uploaded repository'}
                       </strong>
                     </p>
 
                   </div>
 
                   <span className="finding-count">
-                    {findings.findings_count} Findings
+                    {findings.findings_count}{' '}
+                    Findings
                   </span>
 
                 </div>
 
 
+                {/* =================================================
+                    NO FINDINGS
+                    ================================================= */}
+
                 {findings.findings.length === 0 ? (
 
                   <div className="no-findings">
 
-                    <div>✓</div>
+                    <div>
+                      ✓
+                    </div>
 
                     <h3>
                       No vulnerabilities detected
@@ -594,6 +845,10 @@ function App() {
 
                 ) : (
 
+                  /* =================================================
+                     FINDING LIST
+                     ================================================= */
+
                   <div className="finding-list">
 
                     {findings.findings.map(
@@ -607,26 +862,59 @@ function App() {
                             finding
                           )
 
+                        /*
+                         * Match the risk assessment
+                         * with the finding.
+                         *
+                         * Normally backend returns
+                         * them in the same order.
+                         */
+
                         const assessment =
-                          findings.risk_assessments?.[index]
+                          findings.risk_assessments?.[
+                            index
+                          ]
 
                         return (
 
                           <div
                             className="finding-card"
-                            key={index}
+                            key={
+                              finding?.check_id
+                                ? `${finding.check_id}-${index}`
+                                : index
+                            }
                           >
 
-                            <div className="finding-severity">
+                            {/* ====================================
+                                SEVERITY ICON
+                                ==================================== */}
 
-                              {severity === 'HIGH'
+                            <div
+                              className={`finding-severity ${severity.toLowerCase()}`}
+                            >
+
+                              {severity ===
+                              'CRITICAL'
+                                ? '!!'
+                                : severity ===
+                                  'HIGH'
                                 ? '!'
-                                : '•'}
+                                : severity ===
+                                  'MEDIUM'
+                                ? '•'
+                                : '✓'}
 
                             </div>
 
 
+                            {/* ====================================
+                                MAIN FINDING CONTENT
+                                ==================================== */}
+
                             <div className="finding-main">
+
+                              {/* HEADING */}
 
                               <div className="finding-heading">
 
@@ -643,21 +931,26 @@ function App() {
                               </div>
 
 
+                              {/* MESSAGE */}
+
                               <p className="finding-message">
 
-                                {
-                                  finding.extra?.message ||
-                                  'Security vulnerability detected.'
-                                }
+                                {finding.extra
+                                  ?.message ||
+                                  'Security vulnerability detected.'}
 
                               </p>
 
 
-                              {/* PHASE 2 DETAILS */}
+                              {/* ==================================
+                                  PHASE 2 RISK DETAILS
+                                  ================================== */}
 
                               {assessment && (
 
                                 <div className="risk-details">
+
+                                  {/* RISK SCORE */}
 
                                   <div className="risk-detail">
 
@@ -666,11 +959,15 @@ function App() {
                                     </span>
 
                                     <strong>
-                                      {assessment.risk_score}/10
+                                      {assessment.risk_score ??
+                                        0}
+                                      /10
                                     </strong>
 
                                   </div>
 
+
+                                  {/* EXPLOITABILITY */}
 
                                   <div className="risk-detail">
 
@@ -679,11 +976,14 @@ function App() {
                                     </span>
 
                                     <strong>
-                                      {assessment.exploitability}
+                                      {assessment.exploitability ||
+                                        'UNKNOWN'}
                                     </strong>
 
                                   </div>
 
+
+                                  {/* IMPACT */}
 
                                   <div className="risk-detail-wide">
 
@@ -692,11 +992,14 @@ function App() {
                                     </span>
 
                                     <p>
-                                      {assessment.impact}
+                                      {assessment.impact ||
+                                        'Impact information unavailable.'}
                                     </p>
 
                                   </div>
 
+
+                                  {/* RECOMMENDATION */}
 
                                   <div className="risk-detail-wide">
 
@@ -705,7 +1008,8 @@ function App() {
                                     </span>
 
                                     <p>
-                                      {assessment.recommendation}
+                                      {assessment.recommendation ||
+                                        'Review and remediate this vulnerability.'}
                                     </p>
 
                                   </div>
@@ -714,6 +1018,10 @@ function App() {
 
                               )}
 
+
+                              {/* ==================================
+                                  FINDING META
+                                  ================================== */}
 
                               <div className="finding-meta">
 
@@ -726,21 +1034,25 @@ function App() {
 
                                 <span>
                                   Line{' '}
-                                  {finding.start?.line ||
-                                    '-'}
+                                  {finding.start
+                                    ?.line || '-'}
                                 </span>
 
                                 <span>
-                                  {
-                                    assessment?.cwe ||
-                                    'Security'
-                                  }
+                                  {getCwe(
+                                    assessment,
+                                    finding
+                                  )}
                                 </span>
 
                               </div>
 
                             </div>
 
+
+                            {/* ==================================
+                                ARROW
+                                ================================== */}
 
                             <div className="finding-arrow">
                               →
@@ -749,7 +1061,6 @@ function App() {
                           </div>
 
                         )
-
                       }
                     )}
 
