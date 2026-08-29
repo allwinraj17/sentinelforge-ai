@@ -1,7 +1,8 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
-
+from app.agents.auto_fix_agent import generate_fix
+from app.services.code_context import get_code_context
 from app.config import settings
 from app.database import engine, Base
 from app import models
@@ -434,4 +435,60 @@ async def analyze_findings(
                 "AI analysis failed: "
                 f"{str(e)}"
             ),
+        )
+    # ============================================================
+# PHASE 3
+# AUTO-FIX AGENT
+# ============================================================
+
+@app.post("/scan/auto-fix")
+async def generate_auto_fix(
+    vulnerability: str = Form(...),
+    source_code: str = Form(...),
+):
+    """
+    Generate a secure code-fix suggestion.
+
+    The repository is NOT modified.
+    """
+
+    import json
+
+    try:
+        vulnerability_data = json.loads(
+            vulnerability
+        )
+
+    except json.JSONDecodeError:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid vulnerability data.",
+        )
+
+    if not source_code.strip():
+
+        raise HTTPException(
+            status_code=400,
+            detail="Source code is required.",
+        )
+
+    try:
+
+        fix = generate_fix(
+            vulnerability_data,
+            source_code,
+        )
+
+        return {
+            "success": True,
+            "fix": fix,
+            "repository_modified": False,
+        }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Auto-Fix Agent failed: {str(e)}",
         )

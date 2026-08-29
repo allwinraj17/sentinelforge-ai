@@ -26,6 +26,12 @@ class Settings(BaseSettings):
     # ========================================================
 
     environment: str = "development"
+        # ========================================================
+    # GROQ AI
+    # ========================================================
+
+    GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+    groq_model: str = "openai/gpt-oss-120b"
 
     # ========================================================
     # SETTINGS CONFIGURATION

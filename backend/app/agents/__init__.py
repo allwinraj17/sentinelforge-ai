@@ -5,8 +5,8 @@ This package contains specialized security-analysis agents
 used by the SentinelForge AI platform.
 """
 
-from .report_agent import SecurityReportAgent
+from .auto_fix_agent import generate_fix
 
 __all__ = [
-    "SecurityReportAgent",
+    "generate_fix",
 ]
