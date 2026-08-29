@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import './App.css'
 
-const API_URL = 'https://sentinelforge-ai.onrender.com"'
+const API_URL = "https://sentinelforge-ai.onrender.com"
 
 function App() {
   const [file, setFile] = useState(null)
