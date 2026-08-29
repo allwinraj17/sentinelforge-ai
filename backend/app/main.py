@@ -40,27 +40,21 @@ app = FastAPI(
 # CORS CONFIGURATION
 # ============================================================
 
-configured_origins = [
-    origin.strip().rstrip("/")
-    for origin in settings.cors_origins.split(",")
-    if origin.strip()
-]
-
-
-default_origins = [
+allowed_origins = [
+    "https://sentinelforge-ai.vercel.app",
+    "https://sentinelforge-ai-aaa-ac6c.vercel.app",
+    "https://sentinelforge-l7z3qg4an-aaa-ac6c.vercel.app",
     "http://localhost:5173",
     "http://localhost:3000",
-    "https://sentinelforge-ai.vercel.app",
-    "https://sentinelforge-l7z3qg4an-aaa-ac6c.vercel.app",
 ]
 
-
-allowed_origins = list(
-    dict.fromkeys(
-        configured_origins + default_origins
-    )
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-
 
 print("============================================================")
 print("SentinelForge AI - CORS Configuration")
@@ -70,24 +64,6 @@ for origin in allowed_origins:
     print(f"Allowed Origin: {origin}")
 
 print("============================================================")
-
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=[
-        "GET",
-        "POST",
-        "PUT",
-        "DELETE",
-        "OPTIONS",
-        "PATCH",
-    ],
-    allow_headers=["*"],
-    expose_headers=["*"],
-    max_age=600,
-)
 
 
 # ============================================================
@@ -155,7 +131,6 @@ async def upload_and_scan(
     # ========================================================
 
     if not file.filename:
-
         raise HTTPException(
             status_code=400,
             detail="No filename was provided.",
@@ -164,7 +139,6 @@ async def upload_and_scan(
     filename = file.filename.strip()
 
     if not filename.lower().endswith(".zip"):
-
         raise HTTPException(
             status_code=400,
             detail="Only .zip files are supported.",
@@ -181,7 +155,6 @@ async def upload_and_scan(
         contents = await file.read()
 
         if not contents:
-
             raise HTTPException(
                 status_code=400,
                 detail="The uploaded ZIP file is empty.",
@@ -303,27 +276,12 @@ async def upload_and_scan(
         # ====================================================
 
         return {
-
             "success": True,
-
             "filename": filename,
-
-            # ----------------------------------------------
-            # PHASE 1
-            # ----------------------------------------------
-
             "findings_count": len(findings),
-
             "findings": findings,
-
-            # ----------------------------------------------
-            # PHASE 2
-            # ----------------------------------------------
-
             "risk_assessments": risk_assessments,
-
             "overall_risk": overall_risk,
-
         }
 
     finally:
@@ -396,11 +354,8 @@ async def analyze_findings(
         )
 
         return {
-
             "success": True,
-
             "analysis": analysis,
-
         }
 
     # ========================================================
@@ -514,13 +469,9 @@ async def generate_auto_fix(
         )
 
         return {
-
             "success": True,
-
             "fix": fix,
-
             "repository_modified": False,
-
         }
 
     except Exception as e:
