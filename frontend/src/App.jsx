@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import './App.css'
 
-const API_URL = "https://sentinelforge-ai.onrender.com"
+const API_URL = 'https://sentinelforge-ai.onrender.com'
 
 function App() {
   const [file, setFile] = useState(null)
@@ -36,7 +36,6 @@ function App() {
     setFindings(null)
     setError(null)
 
-    // Clear previous Auto-Fix results
     setFixLoading({})
     setFixResults({})
     setFixErrors({})
@@ -64,10 +63,13 @@ function App() {
     formData.append('file', file)
 
     try {
-      const response = await fetch(`${API_URL}/scan/upload`, {
-        method: 'POST',
-        body: formData,
-      })
+      const response = await fetch(
+        `${API_URL}/scan/upload`,
+        {
+          method: 'POST',
+          body: formData,
+        }
+      )
 
       let data
 
@@ -88,12 +90,14 @@ function App() {
       }
 
       if (!data) {
-        throw new Error('The backend returned an empty response.')
+        throw new Error(
+          'The backend returned an empty response.'
+        )
       }
 
-      // ----------------------------------------------------------
-      // Normalize backend response
-      // ----------------------------------------------------------
+      // ========================================================
+      // NORMALIZE BACKEND RESPONSE
+      // ========================================================
 
       const normalizedFindings = Array.isArray(data.findings)
         ? data.findings
@@ -117,23 +121,32 @@ function App() {
 
       setFindings({
         ...data,
+
         findings: normalizedFindings,
+
         findings_count:
           typeof data.findings_count === 'number'
             ? data.findings_count
             : normalizedFindings.length,
+
         risk_assessments: normalizedRiskAssessments,
+
         overall_risk: normalizedOverallRisk,
       })
     } catch (err) {
       console.error('Scan request error:', err)
 
+      const errorMessage =
+        err?.message?.toLowerCase() || ''
+
       if (
         err instanceof TypeError ||
-        err?.message?.toLowerCase().includes('fetch')
+        errorMessage.includes('fetch') ||
+        errorMessage.includes('failed to fetch') ||
+        errorMessage.includes('network')
       ) {
         setError(
-          'Unable to connect to the SentinelForge backend. Make sure FastAPI is running on http://127.0.0.1:8000.'
+          'Unable to connect to the SentinelForge backend. Please check that the Render backend is running.'
         )
       } else {
         setError(
@@ -167,13 +180,11 @@ function App() {
       return
     }
 
-    // Start loading for this specific finding
     setFixLoading((previous) => ({
       ...previous,
       [index]: true,
     }))
 
-    // Clear old error/result
     setFixErrors((previous) => {
       const updated = { ...previous }
       delete updated[index]
@@ -189,13 +200,11 @@ function App() {
     try {
       const formData = new FormData()
 
-      // Backend expects JSON string
       formData.append(
         'vulnerability',
         JSON.stringify(finding)
       )
 
-      // Backend expects source_code
       formData.append(
         'source_code',
         sourceCode
@@ -234,13 +243,15 @@ function App() {
         )
       }
 
-      // Store result using finding index
       setFixResults((previous) => ({
         ...previous,
         [index]: data,
       }))
     } catch (err) {
-      console.error('Auto-Fix request error:', err)
+      console.error(
+        'Auto-Fix request error:',
+        err
+      )
 
       setFixErrors((previous) => ({
         ...previous,
@@ -318,7 +329,8 @@ function App() {
     const checkId = finding?.check_id
 
     if (checkId) {
-      const lowerCheckId = checkId.toLowerCase()
+      const lowerCheckId =
+        checkId.toLowerCase()
 
       if (lowerCheckId.includes('sql')) {
         return 'SQL Injection'
@@ -328,11 +340,15 @@ function App() {
         return 'Cross-Site Scripting'
       }
 
-      if (lowerCheckId.includes('command')) {
+      if (
+        lowerCheckId.includes('command')
+      ) {
         return 'Command Injection'
       }
 
-      if (lowerCheckId.includes('secret')) {
+      if (
+        lowerCheckId.includes('secret')
+      ) {
         return 'Hardcoded Secret'
       }
     }
@@ -349,7 +365,9 @@ function App() {
       return 'Unknown file'
     }
 
-    return String(path).split(/[\\/]/).pop()
+    return String(path)
+      .split(/[\\/]/)
+      .pop()
   }
 
   // ============================================================
@@ -452,14 +470,18 @@ function App() {
       <aside className="sidebar">
 
         <div className="brand">
+
           <div className="brand-icon">
             🛡
           </div>
 
           <div>
             <h1>SentinelForge</h1>
-            <span>AI Security Platform</span>
+            <span>
+              AI Security Platform
+            </span>
           </div>
+
         </div>
 
         <nav>
@@ -489,12 +511,19 @@ function App() {
         <div className="sidebar-bottom">
 
           <div className="system-status">
+
             <span className="status-dot"></span>
 
             <div>
-              <strong>Backend Online</strong>
-              <small>FastAPI connected</small>
+              <strong>
+                Backend Online
+              </strong>
+
+              <small>
+                FastAPI connected
+              </small>
             </div>
+
           </div>
 
         </div>
@@ -507,36 +536,37 @@ function App() {
 
       <main className="main">
 
-        {/* ====================================================
-            TOP BAR
-            ==================================================== */}
+        {/* TOP BAR */}
 
         <header className="topbar">
 
           <div>
+
             <span className="breadcrumb">
               Dashboard / Security Scanner
             </span>
 
-            <h2>Code Security</h2>
+            <h2>
+              Code Security
+            </h2>
+
           </div>
 
           <div className="online">
+
             <span></span>
-            Local Development
+
+            Cloud Backend
+
           </div>
 
         </header>
 
-        {/* ====================================================
-            CONTENT
-            ==================================================== */}
+        {/* CONTENT */}
 
         <section className="content">
 
-          {/* ==================================================
-              HERO
-              ================================================== */}
+          {/* HERO */}
 
           <div className="hero">
 
@@ -567,9 +597,7 @@ function App() {
 
           </div>
 
-          {/* ==================================================
-              UPLOAD
-              ================================================== */}
+          {/* UPLOAD */}
 
           <div className="upload-card">
 
@@ -577,7 +605,9 @@ function App() {
 
               <div>
 
-                <h3>Scan Code</h3>
+                <h3>
+                  Scan Code
+                </h3>
 
                 <p>
                   Upload your project as a ZIP file
@@ -605,12 +635,15 @@ function App() {
               </div>
 
               <h4>
+
                 {file
                   ? file.name
                   : 'Drop your ZIP file here'}
+
               </h4>
 
               <p>
+
                 {file
                   ? `${(
                       file.size /
@@ -618,6 +651,7 @@ function App() {
                       1024
                     ).toFixed(2)} MB`
                   : 'or click to browse files'}
+
               </p>
 
             </label>
@@ -644,9 +678,7 @@ function App() {
 
           </div>
 
-          {/* ==================================================
-              ERROR
-              ================================================== */}
+          {/* ERROR */}
 
           {error && (
 
@@ -670,16 +702,14 @@ function App() {
 
           )}
 
-          {/* ==================================================
-              RESULTS
-              ================================================== */}
+          {/* RESULTS */}
 
           {findings && (
 
             <>
 
               {/* =================================================
-                  PHASE 2 - OVERALL RISK ASSESSMENT
+                  PHASE 2
                   ================================================= */}
 
               <div className="risk-overview">
@@ -700,23 +730,26 @@ function App() {
 
                   <div
                     className={`overall-risk-badge ${getRiskClass(
-                      findings.overall_risk?.overall_level
+                      findings.overall_risk
+                        ?.overall_level
                     )}`}
                   >
+
                     {findings.overall_risk
                       ?.overall_level ||
                       'SECURE'}
+
                   </div>
 
                 </div>
 
-                {/* RISK SCORE */}
-
                 <div className="risk-score">
 
                   <div className="risk-score-number">
+
                     {findings.overall_risk
                       ?.overall_score ?? 0}
+
                   </div>
 
                   <div className="risk-score-label">
@@ -725,12 +758,11 @@ function App() {
 
                 </div>
 
-                {/* RISK BREAKDOWN */}
-
                 <div className="risk-breakdown">
 
                   <div>
                     <span>Critical</span>
+
                     <strong>
                       {findings.overall_risk
                         ?.critical ?? 0}
@@ -739,6 +771,7 @@ function App() {
 
                   <div>
                     <span>High</span>
+
                     <strong>
                       {findings.overall_risk
                         ?.high ?? 0}
@@ -747,6 +780,7 @@ function App() {
 
                   <div>
                     <span>Medium</span>
+
                     <strong>
                       {findings.overall_risk
                         ?.medium ?? 0}
@@ -755,6 +789,7 @@ function App() {
 
                   <div>
                     <span>Low</span>
+
                     <strong>
                       {findings.overall_risk
                         ?.low ?? 0}
@@ -766,7 +801,7 @@ function App() {
               </div>
 
               {/* =================================================
-                  PHASE 3 INDICATOR
+                  PHASE 3
                   ================================================= */}
 
               <div className="risk-overview">
@@ -805,8 +840,6 @@ function App() {
 
               <div className="stats">
 
-                {/* TOTAL FINDINGS */}
-
                 <div className="stat-card">
 
                   <div className="stat-icon">
@@ -826,8 +859,6 @@ function App() {
                   </div>
 
                 </div>
-
-                {/* HIGH RISK */}
 
                 <div className="stat-card danger">
 
@@ -849,8 +880,6 @@ function App() {
 
                 </div>
 
-                {/* FILES AFFECTED */}
-
                 <div className="stat-card">
 
                   <div className="stat-icon">
@@ -870,8 +899,6 @@ function App() {
                   </div>
 
                 </div>
-
-                {/* SCANNER */}
 
                 <div className="stat-card">
 
@@ -911,24 +938,27 @@ function App() {
 
                     <p>
                       Detected vulnerabilities in{' '}
+
                       <strong>
                         {findings.filename ||
                           'uploaded repository'}
                       </strong>
+
                     </p>
 
                   </div>
 
                   <span className="finding-count">
-                    {findings.findings_count}{' '}
+
+                    {findings.findings_count}
+                    {' '}
                     Findings
+
                   </span>
 
                 </div>
 
-                {/* =================================================
-                    NO FINDINGS
-                    ================================================= */}
+                {/* NO FINDINGS */}
 
                 {findings.findings.length === 0 ? (
 
@@ -951,9 +981,7 @@ function App() {
 
                 ) : (
 
-                  /* =================================================
-                     FINDING LIST
-                     ================================================= */
+                  /* FINDING LIST */
 
                   <div className="finding-list">
 
@@ -993,13 +1021,12 @@ function App() {
                             }
                           >
 
-                            {/* ====================================
-                                SEVERITY ICON
-                                ==================================== */}
+                            {/* SEVERITY ICON */}
 
                             <div
                               className={`finding-severity ${severity.toLowerCase()}`}
                             >
+
                               {severity ===
                               'CRITICAL'
                                 ? '!!'
@@ -1010,11 +1037,10 @@ function App() {
                                   'MEDIUM'
                                 ? '•'
                                 : '✓'}
+
                             </div>
 
-                            {/* ====================================
-                                MAIN FINDING CONTENT
-                                ==================================== */}
+                            {/* MAIN FINDING */}
 
                             <div className="finding-main">
 
@@ -1037,14 +1063,14 @@ function App() {
                               {/* MESSAGE */}
 
                               <p className="finding-message">
+
                                 {finding.extra
                                   ?.message ||
                                   'Security vulnerability detected.'}
+
                               </p>
 
-                              {/* ==================================
-                                  PHASE 2 RISK DETAILS
-                                  ================================== */}
+                              {/* RISK DETAILS */}
 
                               {assessment && (
 
@@ -1107,9 +1133,7 @@ function App() {
 
                               )}
 
-                              {/* ==================================
-                                  FINDING META
-                                  ================================== */}
+                              {/* FINDING META */}
 
                               <div className="finding-meta">
 
@@ -1135,9 +1159,7 @@ function App() {
 
                               </div>
 
-                              {/* ==================================
-                                  AUTO-FIX BUTTON
-                                  ================================== */}
+                              {/* AUTO FIX */}
 
                               <div className="auto-fix-section">
 
@@ -1174,9 +1196,7 @@ function App() {
 
                               </div>
 
-                              {/* ==================================
-                                  AUTO-FIX ERROR
-                                  ================================== */}
+                              {/* AUTO FIX ERROR */}
 
                               {fixError && (
 
@@ -1194,9 +1214,7 @@ function App() {
 
                               )}
 
-                              {/* ==================================
-                                  AUTO-FIX RESULT
-                                  ================================== */}
+                              {/* AUTO FIX RESULT */}
 
                               {fixResult && (
 
@@ -1232,11 +1250,13 @@ function App() {
                                   </div>
 
                                   <p className="fix-disclaimer">
+
                                     ⚠ This fix is an AI-generated
                                     suggestion. SentinelForge did
                                     not modify your repository.
                                     Review and test the change
                                     before applying it.
+
                                   </p>
 
                                 </div>
@@ -1245,9 +1265,7 @@ function App() {
 
                             </div>
 
-                            {/* ==================================
-                                ARROW
-                                ================================== */}
+                            {/* ARROW */}
 
                             <div className="finding-arrow">
                               →
@@ -1278,4 +1296,3 @@ function App() {
 }
 
 export default App
-
