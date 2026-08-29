@@ -1,8 +1,11 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
+import json
+
 from app.agents.auto_fix_agent import generate_fix
 from app.services.code_context import get_code_context
+
 from app.config import settings
 from app.database import engine, Base
 from app import models
@@ -37,7 +40,6 @@ app = FastAPI(
 # CORS CONFIGURATION
 # ============================================================
 
-# Read origins from environment/config
 configured_origins = [
     origin.strip().rstrip("/")
     for origin in settings.cors_origins.split(",")
@@ -45,21 +47,14 @@ configured_origins = [
 ]
 
 
-# Frontend origins
 default_origins = [
-    # Local development
     "http://localhost:5173",
     "http://localhost:3000",
-
-    # Main Vercel domain
     "https://sentinelforge-ai.vercel.app",
-
-    # Current Vercel deployment
     "https://sentinelforge-l7z3qg4an-aaa-ac6c.vercel.app",
 ]
 
 
-# Combine configured + default origins
 allowed_origins = list(
     dict.fromkeys(
         configured_origins + default_origins
@@ -79,11 +74,8 @@ print("============================================================")
 
 app.add_middleware(
     CORSMiddleware,
-
     allow_origins=allowed_origins,
-
     allow_credentials=True,
-
     allow_methods=[
         "GET",
         "POST",
@@ -92,11 +84,8 @@ app.add_middleware(
         "OPTIONS",
         "PATCH",
     ],
-
     allow_headers=["*"],
-
     expose_headers=["*"],
-
     max_age=600,
 )
 
@@ -137,6 +126,7 @@ async def health_check():
 
 
 # ============================================================
+# PHASE 1 + PHASE 2 + PHASE 3 PREPARATION
 # UPLOAD + SECURITY SCAN
 # ============================================================
 
@@ -145,8 +135,19 @@ async def upload_and_scan(
     file: UploadFile = File(...)
 ):
     """
-    Upload a ZIP file, scan the source code using Semgrep,
-    and perform Phase 2 risk assessment.
+    Upload a ZIP file.
+
+    Phase 1:
+        Semgrep security scan
+
+    Phase 2:
+        Risk assessment
+
+    Phase 3 preparation:
+        Attach source code context to each finding
+
+    The actual Auto-Fix Agent is called separately
+    through /scan/auto-fix.
     """
 
     # ========================================================
@@ -160,9 +161,7 @@ async def upload_and_scan(
             detail="No filename was provided.",
         )
 
-
     filename = file.filename.strip()
-
 
     if not filename.lower().endswith(".zip"):
 
@@ -171,9 +170,7 @@ async def upload_and_scan(
             detail="Only .zip files are supported.",
         )
 
-
     extract_dir = None
-
 
     try:
 
@@ -183,14 +180,12 @@ async def upload_and_scan(
 
         contents = await file.read()
 
-
         if not contents:
 
             raise HTTPException(
                 status_code=400,
                 detail="The uploaded ZIP file is empty.",
             )
-
 
         # ====================================================
         # EXTRACT ZIP
@@ -219,7 +214,6 @@ async def upload_and_scan(
                 ),
             )
 
-
         # ====================================================
         # PHASE 1
         # SEMGREP SECURITY SCAN
@@ -241,7 +235,6 @@ async def upload_and_scan(
                 ),
             )
 
-
         # ====================================================
         # PHASE 2
         # RISK ASSESSMENT
@@ -252,7 +245,6 @@ async def upload_and_scan(
             risk_assessments = assess_findings(
                 findings
             )
-
 
             overall_risk = calculate_overall_risk(
                 risk_assessments
@@ -268,6 +260,43 @@ async def upload_and_scan(
                 ),
             )
 
+        # ====================================================
+        # PHASE 3 PREPARATION
+        # ATTACH SOURCE CODE CONTEXT
+        # ====================================================
+
+        for finding in findings:
+
+            try:
+
+                file_path = finding.get("path")
+
+                line_number = (
+                    finding.get("start", {})
+                    .get("line")
+                )
+
+                if file_path and line_number:
+
+                    finding["source_code"] = (
+                        get_code_context(
+                            extract_dir,
+                            file_path,
+                            line_number,
+                        )
+                    )
+
+                else:
+
+                    finding["source_code"] = ""
+
+            except Exception as e:
+
+                finding["source_code"] = ""
+
+                finding["source_context_error"] = (
+                    str(e)
+                )
 
         # ====================================================
         # RETURN RESULTS
@@ -297,7 +326,6 @@ async def upload_and_scan(
 
         }
 
-
     finally:
 
         # ====================================================
@@ -314,7 +342,7 @@ async def upload_and_scan(
 
             except Exception:
 
-                # Never hide the original result/error
+                # Never hide original result/error
                 pass
 
 
@@ -342,7 +370,6 @@ async def analyze_findings(
             detail="No findings to analyze.",
         )
 
-
     # ========================================================
     # VALIDATE API KEY
     # ========================================================
@@ -357,7 +384,6 @@ async def analyze_findings(
             ),
         )
 
-
     try:
 
         # ====================================================
@@ -369,7 +395,6 @@ async def analyze_findings(
             request.findings,
         )
 
-
         return {
 
             "success": True,
@@ -377,7 +402,6 @@ async def analyze_findings(
             "analysis": analysis,
 
         }
-
 
     # ========================================================
     # AI PROVIDER HTTP ERROR
@@ -389,7 +413,6 @@ async def analyze_findings(
             "AI provider request failed."
         )
 
-
         try:
 
             provider_message = e.response.text
@@ -398,7 +421,6 @@ async def analyze_findings(
 
             pass
 
-
         raise HTTPException(
             status_code=400,
             detail=(
@@ -406,7 +428,6 @@ async def analyze_findings(
                 f"{provider_message}"
             ),
         )
-
 
     # ========================================================
     # AI PROVIDER CONNECTION ERROR
@@ -422,7 +443,6 @@ async def analyze_findings(
             ),
         )
 
-
     # ========================================================
     # UNEXPECTED ERROR
     # ========================================================
@@ -436,7 +456,9 @@ async def analyze_findings(
                 f"{str(e)}"
             ),
         )
-    # ============================================================
+
+
+# ============================================================
 # PHASE 3
 # AUTO-FIX AGENT
 # ============================================================
@@ -452,9 +474,12 @@ async def generate_auto_fix(
     The repository is NOT modified.
     """
 
-    import json
+    # ========================================================
+    # PARSE VULNERABILITY DATA
+    # ========================================================
 
     try:
+
         vulnerability_data = json.loads(
             vulnerability
         )
@@ -466,12 +491,20 @@ async def generate_auto_fix(
             detail="Invalid vulnerability data.",
         )
 
+    # ========================================================
+    # VALIDATE SOURCE CODE
+    # ========================================================
+
     if not source_code.strip():
 
         raise HTTPException(
             status_code=400,
             detail="Source code is required.",
         )
+
+    # ========================================================
+    # CALL AUTO-FIX AGENT
+    # ========================================================
 
     try:
 
@@ -481,14 +514,21 @@ async def generate_auto_fix(
         )
 
         return {
+
             "success": True,
+
             "fix": fix,
+
             "repository_modified": False,
+
         }
 
     except Exception as e:
 
         raise HTTPException(
             status_code=500,
-            detail=f"Auto-Fix Agent failed: {str(e)}",
+            detail=(
+                "Auto-Fix Agent failed: "
+                f"{str(e)}"
+            ),
         )

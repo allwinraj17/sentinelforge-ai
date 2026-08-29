@@ -1,13 +1,18 @@
 import { useState } from 'react'
 import './App.css'
 
-const API_URL = 'https://sentinelforge-ai.onrender.com'
+const API_URL = 'http://127.0.0.1:8000'
 
 function App() {
   const [file, setFile] = useState(null)
   const [scanning, setScanning] = useState(false)
   const [findings, setFindings] = useState(null)
   const [error, setError] = useState(null)
+
+  // Auto-Fix states
+  const [fixLoading, setFixLoading] = useState({})
+  const [fixResults, setFixResults] = useState({})
+  const [fixErrors, setFixErrors] = useState({})
 
   // ============================================================
   // FILE SELECTION
@@ -30,6 +35,11 @@ function App() {
     setFile(selectedFile)
     setFindings(null)
     setError(null)
+
+    // Clear previous Auto-Fix results
+    setFixLoading({})
+    setFixResults({})
+    setFixErrors({})
   }
 
   // ============================================================
@@ -45,6 +55,10 @@ function App() {
     setScanning(true)
     setError(null)
     setFindings(null)
+
+    setFixLoading({})
+    setFixResults({})
+    setFixErrors({})
 
     const formData = new FormData()
     formData.append('file', file)
@@ -103,16 +117,12 @@ function App() {
 
       setFindings({
         ...data,
-
         findings: normalizedFindings,
-
         findings_count:
           typeof data.findings_count === 'number'
             ? data.findings_count
             : normalizedFindings.length,
-
         risk_assessments: normalizedRiskAssessments,
-
         overall_risk: normalizedOverallRisk,
       })
     } catch (err) {
@@ -123,7 +133,7 @@ function App() {
         err?.message?.toLowerCase().includes('fetch')
       ) {
         setError(
-          'Unable to connect to the SentinelForge backend. Please check the backend connection and try again.'
+          'Unable to connect to the SentinelForge backend. Make sure FastAPI is running on http://127.0.0.1:8000.'
         )
       } else {
         setError(
@@ -133,6 +143,116 @@ function App() {
       }
     } finally {
       setScanning(false)
+    }
+  }
+
+  // ============================================================
+  // AUTO-FIX AGENT
+  // ============================================================
+
+  const handleAutoFix = async (finding, index) => {
+    if (!finding) {
+      return
+    }
+
+    const sourceCode = finding.source_code || ''
+
+    if (!sourceCode.trim()) {
+      setFixErrors((previous) => ({
+        ...previous,
+        [index]:
+          'Source code context is not available for this vulnerability.',
+      }))
+
+      return
+    }
+
+    // Start loading for this specific finding
+    setFixLoading((previous) => ({
+      ...previous,
+      [index]: true,
+    }))
+
+    // Clear old error/result
+    setFixErrors((previous) => {
+      const updated = { ...previous }
+      delete updated[index]
+      return updated
+    })
+
+    setFixResults((previous) => {
+      const updated = { ...previous }
+      delete updated[index]
+      return updated
+    })
+
+    try {
+      const formData = new FormData()
+
+      // Backend expects JSON string
+      formData.append(
+        'vulnerability',
+        JSON.stringify(finding)
+      )
+
+      // Backend expects source_code
+      formData.append(
+        'source_code',
+        sourceCode
+      )
+
+      const response = await fetch(
+        `${API_URL}/scan/auto-fix`,
+        {
+          method: 'POST',
+          body: formData,
+        }
+      )
+
+      let data
+
+      try {
+        data = await response.json()
+      } catch {
+        throw new Error(
+          `Auto-Fix backend returned an invalid response (${response.status}).`
+        )
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data?.detail ||
+            data?.message ||
+            `Auto-Fix failed (${response.status}).`
+        )
+      }
+
+      if (!data?.success) {
+        throw new Error(
+          data?.detail ||
+            'Auto-Fix Agent did not return a successful result.'
+        )
+      }
+
+      // Store result using finding index
+      setFixResults((previous) => ({
+        ...previous,
+        [index]: data,
+      }))
+    } catch (err) {
+      console.error('Auto-Fix request error:', err)
+
+      setFixErrors((previous) => ({
+        ...previous,
+        [index]:
+          err?.message ||
+          'Unable to generate the security fix.',
+      }))
+    } finally {
+      setFixLoading((previous) => ({
+        ...previous,
+        [index]: false,
+      }))
     }
   }
 
@@ -198,27 +318,21 @@ function App() {
     const checkId = finding?.check_id
 
     if (checkId) {
-      if (
-        checkId.toLowerCase().includes('sql')
-      ) {
+      const lowerCheckId = checkId.toLowerCase()
+
+      if (lowerCheckId.includes('sql')) {
         return 'SQL Injection'
       }
 
-      if (
-        checkId.toLowerCase().includes('xss')
-      ) {
+      if (lowerCheckId.includes('xss')) {
         return 'Cross-Site Scripting'
       }
 
-      if (
-        checkId.toLowerCase().includes('command')
-      ) {
+      if (lowerCheckId.includes('command')) {
         return 'Command Injection'
       }
 
-      if (
-        checkId.toLowerCase().includes('secret')
-      ) {
+      if (lowerCheckId.includes('secret')) {
         return 'Hardcoded Secret'
       }
     }
@@ -272,7 +386,10 @@ function App() {
     const cwe =
       finding?.extra?.metadata?.cwe
 
-    if (Array.isArray(cwe) && cwe.length > 0) {
+    if (
+      Array.isArray(cwe) &&
+      cwe.length > 0
+    ) {
       return cwe.join(', ')
     }
 
@@ -335,7 +452,6 @@ function App() {
       <aside className="sidebar">
 
         <div className="brand">
-
           <div className="brand-icon">
             🛡
           </div>
@@ -344,7 +460,6 @@ function App() {
             <h1>SentinelForge</h1>
             <span>AI Security Platform</span>
           </div>
-
         </div>
 
         <nav>
@@ -374,20 +489,17 @@ function App() {
         <div className="sidebar-bottom">
 
           <div className="system-status">
-
             <span className="status-dot"></span>
 
             <div>
               <strong>Backend Online</strong>
-              <small>Render API connected</small>
+              <small>FastAPI connected</small>
             </div>
-
           </div>
 
         </div>
 
       </aside>
-
 
       {/* ======================================================
           MAIN
@@ -402,25 +514,19 @@ function App() {
         <header className="topbar">
 
           <div>
-
             <span className="breadcrumb">
               Dashboard / Security Scanner
             </span>
 
             <h2>Code Security</h2>
-
           </div>
 
           <div className="online">
-
             <span></span>
-
-            Production
-
+            Local Development
           </div>
 
         </header>
-
 
         {/* ====================================================
             CONTENT
@@ -449,7 +555,8 @@ function App() {
               <p>
                 Upload a ZIP file and SentinelForge
                 will scan your source code for security
-                vulnerabilities.
+                vulnerabilities and generate AI-powered
+                security fixes.
               </p>
 
             </div>
@@ -459,7 +566,6 @@ function App() {
             </div>
 
           </div>
-
 
           {/* ==================================================
               UPLOAD
@@ -484,7 +590,6 @@ function App() {
               </span>
 
             </div>
-
 
             <label className="drop-zone">
 
@@ -517,7 +622,6 @@ function App() {
 
             </label>
 
-
             <button
               className="scan-button"
               onClick={handleScan}
@@ -539,7 +643,6 @@ function App() {
             </button>
 
           </div>
-
 
           {/* ==================================================
               ERROR
@@ -567,7 +670,6 @@ function App() {
 
           )}
 
-
           {/* ==================================================
               RESULTS
               ================================================== */}
@@ -587,7 +689,7 @@ function App() {
                   <div>
 
                     <span className="hero-label">
-                      RISK ASSESSMENT
+                      PHASE 2
                     </span>
 
                     <h3>
@@ -608,16 +710,13 @@ function App() {
 
                 </div>
 
-
                 {/* RISK SCORE */}
 
                 <div className="risk-score">
 
                   <div className="risk-score-number">
-
                     {findings.overall_risk
                       ?.overall_score ?? 0}
-
                   </div>
 
                   <div className="risk-score-label">
@@ -626,67 +725,79 @@ function App() {
 
                 </div>
 
-
                 {/* RISK BREAKDOWN */}
 
                 <div className="risk-breakdown">
 
                   <div>
-
-                    <span>
-                      Critical
-                    </span>
-
+                    <span>Critical</span>
                     <strong>
                       {findings.overall_risk
                         ?.critical ?? 0}
                     </strong>
-
                   </div>
 
                   <div>
-
-                    <span>
-                      High
-                    </span>
-
+                    <span>High</span>
                     <strong>
                       {findings.overall_risk
                         ?.high ?? 0}
                     </strong>
-
                   </div>
 
                   <div>
-
-                    <span>
-                      Medium
-                    </span>
-
+                    <span>Medium</span>
                     <strong>
                       {findings.overall_risk
                         ?.medium ?? 0}
                     </strong>
-
                   </div>
 
                   <div>
-
-                    <span>
-                      Low
-                    </span>
-
+                    <span>Low</span>
                     <strong>
                       {findings.overall_risk
                         ?.low ?? 0}
                     </strong>
-
                   </div>
 
                 </div>
 
               </div>
 
+              {/* =================================================
+                  PHASE 3 INDICATOR
+                  ================================================= */}
+
+              <div className="risk-overview">
+
+                <div className="risk-overview-header">
+
+                  <div>
+
+                    <span className="hero-label">
+                      PHASE 3
+                    </span>
+
+                    <h3>
+                      AI Auto-Fix Agent
+                    </h3>
+
+                    <p>
+                      Generate secure code-fix
+                      suggestions using the detected
+                      vulnerability and source-code context.
+                    </p>
+
+                  </div>
+
+                  <div className="overall-risk-badge">
+                    AI POWERED
+                  </div>
+
+                </div>
+
+              </div>
 
               {/* =================================================
                   STATISTICS
@@ -716,7 +827,6 @@ function App() {
 
                 </div>
 
-
                 {/* HIGH RISK */}
 
                 <div className="stat-card danger">
@@ -739,7 +849,6 @@ function App() {
 
                 </div>
 
-
                 {/* FILES AFFECTED */}
 
                 <div className="stat-card">
@@ -761,7 +870,6 @@ function App() {
                   </div>
 
                 </div>
-
 
                 {/* SCANNER */}
 
@@ -786,7 +894,6 @@ function App() {
                 </div>
 
               </div>
-
 
               {/* =================================================
                   SECURITY FINDINGS
@@ -818,7 +925,6 @@ function App() {
                   </span>
 
                 </div>
-
 
                 {/* =================================================
                     NO FINDINGS
@@ -862,18 +968,19 @@ function App() {
                             finding
                           )
 
-                        /*
-                         * Match the risk assessment
-                         * with the finding.
-                         *
-                         * Normally backend returns
-                         * them in the same order.
-                         */
-
                         const assessment =
                           findings.risk_assessments?.[
                             index
                           ]
+
+                        const fixResult =
+                          fixResults[index]
+
+                        const fixError =
+                          fixErrors[index]
+
+                        const isFixing =
+                          fixLoading[index]
 
                         return (
 
@@ -893,7 +1000,6 @@ function App() {
                             <div
                               className={`finding-severity ${severity.toLowerCase()}`}
                             >
-
                               {severity ===
                               'CRITICAL'
                                 ? '!!'
@@ -904,9 +1010,7 @@ function App() {
                                   'MEDIUM'
                                 ? '•'
                                 : '✓'}
-
                             </div>
-
 
                             {/* ====================================
                                 MAIN FINDING CONTENT
@@ -930,17 +1034,13 @@ function App() {
 
                               </div>
 
-
                               {/* MESSAGE */}
 
                               <p className="finding-message">
-
                                 {finding.extra
                                   ?.message ||
                                   'Security vulnerability detected.'}
-
                               </p>
-
 
                               {/* ==================================
                                   PHASE 2 RISK DETAILS
@@ -949,8 +1049,6 @@ function App() {
                               {assessment && (
 
                                 <div className="risk-details">
-
-                                  {/* RISK SCORE */}
 
                                   <div className="risk-detail">
 
@@ -966,9 +1064,6 @@ function App() {
 
                                   </div>
 
-
-                                  {/* EXPLOITABILITY */}
-
                                   <div className="risk-detail">
 
                                     <span>
@@ -982,9 +1077,6 @@ function App() {
 
                                   </div>
 
-
-                                  {/* IMPACT */}
-
                                   <div className="risk-detail-wide">
 
                                     <span>
@@ -997,9 +1089,6 @@ function App() {
                                     </p>
 
                                   </div>
-
-
-                                  {/* RECOMMENDATION */}
 
                                   <div className="risk-detail-wide">
 
@@ -1017,7 +1106,6 @@ function App() {
                                 </div>
 
                               )}
-
 
                               {/* ==================================
                                   FINDING META
@@ -1047,8 +1135,115 @@ function App() {
 
                               </div>
 
-                            </div>
+                              {/* ==================================
+                                  AUTO-FIX BUTTON
+                                  ================================== */}
 
+                              <div className="auto-fix-section">
+
+                                <button
+                                  className="auto-fix-button"
+                                  onClick={() =>
+                                    handleAutoFix(
+                                      finding,
+                                      index
+                                    )
+                                  }
+                                  disabled={isFixing}
+                                >
+
+                                  {isFixing ? (
+                                    <>
+                                      <span className="spinner"></span>
+                                      Generating Fix...
+                                    </>
+                                  ) : (
+                                    <>
+                                      🛠 Generate Auto-Fix
+                                      <span>→</span>
+                                    </>
+                                  )}
+
+                                </button>
+
+                                <small>
+                                  AI will suggest a secure
+                                  fix. Your repository will
+                                  not be modified.
+                                </small>
+
+                              </div>
+
+                              {/* ==================================
+                                  AUTO-FIX ERROR
+                                  ================================== */}
+
+                              {fixError && (
+
+                                <div className="auto-fix-error">
+
+                                  <strong>
+                                    Auto-Fix Error
+                                  </strong>
+
+                                  <p>
+                                    {fixError}
+                                  </p>
+
+                                </div>
+
+                              )}
+
+                              {/* ==================================
+                                  AUTO-FIX RESULT
+                                  ================================== */}
+
+                              {fixResult && (
+
+                                <div className="auto-fix-result">
+
+                                  <div className="auto-fix-result-header">
+
+                                    <div>
+
+                                      <span className="hero-label">
+                                        PHASE 3 RESULT
+                                      </span>
+
+                                      <h3>
+                                        AI-Generated Security Fix
+                                      </h3>
+
+                                    </div>
+
+                                    <span className="auto-fix-status">
+                                      SUGGESTION ONLY
+                                    </span>
+
+                                  </div>
+
+                                  <div className="fix-content">
+
+                                    <pre>
+                                      {fixResult.fix ||
+                                        'No fix was returned.'}
+                                    </pre>
+
+                                  </div>
+
+                                  <p className="fix-disclaimer">
+                                    ⚠ This fix is an AI-generated
+                                    suggestion. SentinelForge did
+                                    not modify your repository.
+                                    Review and test the change
+                                    before applying it.
+                                  </p>
+
+                                </div>
+
+                              )}
+
+                            </div>
 
                             {/* ==================================
                                 ARROW
@@ -1083,3 +1278,4 @@ function App() {
 }
 
 export default App
+
