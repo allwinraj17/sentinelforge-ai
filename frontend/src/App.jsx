@@ -14,6 +14,12 @@ function App() {
   const [fixResults, setFixResults] = useState({})
   const [fixErrors, setFixErrors] = useState({})
 
+  // Email states
+  const [email, setEmail] = useState('')
+  const [emailLoading, setEmailLoading] = useState(false)
+  const [emailSuccess, setEmailSuccess] = useState(null)
+  const [emailError, setEmailError] = useState(null)
+
   // ============================================================
   // FILE SELECTION
   // ============================================================
@@ -39,6 +45,9 @@ function App() {
     setFixLoading({})
     setFixResults({})
     setFixErrors({})
+
+    setEmailSuccess(null)
+    setEmailError(null)
   }
 
   // ============================================================
@@ -58,6 +67,9 @@ function App() {
     setFixLoading({})
     setFixResults({})
     setFixErrors({})
+
+    setEmailSuccess(null)
+    setEmailError(null)
 
     const formData = new FormData()
     formData.append('file', file)
@@ -95,10 +107,6 @@ function App() {
         )
       }
 
-      // ========================================================
-      // NORMALIZE BACKEND RESPONSE
-      // ========================================================
-
       const normalizedFindings = Array.isArray(data.findings)
         ? data.findings
         : []
@@ -121,7 +129,6 @@ function App() {
 
       setFindings({
         ...data,
-
         findings: normalizedFindings,
 
         findings_count:
@@ -130,7 +137,6 @@ function App() {
             : normalizedFindings.length,
 
         risk_assessments: normalizedRiskAssessments,
-
         overall_risk: normalizedOverallRisk,
       })
     } catch (err) {
@@ -268,6 +274,123 @@ function App() {
   }
 
   // ============================================================
+  // SEND SECURITY REPORT BY EMAIL
+  // ============================================================
+
+  const handleSendEmail = async () => {
+    if (!findings) {
+      setEmailError(
+        'Please complete a security scan first.'
+      )
+      return
+    }
+
+    if (!email.trim()) {
+      setEmailError(
+        'Please enter your email address.'
+      )
+      return
+    }
+
+    const emailPattern =
+      /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+    if (!emailPattern.test(email.trim())) {
+      setEmailError(
+        'Please enter a valid email address.'
+      )
+      return
+    }
+
+    setEmailLoading(true)
+    setEmailSuccess(null)
+    setEmailError(null)
+
+    try {
+      const response = await fetch(
+        `${API_URL}/scan/email-report`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            email: email.trim(),
+
+            filename:
+              findings.filename ||
+              file?.name ||
+              'security-report.zip',
+
+            findings:
+              findings.findings || [],
+
+            risk_assessments:
+              findings.risk_assessments || [],
+
+            overall_risk:
+              findings.overall_risk || {},
+          }),
+        }
+      )
+
+      let data
+
+      try {
+        data = await response.json()
+      } catch {
+        throw new Error(
+          `Email service returned an invalid response (${response.status}).`
+        )
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data?.detail ||
+            data?.message ||
+            `Failed to send report (${response.status}).`
+        )
+      }
+
+      if (!data?.success) {
+        throw new Error(
+          data?.detail ||
+            'Security report could not be sent.'
+        )
+      }
+
+      setEmailSuccess(
+        `Security report sent successfully to ${email.trim()}`
+      )
+    } catch (err) {
+      console.error(
+        'Email report error:',
+        err
+      )
+
+      const message =
+        err?.message?.toLowerCase() || ''
+
+      if (
+        message.includes('fetch') ||
+        message.includes('failed to fetch') ||
+        message.includes('network')
+      ) {
+        setEmailError(
+          'Unable to connect to the email service. Please try again.'
+        )
+      } else {
+        setEmailError(
+          err?.message ||
+            'Unable to send the security report.'
+        )
+      }
+    } finally {
+      setEmailLoading(false)
+    }
+  }
+
+  // ============================================================
   // SEVERITY
   // ============================================================
 
@@ -280,9 +403,8 @@ function App() {
       return 'MEDIUM'
     }
 
-    const normalizedSeverity = String(
-      severity
-    ).toUpperCase()
+    const normalizedSeverity =
+      String(severity).toUpperCase()
 
     if (normalizedSeverity === 'ERROR') {
       return 'HIGH'
@@ -340,15 +462,11 @@ function App() {
         return 'Cross-Site Scripting'
       }
 
-      if (
-        lowerCheckId.includes('command')
-      ) {
+      if (lowerCheckId.includes('command')) {
         return 'Command Injection'
       }
 
-      if (
-        lowerCheckId.includes('secret')
-      ) {
+      if (lowerCheckId.includes('secret')) {
         return 'Hardcoded Secret'
       }
     }
@@ -463,9 +581,7 @@ function App() {
   return (
     <div className="app">
 
-      {/* ======================================================
-          SIDEBAR
-          ====================================================== */}
+      {/* SIDEBAR */}
 
       <aside className="sidebar">
 
@@ -477,9 +593,7 @@ function App() {
 
           <div>
             <h1>SentinelForge</h1>
-            <span>
-              AI Security Platform
-            </span>
+            <span>AI Security Platform</span>
           </div>
 
         </div>
@@ -515,13 +629,8 @@ function App() {
             <span className="status-dot"></span>
 
             <div>
-              <strong>
-                Backend Online
-              </strong>
-
-              <small>
-                FastAPI connected
-              </small>
+              <strong>Backend Online</strong>
+              <small>FastAPI connected</small>
             </div>
 
           </div>
@@ -530,9 +639,7 @@ function App() {
 
       </aside>
 
-      {/* ======================================================
-          MAIN
-          ====================================================== */}
+      {/* MAIN */}
 
       <main className="main">
 
@@ -546,16 +653,13 @@ function App() {
               Dashboard / Security Scanner
             </span>
 
-            <h2>
-              Code Security
-            </h2>
+            <h2>Code Security</h2>
 
           </div>
 
           <div className="online">
 
             <span></span>
-
             Cloud Backend
 
           </div>
@@ -605,9 +709,7 @@ function App() {
 
               <div>
 
-                <h3>
-                  Scan Code
-                </h3>
+                <h3>Scan Code</h3>
 
                 <p>
                   Upload your project as a ZIP file
@@ -635,15 +737,12 @@ function App() {
               </div>
 
               <h4>
-
                 {file
                   ? file.name
                   : 'Drop your ZIP file here'}
-
               </h4>
 
               <p>
-
                 {file
                   ? `${(
                       file.size /
@@ -651,7 +750,6 @@ function App() {
                       1024
                     ).toFixed(2)} MB`
                   : 'or click to browse files'}
-
               </p>
 
             </label>
@@ -681,36 +779,27 @@ function App() {
           {/* ERROR */}
 
           {error && (
-
             <div className="error-box">
 
               <span>!</span>
 
               <div>
 
-                <strong>
-                  Scan Error
-                </strong>
+                <strong>Scan Error</strong>
 
-                <p>
-                  {error}
-                </p>
+                <p>{error}</p>
 
               </div>
 
             </div>
-
           )}
 
           {/* RESULTS */}
 
           {findings && (
-
             <>
 
-              {/* =================================================
-                  PHASE 2
-                  ================================================= */}
+              {/* PHASE 2 */}
 
               <div className="risk-overview">
 
@@ -730,15 +819,12 @@ function App() {
 
                   <div
                     className={`overall-risk-badge ${getRiskClass(
-                      findings.overall_risk
-                        ?.overall_level
+                      findings.overall_risk?.overall_level
                     )}`}
                   >
-
                     {findings.overall_risk
                       ?.overall_level ||
                       'SECURE'}
-
                   </div>
 
                 </div>
@@ -800,9 +886,7 @@ function App() {
 
               </div>
 
-              {/* =================================================
-                  PHASE 3
-                  ================================================= */}
+              {/* PHASE 3 */}
 
               <div className="risk-overview">
 
@@ -834,9 +918,132 @@ function App() {
 
               </div>
 
-              {/* =================================================
-                  STATISTICS
-                  ================================================= */}
+              {/* EMAIL REPORT */}
+
+              <div className="upload-card email-report-card">
+
+                <div className="section-title">
+
+                  <div>
+
+                    <span className="hero-label">
+                      REPORT DELIVERY
+                    </span>
+
+                    <h3>
+                      Email Security Report
+                    </h3>
+
+                    <p>
+                      Enter your email address to receive
+                      the complete security analysis report.
+                    </p>
+
+                  </div>
+
+                  <span className="supported">
+                    RESEND
+                  </span>
+
+                </div>
+
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: '12px',
+                    marginTop: '20px',
+                    flexWrap: 'wrap',
+                  }}
+                >
+
+                  <input
+                    type="email"
+                    placeholder="Enter your email address"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value)
+                      setEmailSuccess(null)
+                      setEmailError(null)
+                    }}
+                    disabled={emailLoading}
+                    style={{
+                      flex: '1',
+                      minWidth: '240px',
+                      padding: '14px 16px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '8px',
+                      fontSize: '15px',
+                      outline: 'none',
+                    }}
+                  />
+
+                  <button
+                    className="scan-button"
+                    onClick={handleSendEmail}
+                    disabled={emailLoading}
+                    style={{
+                      marginTop: 0,
+                      minWidth: '190px',
+                    }}
+                  >
+
+                    {emailLoading ? (
+                      <>
+                        <span className="spinner"></span>
+                        Sending Report...
+                      </>
+                    ) : (
+                      <>
+                        ✉ Send Report
+                        <span>→</span>
+                      </>
+                    )}
+
+                  </button>
+
+                </div>
+
+                {emailSuccess && (
+                  <div
+                    className="auto-fix-result"
+                    style={{
+                      marginTop: '18px',
+                    }}
+                  >
+
+                    <strong>
+                      ✓ Report Sent Successfully
+                    </strong>
+
+                    <p>
+                      {emailSuccess}
+                    </p>
+
+                  </div>
+                )}
+
+                {emailError && (
+                  <div
+                    className="auto-fix-error"
+                    style={{
+                      marginTop: '18px',
+                    }}
+                  >
+
+                    <strong>
+                      Email Error
+                    </strong>
+
+                    <p>
+                      {emailError}
+                    </p>
+
+                  </div>
+                )}
+
+              </div>
+
+              {/* STATISTICS */}
 
               <div className="stats">
 
@@ -922,9 +1129,7 @@ function App() {
 
               </div>
 
-              {/* =================================================
-                  SECURITY FINDINGS
-                  ================================================= */}
+              {/* SECURITY FINDINGS */}
 
               <div className="findings-section">
 
@@ -938,22 +1143,16 @@ function App() {
 
                     <p>
                       Detected vulnerabilities in{' '}
-
                       <strong>
                         {findings.filename ||
                           'uploaded repository'}
                       </strong>
-
                     </p>
 
                   </div>
 
                   <span className="finding-count">
-
-                    {findings.findings_count}
-                    {' '}
-                    Findings
-
+                    {findings.findings_count} Findings
                   </span>
 
                 </div>
@@ -964,9 +1163,7 @@ function App() {
 
                   <div className="no-findings">
 
-                    <div>
-                      ✓
-                    </div>
+                    <div>✓</div>
 
                     <h3>
                       No vulnerabilities detected
@@ -980,8 +1177,6 @@ function App() {
                   </div>
 
                 ) : (
-
-                  /* FINDING LIST */
 
                   <div className="finding-list">
 
@@ -1026,25 +1221,18 @@ function App() {
                             <div
                               className={`finding-severity ${severity.toLowerCase()}`}
                             >
-
-                              {severity ===
-                              'CRITICAL'
+                              {severity === 'CRITICAL'
                                 ? '!!'
-                                : severity ===
-                                  'HIGH'
+                                : severity === 'HIGH'
                                 ? '!'
-                                : severity ===
-                                  'MEDIUM'
+                                : severity === 'MEDIUM'
                                 ? '•'
                                 : '✓'}
-
                             </div>
 
                             {/* MAIN FINDING */}
 
                             <div className="finding-main">
-
-                              {/* HEADING */}
 
                               <div className="finding-heading">
 
@@ -1059,8 +1247,6 @@ function App() {
                                 </span>
 
                               </div>
-
-                              {/* MESSAGE */}
 
                               <p className="finding-message">
 
@@ -1084,8 +1270,7 @@ function App() {
 
                                     <strong>
                                       {assessment.risk_score ??
-                                        0}
-                                      /10
+                                        0}/10
                                     </strong>
 
                                   </div>
@@ -1146,8 +1331,7 @@ function App() {
 
                                 <span>
                                   Line{' '}
-                                  {finding.start
-                                    ?.line || '-'}
+                                  {finding.start?.line || '-'}
                                 </span>
 
                                 <span>
@@ -1189,9 +1373,8 @@ function App() {
                                 </button>
 
                                 <small>
-                                  AI will suggest a secure
-                                  fix. Your repository will
-                                  not be modified.
+                                  AI will suggest a secure fix.
+                                  Your repository will not be modified.
                                 </small>
 
                               </div>
@@ -1250,13 +1433,11 @@ function App() {
                                   </div>
 
                                   <p className="fix-disclaimer">
-
                                     ⚠ This fix is an AI-generated
                                     suggestion. SentinelForge did
                                     not modify your repository.
                                     Review and test the change
                                     before applying it.
-
                                   </p>
 
                                 </div>
@@ -1296,3 +1477,4 @@ function App() {
 }
 
 export default App
+
