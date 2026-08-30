@@ -67,13 +67,12 @@ app = FastAPI(
 # ============================================================
 # CORS CONFIGURATION
 # ============================================================
+# ============================================================
+# CORS CONFIGURATION
+# ============================================================
 
 allowed_origins = [
     "https://sentinelforge-ai.vercel.app",
-    "https://sentinelforge-5btbg2r92-aaa-ac6c.vercel.app",
-    "https://sentinelforge-ai-aaa-ac6c.vercel.app",
-    "https://sentinelforge-l7z3qg4an-aaa-ac6c.vercel.app",
-    "https://sentinelforge-ai-git-phase-3-aaa-ac6c.vercel.app",
 
     # Local development
     "http://localhost:5173",
@@ -83,6 +82,7 @@ allowed_origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=r"^https://sentinelforge(?:-[a-zA-Z0-9]+)*\.vercel\.app$",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
