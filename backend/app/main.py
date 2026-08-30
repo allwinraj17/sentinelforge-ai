@@ -12,14 +12,11 @@ from fastapi import (
 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-
 from pydantic import BaseModel, EmailStr
-
 
 # ============================================================
 # EMAIL AGENT
 # ============================================================
-
 from app.agents.email_agent import (
     generate_security_report_html,
 )
@@ -28,11 +25,9 @@ from app.services.email_service import (
     send_security_report,
 )
 
-
 # ============================================================
 # AUTO-FIX AGENT
 # ============================================================
-
 from app.agents.auto_fix_agent import (
     generate_fix,
 )
@@ -41,18 +36,14 @@ from app.services.code_context import (
     get_code_context,
 )
 
-
 # ============================================================
 # CONFIGURATION
 # ============================================================
-
 from app.config import settings
-
 
 # ============================================================
 # DATABASE
 # ============================================================
-
 from app.database import (
     engine,
     Base,
@@ -60,22 +51,18 @@ from app.database import (
 
 from app import models
 
-
 # ============================================================
 # SCANNER
 # ============================================================
-
 from app.scanner import (
     extract_zip_to_temp,
     run_semgrep_scan,
     cleanup_temp,
 )
 
-
 # ============================================================
 # AI ANALYSIS
 # ============================================================
-
 from app.schemas import (
     AIAnalyzeRequest,
 )
@@ -84,32 +71,26 @@ from app.ai_service import (
     analyze_with_groq,
 )
 
-
 # ============================================================
 # RISK ENGINE
 # ============================================================
-
 from app.risk_engine import (
     assess_findings,
     calculate_overall_risk,
 )
 
-
 # ============================================================
 # FASTAPI APPLICATION
 # ============================================================
-
 app = FastAPI(
     title="SentinelForge AI",
     description="Multi-Agent Software Code Security Analysis Platform",
     version="1.0.0",
 )
 
-
 # ============================================================
 # CORS CONFIGURATION
 # ============================================================
-
 allowed_origins = [
     "https://sentinelforge-ai.vercel.app",
     "http://localhost:5173",
@@ -125,7 +106,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 print("============================================================")
 print("SentinelForge AI - CORS Configuration")
 print("============================================================")
@@ -135,22 +115,18 @@ for origin in allowed_origins:
 
 print("============================================================")
 
-
 # ============================================================
 # DATABASE
 # ============================================================
-
-#Base.metadata.create_all(
-  #  bind=engine)
-
+Base.metadata.create_all(
+    bind=engine
+)
 
 # ============================================================
 # ROOT
 # ============================================================
-
 @app.get("/")
 async def read_root():
-
     return {
         "message": "SentinelForge AI backend is running",
         "environment": settings.environment,
@@ -161,10 +137,8 @@ async def read_root():
 # ============================================================
 # HEALTH CHECK
 # ============================================================
-
 @app.get("/health")
 async def health_check():
-
     return {
         "status": "ok",
         "service": "sentinelforge-ai-backend",
@@ -176,12 +150,10 @@ async def health_check():
 # PHASE 1 + PHASE 2 + PHASE 3
 # UPLOAD + SECURITY SCAN
 # ============================================================
-
 @app.post("/scan/upload")
 async def upload_and_scan(
     file: UploadFile = File(...),
 ):
-
     """
     Upload ZIP repository.
 
@@ -203,7 +175,6 @@ async def upload_and_scan(
     # ========================================================
 
     if not file.filename:
-
         raise HTTPException(
             status_code=400,
             detail="No filename was provided.",
@@ -212,7 +183,6 @@ async def upload_and_scan(
     filename = file.filename.strip()
 
     if not filename.lower().endswith(".zip"):
-
         raise HTTPException(
             status_code=400,
             detail="Only .zip files are supported.",
@@ -229,7 +199,6 @@ async def upload_and_scan(
         contents = await file.read()
 
         if not contents:
-
             raise HTTPException(
                 status_code=400,
                 detail="The uploaded ZIP file is empty.",
@@ -354,19 +323,12 @@ async def upload_and_scan(
         # ====================================================
 
         return {
-
             "success": True,
-
             "filename": filename,
-
             "findings_count": len(findings),
-
             "findings": findings,
-
             "risk_assessments": risk_assessments,
-
             "overall_risk": overall_risk,
-
         }
 
     finally:
@@ -384,19 +346,16 @@ async def upload_and_scan(
                 )
 
             except Exception:
-
                 pass
 
 
 # ============================================================
 # AI ANALYSIS
 # ============================================================
-
 @app.post("/scan/analyze")
 async def analyze_findings(
     request: AIAnalyzeRequest,
 ):
-
     """
     Analyze security findings using Groq.
     """
@@ -423,11 +382,8 @@ async def analyze_findings(
         )
 
         return {
-
             "success": True,
-
             "analysis": analysis,
-
         }
 
     except Exception as e:
@@ -445,25 +401,20 @@ async def analyze_findings(
 # PHASE 3
 # AUTO-FIX AGENT
 # ============================================================
-
 @app.post("/scan/auto-fix")
 async def generate_auto_fix(
-
     vulnerability: str = Form(...),
-
     source_code: str = Form(...),
-
 ):
-
     """
     Generate a secure fixed version of a vulnerable source file.
 
     IMPORTANT:
-
     - The original repository is NEVER modified.
     - Groq-powered Auto-Fix Agent generates the corrected code.
-    - The backend creates a NEW file in memory.
-    - The corrected file is returned for download.
+    - The backend creates the corrected code in memory.
+    - The corrected code is returned as JSON.
+    - App.jsx creates the downloadable file.
     """
 
     # ========================================================
@@ -534,7 +485,7 @@ async def generate_auto_fix(
     ).strip()
 
     # ========================================================
-    # SUPPORT BOTH RESPONSE FORMATS
+    # SUPPORT FIXED_CODE FORMAT
     # ========================================================
 
     if "FIXED_CODE:" in fixed_code:
@@ -560,15 +511,11 @@ async def generate_auto_fix(
         lines = fixed_code.splitlines()
 
         # Remove first fence
-
         if lines and lines[0].strip().startswith("```"):
-
             lines = lines[1:]
 
         # Remove last fence
-
         if lines and lines[-1].strip() == "```":
-
             lines = lines[:-1]
 
         fixed_code = "\n".join(
@@ -580,17 +527,11 @@ async def generate_auto_fix(
     # ========================================================
 
     invalid_values = [
-
         "",
-
         "NOT_AVAILABLE",
-
         "NOT AVAILABLE",
-
         "UNABLE_TO_FIX",
-
         "UNABLE TO FIX",
-
     ]
 
     if fixed_code.strip().upper() in invalid_values:
@@ -633,7 +574,6 @@ async def generate_auto_fix(
     ).suffix
 
     if not original_suffix:
-
         original_suffix = ".txt"
 
     fixed_filename = (
@@ -642,61 +582,37 @@ async def generate_auto_fix(
     )
 
     # ========================================================
-    # CREATE FILE IN MEMORY
+    # RETURN JSON RESPONSE
+    # ========================================================
+    #
+    # IMPORTANT:
+    # App.jsx expects JSON and reads:
+    #
+    # data.fixed_code
+    #
+    # Therefore DO NOT return StreamingResponse here.
+    #
     # ========================================================
 
-    file_bytes = fixed_code.encode(
-        "utf-8"
-    )
-
-    file_stream = io.BytesIO(
-        file_bytes
-    )
-
-    file_stream.seek(0)
-
-    # ========================================================
-    # RETURN FIXED FILE
-    # ========================================================
-
-    return StreamingResponse(
-
-        file_stream,
-
-        media_type="application/octet-stream",
-
-        headers={
-
-            "Content-Disposition": (
-                "attachment; "
-                f'filename="{fixed_filename}"'
-            ),
-
-            "X-Auto-Fix": "true",
-
-            "X-Original-File": original_name,
-
-            "X-Repository-Modified": "false",
-
-        },
-
-    )
+    return {
+        "success": True,
+        "fixed_code": fixed_code,
+        "filename": fixed_filename,
+        "original_filename": original_name,
+        "repository_modified": False,
+        "message": "Secure fixed code generated successfully.",
+    }
 
 
 # ============================================================
 # EMAIL REPORT REQUEST
 # ============================================================
-
 class EmailReportRequest(BaseModel):
 
     email: EmailStr
-
     filename: str
-
     findings: list
-
     risk_assessments: list
-
     overall_risk: dict
 
 
@@ -704,14 +620,10 @@ class EmailReportRequest(BaseModel):
 # PHASE 3
 # EMAIL SECURITY REPORT AGENT
 # ============================================================
-
 @app.post("/scan/email-report")
 async def email_security_report(
-
     request: EmailReportRequest,
-
 ):
-
     """
     Generate a professional security report
     and send it to the user's email using Resend.
@@ -770,13 +682,9 @@ async def email_security_report(
         # ====================================================
 
         result = send_security_report(
-
             str(request.email),
-
             subject,
-
             html_report,
-
         )
 
         # ====================================================
@@ -784,19 +692,14 @@ async def email_security_report(
         # ====================================================
 
         return {
-
             "success": True,
-
             "message": (
                 "Security report sent successfully."
             ),
-
             "email": str(
                 request.email
             ),
-
             "filename": request.filename,
-
             "email_id": (
                 result.get("id")
                 if isinstance(
@@ -805,18 +708,14 @@ async def email_security_report(
                 )
                 else None
             ),
-
         }
 
     except Exception as e:
 
         raise HTTPException(
-
             status_code=500,
-
             detail=(
                 "Email Agent failed: "
                 f"{str(e)}"
             ),
-
         )
