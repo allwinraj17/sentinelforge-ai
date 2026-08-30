@@ -6,9 +6,10 @@ def generate_fix(
     source_code: str,
 ) -> str:
     """
-    Generate a secure code-fix suggestion.
+    Generate the complete corrected source file.
 
-    This function does NOT modify the repository.
+    The original repository is never modified.
+    The AI returns the full corrected file content.
     """
 
     check_id = vulnerability.get(
@@ -16,12 +17,9 @@ def generate_fix(
         "unknown",
     )
 
-    message = vulnerability.get(
-        "extra",
-        {},
-    ).get(
-        "message",
-        "",
+    message = (
+        vulnerability.get("extra", {})
+        .get("message", "")
     )
 
     file_path = vulnerability.get(
@@ -29,30 +27,33 @@ def generate_fix(
         "",
     )
 
-    line = vulnerability.get(
-        "start",
-        {},
-    ).get(
-        "line",
-        "",
+    line = (
+        vulnerability.get("start", {})
+        .get("line", "")
     )
 
     prompt = f"""
 You are the Auto-Fix Agent of SentinelForge AI.
 
-Analyze the Semgrep vulnerability and propose a secure,
-minimal fix.
+Your job is to fix the detected security vulnerability
+in the provided source file.
 
-RULES:
-1. Do NOT modify the repository.
-2. Do NOT invent libraries.
-3. Do NOT rewrite unrelated code.
-4. Preserve original functionality.
-5. Make the smallest practical security fix.
-6. Do not guess if context is insufficient.
-7. Clearly show BEFORE and AFTER code.
-8. This is only a suggested fix.
-9. Never claim the fix was applied.
+IMPORTANT RULES:
+
+1. Return the COMPLETE corrected source file.
+2. Actually apply the security fix to the code.
+3. Preserve all existing functionality.
+4. Do not remove unrelated code.
+5. Do not invent libraries or dependencies.
+6. Make the smallest practical security change.
+7. Keep imports and formatting unless a change is necessary.
+8. Do not include explanations.
+9. Do not include BEFORE/AFTER sections.
+10. Do not use Markdown code fences.
+11. Return ONLY the complete corrected source code.
+12. Never modify the original repository.
+13. If the context is insufficient to safely fix the issue,
+    return the original source code unchanged.
 
 VULNERABILITY
 =============
@@ -66,45 +67,36 @@ Message:
 File:
 {file_path}
 
-Detected line:
+Detected Line:
 {line}
 
-SOURCE CODE CONTEXT
-===================
+SOURCE FILE
+===========
 
 {source_code}
 
-RETURN EXACTLY:
-
-VULNERABILITY:
-<short vulnerability name>
-
-ROOT CAUSE:
-<explanation>
-
-SECURITY IMPACT:
-<possible impact>
-
-BEFORE:
-<original vulnerable code>
-
-AFTER:
-<secure corrected code>
-
-EXPLANATION:
-<why the fix works>
-
-CONFIDENCE:
-<LOW / MEDIUM / HIGH>
-
-If there is insufficient context, use:
-
-CONFIDENCE:
-LOW
-
-and explain:
-
-INSUFFICIENT CONTEXT
+RETURN ONLY THE COMPLETE CORRECTED SOURCE FILE.
 """
 
-    return generate_ai_response(prompt)
+    fixed_code = generate_ai_response(prompt)
+
+    if not fixed_code:
+        raise ValueError(
+            "Auto-Fix Agent returned empty code."
+        )
+
+    fixed_code = fixed_code.strip()
+
+    # Remove accidental Markdown fences if the model adds them.
+    if fixed_code.startswith("```"):
+        lines = fixed_code.splitlines()
+
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+
+        fixed_code = "\n".join(lines).strip()
+
+    return fixed_code

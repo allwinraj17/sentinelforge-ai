@@ -1,29 +1,62 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, Form
-from fastapi.middleware.cors import CORSMiddleware
-import httpx
+import io
 import json
+import os
+import zipfile
+import tempfile
+from pathlib import Path
+
+from fastapi import (
+    FastAPI,
+    UploadFile,
+    File,
+    HTTPException,
+    Form,
+)
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+import httpx
+
 from pydantic import BaseModel, EmailStr
 
 # ============================================================
 # EMAIL AGENT
 # ============================================================
 
-from app.agents.email_agent import generate_security_report_html
-from app.services.email_service import send_security_report
+from app.agents.email_agent import (
+    generate_security_report_html,
+)
+
+from app.services.email_service import (
+    send_security_report,
+)
 
 # ============================================================
 # AUTO-FIX AGENT
 # ============================================================
 
-from app.agents.auto_fix_agent import generate_fix
-from app.services.code_context import get_code_context
+from app.agents.auto_fix_agent import (
+    generate_fix,
+)
+
+from app.services.code_context import (
+    get_code_context,
+)
 
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
 from app.config import settings
-from app.database import engine, Base
+
+# ============================================================
+# DATABASE
+# ============================================================
+
+from app.database import (
+    engine,
+    Base,
+)
+
 from app import models
 
 # ============================================================
@@ -40,8 +73,13 @@ from app.scanner import (
 # AI ANALYSIS
 # ============================================================
 
-from app.schemas import AIAnalyzeRequest
-from app.ai_service import analyze_with_gemini
+from app.schemas import (
+    AIAnalyzeRequest,
+)
+
+from app.ai_service import (
+    analyze_with_gemini,
+)
 
 # ============================================================
 # RISK ENGINE
@@ -67,14 +105,9 @@ app = FastAPI(
 # ============================================================
 # CORS CONFIGURATION
 # ============================================================
-# ============================================================
-# CORS CONFIGURATION
-# ============================================================
 
 allowed_origins = [
     "https://sentinelforge-ai.vercel.app",
-
-    # Local development
     "http://localhost:5173",
     "http://localhost:3000",
 ]
@@ -102,7 +135,9 @@ print("============================================================")
 # DATABASE
 # ============================================================
 
-Base.metadata.create_all(bind=engine)
+Base.metadata.create_all(
+    bind=engine
+)
 
 
 # ============================================================
@@ -134,13 +169,13 @@ async def health_check():
 
 
 # ============================================================
-# PHASE 1 + PHASE 2 + PHASE 3 PREPARATION
+# PHASE 1 + PHASE 2 + PHASE 3
 # UPLOAD + SECURITY SCAN
 # ============================================================
 
 @app.post("/scan/upload")
 async def upload_and_scan(
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
 ):
     """
     Upload ZIP repository.
@@ -153,6 +188,9 @@ async def upload_and_scan(
 
     Phase 3:
         Attach source code context
+
+    IMPORTANT:
+        The uploaded repository is never modified.
     """
 
     # ========================================================
@@ -274,10 +312,13 @@ async def upload_and_scan(
 
             try:
 
-                file_path = finding.get("path")
+                file_path = finding.get(
+                    "path"
+                )
 
                 line_number = (
-                    finding.get("start", {})
+                    finding
+                    .get("start", {})
                     .get("line")
                 )
 
@@ -299,9 +340,9 @@ async def upload_and_scan(
 
                 finding["source_code"] = ""
 
-                finding["source_context_error"] = (
-                    str(e)
-                )
+                finding[
+                    "source_context_error"
+                ] = str(e)
 
         # ====================================================
         # RETURN RESULTS
@@ -341,7 +382,7 @@ async def upload_and_scan(
 
 @app.post("/scan/analyze")
 async def analyze_findings(
-    request: AIAnalyzeRequest
+    request: AIAnalyzeRequest,
 ):
     """
     Analyze security findings using AI.
@@ -430,9 +471,16 @@ async def generate_auto_fix(
     source_code: str = Form(...),
 ):
     """
-    Generate a secure code-fix suggestion.
+    Generate a fixed version of a vulnerable source file.
 
-    The repository is NOT modified.
+    IMPORTANT:
+
+    The original uploaded repository is NEVER modified.
+
+    The AI generates corrected source code.
+
+    The backend creates a NEW file in memory and
+    returns that file to the frontend for download.
     """
 
     # ========================================================
@@ -469,16 +517,10 @@ async def generate_auto_fix(
 
     try:
 
-        fix = generate_fix(
+        fix_response = generate_fix(
             vulnerability_data,
             source_code,
         )
-
-        return {
-            "success": True,
-            "fix": fix,
-            "repository_modified": False,
-        }
 
     except Exception as e:
 
@@ -490,12 +532,174 @@ async def generate_auto_fix(
             ),
         )
 
+    # ========================================================
+    # VALIDATE AI RESPONSE
+    # ========================================================
+
+    if not fix_response:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Auto-Fix Agent returned "
+                "an empty response."
+            ),
+        )
+
+    # ========================================================
+    # FIND FIXED_CODE SECTION
+    # ========================================================
+
+    marker = "FIXED_CODE:"
+
+    if marker not in fix_response:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Auto-Fix Agent did not return "
+                "a valid FIXED_CODE section."
+            ),
+        )
+
+    fixed_code = (
+        fix_response
+        .split(marker, 1)[1]
+    )
+
+    # ========================================================
+    # REMOVE EXPLANATION SECTION
+    # ========================================================
+
+    if "EXPLANATION:" in fixed_code:
+
+        fixed_code = (
+            fixed_code
+            .split(
+                "EXPLANATION:",
+                1,
+            )[0]
+        )
+
+    fixed_code = fixed_code.strip()
+
+    # ========================================================
+    # CHECK IF FIX WAS POSSIBLE
+    # ========================================================
+
+    if (
+        not fixed_code
+        or fixed_code == "NOT_AVAILABLE"
+    ):
+
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Auto-Fix Agent could not "
+                "safely generate a fixed file."
+            ),
+        )
+
+    # ========================================================
+    # REMOVE ACCIDENTAL MARKDOWN FENCES
+    # ========================================================
+
+    if fixed_code.startswith(
+        "```"
+    ):
+
+        lines = fixed_code.splitlines()
+
+        if lines:
+
+            lines = lines[1:]
+
+        if lines and lines[-1].strip() == "```":
+
+            lines = lines[:-1]
+
+        fixed_code = "\n".join(
+            lines
+        ).strip()
+
+    # ========================================================
+    # GET ORIGINAL FILE PATH
+    # ========================================================
+
+    original_path = vulnerability_data.get(
+        "path",
+        "fixed_code.txt",
+    )
+
+    original_path = str(
+        original_path
+    )
+
+    # ========================================================
+    # CREATE SAFE OUTPUT FILENAME
+    # ========================================================
+
+    original_name = Path(
+        original_path
+    ).name
+
+    original_stem = Path(
+        original_name
+    ).stem
+
+    original_suffix = Path(
+        original_name
+    ).suffix
+
+    if not original_suffix:
+
+        original_suffix = ".txt"
+
+    fixed_filename = (
+        f"{original_stem}_fixed"
+        f"{original_suffix}"
+    )
+
+    # ========================================================
+    # CREATE FILE IN MEMORY
+    # ========================================================
+
+    file_bytes = fixed_code.encode(
+        "utf-8"
+    )
+
+    file_stream = io.BytesIO(
+        file_bytes
+    )
+
+    file_stream.seek(0)
+
+    # ========================================================
+    # RETURN FIXED FILE
+    # ========================================================
+
+    return StreamingResponse(
+        file_stream,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": (
+                "attachment; "
+                f'filename="{fixed_filename}"'
+            ),
+            "X-Auto-Fix": "true",
+            "X-Original-File": original_name,
+            "X-Repository-Modified": "false",
+        },
+    )
+
 
 # ============================================================
 # EMAIL REPORT REQUEST
 # ============================================================
 
-class EmailReportRequest(BaseModel):
+class EmailReportRequest(
+    BaseModel
+):
 
     email: EmailStr
 
@@ -515,7 +719,7 @@ class EmailReportRequest(BaseModel):
 
 @app.post("/scan/email-report")
 async def email_security_report(
-    request: EmailReportRequest
+    request: EmailReportRequest,
 ):
     """
     Generate a professional security report
@@ -530,7 +734,9 @@ async def email_security_report(
 
         raise HTTPException(
             status_code=500,
-            detail="RESEND_API_KEY is not configured.",
+            detail=(
+                "RESEND_API_KEY is not configured."
+            ),
         )
 
     # ========================================================
@@ -548,14 +754,15 @@ async def email_security_report(
 
         # ====================================================
         # EMAIL AGENT
-        # GENERATE HTML
         # ====================================================
 
-        html_report = generate_security_report_html(
-            request.filename,
-            request.findings,
-            request.risk_assessments,
-            request.overall_risk,
+        html_report = (
+            generate_security_report_html(
+                request.filename,
+                request.findings,
+                request.risk_assessments,
+                request.overall_risk,
+            )
         )
 
         # ====================================================
@@ -583,12 +790,19 @@ async def email_security_report(
 
         return {
             "success": True,
-            "message": "Security report sent successfully.",
-            "email": str(request.email),
+            "message": (
+                "Security report sent successfully."
+            ),
+            "email": str(
+                request.email
+            ),
             "filename": request.filename,
             "email_id": (
                 result.get("id")
-                if isinstance(result, dict)
+                if isinstance(
+                    result,
+                    dict,
+                )
                 else None
             ),
         }
@@ -602,4 +816,3 @@ async def email_security_report(
                 f"{str(e)}"
             ),
         )
-
