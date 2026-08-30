@@ -70,7 +70,7 @@ app = FastAPI(
 
 allowed_origins = [
     "https://sentinelforge-ai.vercel.app",
-    "https://sentinelforge-5btbg2r92-aaa-ac6c.vercel.app"
+    "https://sentinelforge-5btbg2r92-aaa-ac6c.vercel.app",
     "https://sentinelforge-ai-aaa-ac6c.vercel.app",
     "https://sentinelforge-l7z3qg4an-aaa-ac6c.vercel.app",
     "https://sentinelforge-ai-git-phase-3-aaa-ac6c.vercel.app",
