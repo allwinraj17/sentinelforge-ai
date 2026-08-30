@@ -1,32 +1,102 @@
-import httpx
+# ============================================================
+# AI SERVICE
+# ============================================================
+
+import json
+
+from app.services.groq_service import (
+    generate_ai_response,
+)
 
 
-async def analyze_with_gemini(api_key: str, findings: list[dict]) -> str:
-    findings_summary = "\n".join(
-        f"- {f.get('check_id', 'unknown')}: {f.get('extra', {}).get('message', '')} "
-        f"(file: {f.get('path', '')}, line: {f.get('start', {}).get('line', '')})"
-        for f in findings[:20]
+# ============================================================
+# ANALYZE SECURITY FINDINGS WITH GROQ
+# ============================================================
+
+async def analyze_with_groq(findings: list) -> str:
+    """
+    Analyze security findings using Groq.
+
+    This function does not modify the uploaded repository.
+    It only sends the security findings to the AI model
+    and returns the generated analysis.
+    """
+
+    # --------------------------------------------------------
+    # VALIDATE FINDINGS
+    # --------------------------------------------------------
+
+    if not findings:
+        raise ValueError(
+            "No security findings were provided."
+        )
+
+    # --------------------------------------------------------
+    # PREPARE FINDINGS
+    # --------------------------------------------------------
+
+    findings_json = json.dumps(
+        findings,
+        indent=2,
+        default=str,
     )
 
-    prompt = f"""You are a security analyst. Analyze these static analysis findings and for each one provide:
-1. Root cause explanation
-2. Real-world impact
-3. Confidence (low/medium/high)
-4. OWASP/CWE mapping if applicable
-5. A concrete remediation suggestion
+    # --------------------------------------------------------
+    # CREATE SECURITY ANALYSIS PROMPT
+    # --------------------------------------------------------
 
-Findings:
-{findings_summary}
+    prompt = f"""
+You are the Security Analysis Agent of SentinelForge AI.
+
+Analyze the following security vulnerabilities detected
+in a software repository.
+
+Your job is to provide a professional cybersecurity analysis.
+
+SECURITY FINDINGS:
+{findings_json}
+
+For each vulnerability, explain:
+
+1. Vulnerability name
+2. Severity
+3. Why the vulnerability exists
+4. Security impact
+5. Attack scenario
+6. Recommended remediation
+7. Secure coding recommendation
+
+Then provide:
+
+- Overall security assessment
+- Most critical vulnerabilities
+- Priority order for fixing vulnerabilities
+- General security recommendations
+
+Important rules:
+
+- Do not modify any files.
+- Do not claim that a vulnerability is fixed.
+- Do not invent vulnerabilities that are not present.
+- Base your analysis only on the provided findings.
+- Use clear and professional language.
 """
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}",
-            headers={"Content-Type": "application/json"},
-            json={
-                "contents": [{"parts": [{"text": prompt}]}]
-            },
+    # --------------------------------------------------------
+    # CALL GROQ
+    # --------------------------------------------------------
+
+    analysis = generate_ai_response(
+        prompt
+    )
+
+    # --------------------------------------------------------
+    # VALIDATE RESPONSE
+    # --------------------------------------------------------
+
+    if not analysis:
+        raise RuntimeError(
+            "Groq returned an empty security analysis."
         )
-        response.raise_for_status()
-        data = response.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+
+    return analysis.strip()

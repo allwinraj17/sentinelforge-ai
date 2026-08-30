@@ -9,7 +9,6 @@ from groq import Groq
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-# You can change this model if needed.
 GROQ_MODEL = os.getenv(
     "GROQ_MODEL",
     "llama-3.3-70b-versatile",
@@ -24,11 +23,13 @@ def generate_ai_response(prompt: str) -> str:
     """
     Send a prompt to Groq and return the AI response as plain text.
 
-    This function is used by:
-    - Auto-Fix Agent
-    - Other SentinelForge AI agents
+    Used by SentinelForge AI agents.
 
-    The function does not modify files or repositories.
+    This function:
+    - Does not modify files
+    - Does not modify repositories
+    - Only sends the supplied prompt to Groq
+    - Returns the generated text
     """
 
     # --------------------------------------------------------
@@ -53,36 +54,53 @@ def generate_ai_response(prompt: str) -> str:
     # CREATE GROQ CLIENT
     # --------------------------------------------------------
 
-    client = Groq(
-        api_key=GROQ_API_KEY
-    )
+    try:
+        client = Groq(
+            api_key=GROQ_API_KEY
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Unable to initialize Groq client: {exc}"
+        ) from exc
 
     # --------------------------------------------------------
-    # SEND REQUEST TO GROQ
+    # SEND REQUEST
     # --------------------------------------------------------
 
-    response = client.chat.completions.create(
-        model=GROQ_MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are a professional software "
-                    "security AI assistant. "
-                    "Follow the user's instructions exactly."
-                ),
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ],
-        temperature=0.1,
-    )
+    try:
+        response = client.chat.completions.create(
+            model=GROQ_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a professional software "
+                        "security AI assistant. "
+                        "Follow the user's instructions exactly. "
+                        "When asked to generate source code, "
+                        "return complete usable source code."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+            temperature=0.1,
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Groq API request failed: {exc}"
+        ) from exc
 
     # --------------------------------------------------------
-    # EXTRACT RESPONSE
+    # VALIDATE RESPONSE
     # --------------------------------------------------------
+
+    if not response:
+        raise RuntimeError(
+            "Groq returned no response."
+        )
 
     if not response.choices:
         raise RuntimeError(
@@ -102,5 +120,9 @@ def generate_ai_response(prompt: str) -> str:
         raise RuntimeError(
             "Groq returned empty content."
         )
+
+    # --------------------------------------------------------
+    # RETURN AI RESPONSE
+    # --------------------------------------------------------
 
     return content.strip()

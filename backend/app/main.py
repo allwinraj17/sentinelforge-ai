@@ -2,8 +2,6 @@ import io
 import json
 from pathlib import Path
 
-import httpx
-
 from fastapi import (
     FastAPI,
     UploadFile,
@@ -83,7 +81,7 @@ from app.schemas import (
 )
 
 from app.ai_service import (
-    analyze_with_gemini,
+    analyze_with_groq,
 )
 
 
@@ -206,6 +204,7 @@ async def upload_and_scan(
     # ========================================================
 
     if not file.filename:
+
         raise HTTPException(
             status_code=400,
             detail="No filename was provided.",
@@ -214,6 +213,7 @@ async def upload_and_scan(
     filename = file.filename.strip()
 
     if not filename.lower().endswith(".zip"):
+
         raise HTTPException(
             status_code=400,
             detail="Only .zip files are supported.",
@@ -230,6 +230,7 @@ async def upload_and_scan(
         contents = await file.read()
 
         if not contents:
+
             raise HTTPException(
                 status_code=400,
                 detail="The uploaded ZIP file is empty.",
@@ -366,6 +367,7 @@ async def upload_and_scan(
             "risk_assessments": risk_assessments,
 
             "overall_risk": overall_risk,
+
         }
 
     finally:
@@ -397,8 +399,12 @@ async def analyze_findings(
 ):
 
     """
-    Analyze security findings using Gemini.
+    Analyze security findings using Groq.
     """
+
+    # ========================================================
+    # VALIDATE FINDINGS
+    # ========================================================
 
     if not request.findings:
 
@@ -407,21 +413,14 @@ async def analyze_findings(
             detail="No findings to analyze.",
         )
 
-    if not request.api_key:
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "AI API key is required "
-                "for AI analysis."
-            ),
-        )
+    # ========================================================
+    # CALL GROQ
+    # ========================================================
 
     try:
 
-        analysis = await analyze_with_gemini(
-            request.api_key,
-            request.findings,
+        analysis = await analyze_with_groq(
+            request.findings
         )
 
         return {
@@ -429,39 +428,8 @@ async def analyze_findings(
             "success": True,
 
             "analysis": analysis,
+
         }
-
-    except httpx.HTTPStatusError as e:
-
-        provider_message = (
-            "AI provider request failed."
-        )
-
-        try:
-
-            provider_message = e.response.text
-
-        except Exception:
-
-            pass
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "AI provider error: "
-                f"{provider_message}"
-            ),
-        )
-
-    except httpx.RequestError:
-
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Unable to connect to "
-                "the AI provider."
-            ),
-        )
 
     except Exception as e:
 
@@ -481,8 +449,11 @@ async def analyze_findings(
 
 @app.post("/scan/auto-fix")
 async def generate_auto_fix(
+
     vulnerability: str = Form(...),
+
     source_code: str = Form(...),
+
 ):
 
     """
@@ -565,15 +536,6 @@ async def generate_auto_fix(
 
     # ========================================================
     # SUPPORT BOTH RESPONSE FORMATS
-    #
-    # FORMAT 1:
-    # FIXED_CODE:
-    # actual code
-    #
-    # FORMAT 2:
-    # actual code directly
-    #
-    # Your current Groq agent uses FORMAT 2.
     # ========================================================
 
     if "FIXED_CODE:" in fixed_code:
@@ -599,11 +561,13 @@ async def generate_auto_fix(
         lines = fixed_code.splitlines()
 
         # Remove first fence
+
         if lines and lines[0].strip().startswith("```"):
 
             lines = lines[1:]
 
         # Remove last fence
+
         if lines and lines[-1].strip() == "```":
 
             lines = lines[:-1]
@@ -613,15 +577,21 @@ async def generate_auto_fix(
         ).strip()
 
     # ========================================================
-    # CHECK IF AI FAILED TO GENERATE CODE
+    # CHECK IF AI FAILED
     # ========================================================
 
     invalid_values = [
+
         "",
+
         "NOT_AVAILABLE",
+
         "NOT AVAILABLE",
+
         "UNABLE_TO_FIX",
+
         "UNABLE TO FIX",
+
     ]
 
     if fixed_code.strip().upper() in invalid_values:
@@ -708,7 +678,9 @@ async def generate_auto_fix(
             "X-Original-File": original_name,
 
             "X-Repository-Modified": "false",
+
         },
+
     )
 
 
@@ -736,7 +708,9 @@ class EmailReportRequest(BaseModel):
 
 @app.post("/scan/email-report")
 async def email_security_report(
+
     request: EmailReportRequest,
+
 ):
 
     """
@@ -797,9 +771,13 @@ async def email_security_report(
         # ====================================================
 
         result = send_security_report(
+
             str(request.email),
+
             subject,
+
             html_report,
+
         )
 
         # ====================================================
@@ -828,14 +806,18 @@ async def email_security_report(
                 )
                 else None
             ),
+
         }
 
     except Exception as e:
 
         raise HTTPException(
+
             status_code=500,
+
             detail=(
                 "Email Agent failed: "
                 f"{str(e)}"
             ),
+
         )
