@@ -40,10 +40,16 @@ app = FastAPI(
 # CORS CONFIGURATION
 # ============================================================
 
+# ============================================================
+# CORS CONFIGURATION
+# ============================================================
+
 allowed_origins = [
     "https://sentinelforge-ai.vercel.app",
     "https://sentinelforge-ai-aaa-ac6c.vercel.app",
     "https://sentinelforge-l7z3qg4an-aaa-ac6c.vercel.app",
+    "https://sentinelforge-ai-git-phase-3-aaa-ac6c.vercel.app",
+
     "http://localhost:5173",
     "http://localhost:3000",
 ]
@@ -55,7 +61,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 print("============================================================")
 print("SentinelForge AI - CORS Configuration")
 print("============================================================")
