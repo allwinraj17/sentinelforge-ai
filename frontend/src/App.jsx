@@ -1,7 +1,17 @@
 import { useState } from 'react'
+import emailjs from '@emailjs/browser'
 import './App.css'
 
 const API_URL = 'https://sentinelforge-ai.onrender.com'
+
+const EMAILJS_SERVICE_ID =
+  import.meta.env.VITE_EMAILJS_SERVICE_ID
+
+const EMAILJS_TEMPLATE_ID =
+  import.meta.env.VITE_EMAILJS_TEMPLATE_ID
+
+const EMAILJS_PUBLIC_KEY =
+  import.meta.env.VITE_EMAILJS_PUBLIC_KEY
 
 function App() {
   const [file, setFile] = useState(null)
@@ -9,12 +19,18 @@ function App() {
   const [findings, setFindings] = useState(null)
   const [error, setError] = useState(null)
 
-  // Auto-Fix states
+  // ============================================================
+  // AUTO-FIX STATES
+  // ============================================================
+
   const [fixLoading, setFixLoading] = useState({})
   const [fixResults, setFixResults] = useState({})
   const [fixErrors, setFixErrors] = useState({})
 
-  // Email states
+  // ============================================================
+  // EMAIL STATES
+  // ============================================================
+
   const [email, setEmail] = useState('')
   const [emailLoading, setEmailLoading] = useState(false)
   const [emailSuccess, setEmailSuccess] = useState(null)
@@ -107,28 +123,30 @@ function App() {
         )
       }
 
-      const normalizedFindings = Array.isArray(data.findings)
-        ? data.findings
-        : []
+      const normalizedFindings =
+        Array.isArray(data.findings)
+          ? data.findings
+          : []
 
-      const normalizedRiskAssessments = Array.isArray(
-        data.risk_assessments
-      )
-        ? data.risk_assessments
-        : []
+      const normalizedRiskAssessments =
+        Array.isArray(data.risk_assessments)
+          ? data.risk_assessments
+          : []
 
-      const normalizedOverallRisk = data.overall_risk || {
-        overall_score: 0,
-        overall_level: 'SECURE',
-        total_findings: 0,
-        critical: 0,
-        high: 0,
-        medium: 0,
-        low: 0,
-      }
+      const normalizedOverallRisk =
+        data.overall_risk || {
+          overall_score: 0,
+          overall_level: 'SECURE',
+          total_findings: 0,
+          critical: 0,
+          high: 0,
+          medium: 0,
+          low: 0,
+        }
 
       setFindings({
         ...data,
+
         findings: normalizedFindings,
 
         findings_count:
@@ -136,11 +154,18 @@ function App() {
             ? data.findings_count
             : normalizedFindings.length,
 
-        risk_assessments: normalizedRiskAssessments,
-        overall_risk: normalizedOverallRisk,
+        risk_assessments:
+          normalizedRiskAssessments,
+
+        overall_risk:
+          normalizedOverallRisk,
       })
+
     } catch (err) {
-      console.error('Scan request error:', err)
+      console.error(
+        'Scan request error:',
+        err
+      )
 
       const errorMessage =
         err?.message?.toLowerCase() || ''
@@ -160,6 +185,7 @@ function App() {
             'Unable to complete the security scan.'
         )
       }
+
     } finally {
       setScanning(false)
     }
@@ -169,12 +195,16 @@ function App() {
   // AUTO-FIX AGENT
   // ============================================================
 
-  const handleAutoFix = async (finding, index) => {
+  const handleAutoFix = async (
+    finding,
+    index
+  ) => {
     if (!finding) {
       return
     }
 
-    const sourceCode = finding.source_code || ''
+    const sourceCode =
+      finding.source_code || ''
 
     if (!sourceCode.trim()) {
       setFixErrors((previous) => ({
@@ -193,13 +223,17 @@ function App() {
 
     setFixErrors((previous) => {
       const updated = { ...previous }
+
       delete updated[index]
+
       return updated
     })
 
     setFixResults((previous) => {
       const updated = { ...previous }
+
       delete updated[index]
+
       return updated
     })
 
@@ -253,6 +287,7 @@ function App() {
         ...previous,
         [index]: data,
       }))
+
     } catch (err) {
       console.error(
         'Auto-Fix request error:',
@@ -265,6 +300,7 @@ function App() {
           err?.message ||
           'Unable to generate the security fix.',
       }))
+
     } finally {
       setFixLoading((previous) => ({
         ...previous,
@@ -282,6 +318,7 @@ function App() {
       setEmailError(
         'Please complete a security scan first.'
       )
+
       return
     }
 
@@ -289,6 +326,7 @@ function App() {
       setEmailError(
         'Please enter your email address.'
       )
+
       return
     }
 
@@ -299,6 +337,20 @@ function App() {
       setEmailError(
         'Please enter a valid email address.'
       )
+
+      return
+    }
+
+    // Check EmailJS configuration
+    if (
+      !EMAILJS_SERVICE_ID ||
+      !EMAILJS_TEMPLATE_ID ||
+      !EMAILJS_PUBLIC_KEY
+    ) {
+      setEmailError(
+        'Email service configuration is missing. Please check the Vercel environment variables.'
+      )
+
       return
     }
 
@@ -307,84 +359,191 @@ function App() {
     setEmailError(null)
 
     try {
-      const response = await fetch(
-        `${API_URL}/scan/email-report`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            email: email.trim(),
+      const overallRisk =
+        findings.overall_risk || {}
 
-            filename:
-              findings.filename ||
-              file?.name ||
-              'security-report.zip',
+      const findingsList =
+        Array.isArray(findings.findings)
+          ? findings.findings
+          : []
 
-            findings:
-              findings.findings || [],
+      // ========================================================
+      // CREATE SMALL EMAIL REPORT
+      // ========================================================
+      //
+      // IMPORTANT:
+      // Do NOT send the complete findings JSON.
+      //
+      // EmailJS has a 50 KB variables limit.
+      // The source_code and other metadata can make the
+      // complete findings object extremely large.
+      //
+      // So we create a compact human-readable report instead.
+      // ========================================================
 
-            risk_assessments:
-              findings.risk_assessments || [],
+      const reportLines =
+        findingsList.map(
+          (finding, index) => {
+            const severity =
+              getSeverity(finding)
 
-            overall_risk:
-              findings.overall_risk || {},
-          }),
-        }
+            const name =
+              getVulnerabilityName(finding)
+
+            const fileName =
+              getFileName(finding.path)
+
+            const message =
+              finding.extra?.message ||
+              'Security vulnerability detected.'
+
+            const assessment =
+              findings.risk_assessments?.[index] ||
+              {}
+
+            const riskScore =
+              assessment.risk_score ?? 0
+
+            const cwe =
+              getCwe(
+                assessment,
+                finding
+              )
+
+            const recommendation =
+              assessment.recommendation ||
+              'Review and remediate this vulnerability.'
+
+            return [
+              `Finding ${index + 1}`,
+              `Vulnerability: ${name}`,
+              `Severity: ${severity}`,
+              `File: ${fileName}`,
+              `Line: ${finding.start?.line || '-'}`,
+              `CWE: ${cwe}`,
+              `Risk Score: ${riskScore}/10`,
+              `Message: ${message}`,
+              `Recommendation: ${recommendation}`,
+              '------------------------------',
+            ].join('\n')
+          }
+        )
+
+      let reportText =
+        reportLines.length > 0
+          ? reportLines.join('\n')
+          : 'No vulnerabilities detected.'
+
+      // ========================================================
+      // EXTRA SIZE PROTECTION
+      // ========================================================
+
+      const MAX_REPORT_SIZE = 30000
+
+      if (
+        reportText.length >
+        MAX_REPORT_SIZE
+      ) {
+        reportText =
+          reportText.substring(
+            0,
+            MAX_REPORT_SIZE
+          ) +
+          '\n\n[Report shortened because of email size limits.]'
+      }
+
+      // ========================================================
+      // EMAILJS TEMPLATE PARAMETERS
+      // ========================================================
+
+      const templateParams = {
+        to_email:
+          email.trim(),
+
+        filename:
+          findings.filename ||
+          file?.name ||
+          'security-report.zip',
+
+        overall_risk:
+          overallRisk.overall_level ||
+          'SECURE',
+
+        risk_score:
+          overallRisk.overall_score ?? 0,
+
+        total_findings:
+          findings.findings_count ??
+          findingsList.length,
+
+        critical:
+          overallRisk.critical ?? 0,
+
+        high:
+          overallRisk.high ?? 0,
+
+        medium:
+          overallRisk.medium ?? 0,
+
+        low:
+          overallRisk.low ?? 0,
+
+        // SMALL TEXT REPORT
+        report:
+          reportText,
+      }
+
+      // ========================================================
+      // DEBUG SIZE
+      // ========================================================
+
+      console.log(
+        'Email report size:',
+        JSON.stringify(
+          templateParams
+        ).length,
+        'bytes'
       )
 
-      let data
+      // ========================================================
+      // SEND EMAIL
+      // ========================================================
 
-      try {
-        data = await response.json()
-      } catch {
-        throw new Error(
-          `Email service returned an invalid response (${response.status}).`
+      const response =
+        await emailjs.send(
+          EMAILJS_SERVICE_ID,
+          EMAILJS_TEMPLATE_ID,
+          templateParams,
+          EMAILJS_PUBLIC_KEY
         )
-      }
 
-      if (!response.ok) {
-        throw new Error(
-          data?.detail ||
-            data?.message ||
-            `Failed to send report (${response.status}).`
-        )
-      }
+      console.log(
+        'EmailJS response:',
+        response
+      )
 
-      if (!data?.success) {
+      if (response.status !== 200) {
         throw new Error(
-          data?.detail ||
-            'Security report could not be sent.'
+          'Email service returned an unexpected response.'
         )
       }
 
       setEmailSuccess(
         `Security report sent successfully to ${email.trim()}`
       )
+
     } catch (err) {
       console.error(
         'Email report error:',
         err
       )
 
-      const message =
-        err?.message?.toLowerCase() || ''
-
-      if (
-        message.includes('fetch') ||
-        message.includes('failed to fetch') ||
-        message.includes('network')
-      ) {
-        setEmailError(
-          'Unable to connect to the email service. Please try again.'
-        )
-      } else {
-        setEmailError(
+      setEmailError(
+        err?.text ||
           err?.message ||
-            'Unable to send the security report.'
-        )
-      }
+          'Unable to send the security report.'
+      )
+
     } finally {
       setEmailLoading(false)
     }
@@ -406,19 +565,27 @@ function App() {
     const normalizedSeverity =
       String(severity).toUpperCase()
 
-    if (normalizedSeverity === 'ERROR') {
+    if (
+      normalizedSeverity === 'ERROR'
+    ) {
       return 'HIGH'
     }
 
-    if (normalizedSeverity === 'WARNING') {
+    if (
+      normalizedSeverity === 'WARNING'
+    ) {
       return 'MEDIUM'
     }
 
-    if (normalizedSeverity === 'INFO') {
+    if (
+      normalizedSeverity === 'INFO'
+    ) {
       return 'LOW'
     }
 
-    if (normalizedSeverity === 'CRITICAL') {
+    if (
+      normalizedSeverity === 'CRITICAL'
+    ) {
       return 'CRITICAL'
     }
 
@@ -437,9 +604,12 @@ function App() {
   // VULNERABILITY NAME
   // ============================================================
 
-  const getVulnerabilityName = (finding) => {
+  const getVulnerabilityName = (
+    finding
+  ) => {
     const vulnerabilities =
-      finding?.extra?.metadata?.vulnerability_class
+      finding?.extra?.metadata
+        ?.vulnerability_class
 
     if (
       Array.isArray(vulnerabilities) &&
@@ -448,25 +618,34 @@ function App() {
       return vulnerabilities[0]
     }
 
-    const checkId = finding?.check_id
+    const checkId =
+      finding?.check_id
 
     if (checkId) {
       const lowerCheckId =
         checkId.toLowerCase()
 
-      if (lowerCheckId.includes('sql')) {
+      if (
+        lowerCheckId.includes('sql')
+      ) {
         return 'SQL Injection'
       }
 
-      if (lowerCheckId.includes('xss')) {
+      if (
+        lowerCheckId.includes('xss')
+      ) {
         return 'Cross-Site Scripting'
       }
 
-      if (lowerCheckId.includes('command')) {
+      if (
+        lowerCheckId.includes('command')
+      ) {
         return 'Command Injection'
       }
 
-      if (lowerCheckId.includes('secret')) {
+      if (
+        lowerCheckId.includes('secret')
+      ) {
         return 'Hardcoded Secret'
       }
     }
@@ -504,7 +683,10 @@ function App() {
   // CWE FORMATTER
   // ============================================================
 
-  const getCwe = (assessment, finding) => {
+  const getCwe = (
+    assessment,
+    finding
+  ) => {
     if (
       Array.isArray(assessment?.cwe) &&
       assessment.cwe.length > 0
@@ -529,7 +711,9 @@ function App() {
       return cwe.join(', ')
     }
 
-    if (typeof cwe === 'string') {
+    if (
+      typeof cwe === 'string'
+    ) {
       return cwe
     }
 
@@ -592,8 +776,13 @@ function App() {
           </div>
 
           <div>
-            <h1>SentinelForge</h1>
-            <span>AI Security Platform</span>
+            <h1>
+              SentinelForge
+            </h1>
+
+            <span>
+              AI Security Platform
+            </span>
           </div>
 
         </div>
@@ -629,8 +818,13 @@ function App() {
             <span className="status-dot"></span>
 
             <div>
-              <strong>Backend Online</strong>
-              <small>FastAPI connected</small>
+              <strong>
+                Backend Online
+              </strong>
+
+              <small>
+                FastAPI connected
+              </small>
             </div>
 
           </div>
@@ -653,13 +847,16 @@ function App() {
               Dashboard / Security Scanner
             </span>
 
-            <h2>Code Security</h2>
+            <h2>
+              Code Security
+            </h2>
 
           </div>
 
           <div className="online">
 
             <span></span>
+
             Cloud Backend
 
           </div>
@@ -687,10 +884,11 @@ function App() {
               </h3>
 
               <p>
-                Upload a ZIP file and SentinelForge
-                will scan your source code for security
-                vulnerabilities and generate AI-powered
-                security fixes.
+                Upload a ZIP file and
+                SentinelForge will scan your
+                source code for security
+                vulnerabilities and generate
+                AI-powered security fixes.
               </p>
 
             </div>
@@ -709,7 +907,9 @@ function App() {
 
               <div>
 
-                <h3>Scan Code</h3>
+                <h3>
+                  Scan Code
+                </h3>
 
                 <p>
                   Upload your project as a ZIP file
@@ -785,9 +985,13 @@ function App() {
 
               <div>
 
-                <strong>Scan Error</strong>
+                <strong>
+                  Scan Error
+                </strong>
 
-                <p>{error}</p>
+                <p>
+                  {error}
+                </p>
 
               </div>
 
@@ -819,7 +1023,8 @@ function App() {
 
                   <div
                     className={`overall-risk-badge ${getRiskClass(
-                      findings.overall_risk?.overall_level
+                      findings.overall_risk
+                        ?.overall_level
                     )}`}
                   >
                     {findings.overall_risk
@@ -942,7 +1147,7 @@ function App() {
                   </div>
 
                   <span className="supported">
-                    RESEND
+                    EMAILJS
                   </span>
 
                 </div>
@@ -1192,7 +1397,8 @@ function App() {
                           )
 
                         const assessment =
-                          findings.risk_assessments?.[
+                          findings
+                            .risk_assessments?.[
                             index
                           ]
 
@@ -1221,11 +1427,14 @@ function App() {
                             <div
                               className={`finding-severity ${severity.toLowerCase()}`}
                             >
-                              {severity === 'CRITICAL'
+                              {severity ===
+                              'CRITICAL'
                                 ? '!!'
-                                : severity === 'HIGH'
+                                : severity ===
+                                  'HIGH'
                                 ? '!'
-                                : severity === 'MEDIUM'
+                                : severity ===
+                                  'MEDIUM'
                                 ? '•'
                                 : '✓'}
                             </div>
@@ -1270,7 +1479,8 @@ function App() {
 
                                     <strong>
                                       {assessment.risk_score ??
-                                        0}/10
+                                        0}
+                                      /10
                                     </strong>
 
                                   </div>
@@ -1331,7 +1541,8 @@ function App() {
 
                                 <span>
                                   Line{' '}
-                                  {finding.start?.line || '-'}
+                                  {finding.start?.line ||
+                                    '-'}
                                 </span>
 
                                 <span>
@@ -1477,4 +1688,3 @@ function App() {
 }
 
 export default App
-
