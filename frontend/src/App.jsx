@@ -2,8 +2,7 @@ import { useState } from 'react'
 import emailjs from '@emailjs/browser'
 import './App.css'
 
-const API_URL =
-  'https://sentinelforge-ai.onrender.com'
+const API_URL = 'https://sentinelforge-ai.onrender.com'
 
 const EMAILJS_SERVICE_ID =
   import.meta.env.VITE_EMAILJS_SERVICE_ID
@@ -15,6 +14,10 @@ const EMAILJS_PUBLIC_KEY =
   import.meta.env.VITE_EMAILJS_PUBLIC_KEY
 
 function App() {
+  // ============================================================
+  // SCAN STATES
+  // ============================================================
+
   const [file, setFile] = useState(null)
   const [scanning, setScanning] = useState(false)
   const [findings, setFindings] = useState(null)
@@ -89,7 +92,6 @@ function App() {
     setEmailError(null)
 
     const formData = new FormData()
-
     formData.append('file', file)
 
     try {
@@ -195,31 +197,63 @@ function App() {
   // DOWNLOAD FIXED FILE
   // ============================================================
 
-  const handleDownloadFixedFile = (
-    fixResult
-  ) => {
-    if (!fixResult?.fixed_code) {
+  const handleDownloadFixedFile = (fixResult) => {
+    if (!fixResult) {
       return
     }
 
+    /*
+     * Backend may return fixed_code.
+     */
+    const fixedCode =
+      fixResult.fixed_code ||
+      fixResult.fixedCode ||
+      fixResult.code ||
+      ''
+
+    if (!fixedCode) {
+      alert('No fixed code was returned by the Auto-Fix Agent.')
+      return
+    }
+
+    /*
+     * Get filename from backend.
+     */
+    let filename =
+      fixResult.filename ||
+      fixResult.file_name ||
+      fixResult.fixed_filename ||
+      'fixed_source_file.txt'
+
+    /*
+     * Make sure filename is usable.
+     */
+    filename = String(filename)
+
+    /*
+     * If backend accidentally sends a full path,
+     * keep only the actual filename.
+     */
+    filename = filename.split(/[\\/]/).pop()
+
+    /*
+     * Create downloadable file.
+     */
     const blob = new Blob(
-      [fixResult.fixed_code],
+      [fixedCode],
       {
         type: 'text/plain;charset=utf-8',
       }
     )
 
-    const url =
-      URL.createObjectURL(blob)
+    const downloadUrl =
+      window.URL.createObjectURL(blob)
 
     const link =
       document.createElement('a')
 
-    link.href = url
-
-    link.download =
-      fixResult.filename ||
-      'fixed_source_file.txt'
+    link.href = downloadUrl
+    link.download = filename
 
     document.body.appendChild(link)
 
@@ -227,7 +261,13 @@ function App() {
 
     document.body.removeChild(link)
 
-    URL.revokeObjectURL(url)
+    /*
+     * Give browser time to start download
+     * before releasing the object URL.
+     */
+    setTimeout(() => {
+      window.URL.revokeObjectURL(downloadUrl)
+    }, 1000)
   }
 
   // ============================================================
@@ -253,7 +293,9 @@ function App() {
     }
 
     const sourceCode =
-      finding.source_code || ''
+      finding.source_code ||
+      finding.sourceCode ||
+      ''
 
     if (!sourceCode.trim()) {
       setFixErrors((previous) => ({
@@ -287,8 +329,7 @@ function App() {
     })
 
     try {
-      const formData =
-        new FormData()
+      const formData = new FormData()
 
       // Vulnerability information
       formData.append(
@@ -296,15 +337,13 @@ function App() {
         JSON.stringify(finding)
       )
 
-      // Source code context
+      // Source code
       formData.append(
         'source_code',
         sourceCode
       )
 
-      // IMPORTANT:
-      // Send the ORIGINAL ZIP.
-      // Backend reads it but never modifies it.
+      // Original ZIP
       formData.append(
         'file',
         file
@@ -330,6 +369,11 @@ function App() {
         )
       }
 
+      console.log(
+        'AUTO-FIX RESPONSE:',
+        data
+      )
+
       if (!response.ok) {
         throw new Error(
           data?.detail ||
@@ -338,17 +382,61 @@ function App() {
         )
       }
 
-      if (!data?.success) {
+      if (!data) {
         throw new Error(
-          data?.detail ||
-            'Auto-Fix Agent did not return a successful result.'
+          'Auto-Fix returned an empty response.'
         )
       }
 
-      // Save fixed file result
+      /*
+       * Accept different success formats.
+       */
+      const isSuccessful =
+        data.success === true ||
+        Boolean(
+          data.fixed_code ||
+          data.fixedCode ||
+          data.code
+        )
+
+      if (!isSuccessful) {
+        throw new Error(
+          data?.detail ||
+            data?.message ||
+            'Auto-Fix Agent did not return fixed code.'
+        )
+      }
+
+      /*
+       * Normalize backend response.
+       */
+      const normalizedResult = {
+        ...data,
+
+        success: true,
+
+        fixed_code:
+          data.fixed_code ||
+          data.fixedCode ||
+          data.code ||
+          '',
+
+        filename:
+          data.filename ||
+          data.file_name ||
+          data.fixed_filename ||
+          finding.path?.split(/[\\/]/).pop() ||
+          'fixed_source_file.txt',
+      }
+
+      console.log(
+        'NORMALIZED AUTO-FIX RESULT:',
+        normalizedResult
+      )
+
       setFixResults((previous) => ({
         ...previous,
-        [index]: data,
+        [index]: normalizedResult,
       }))
     } catch (err) {
       console.error(
@@ -406,6 +494,21 @@ function App() {
       return
     }
 
+    /*
+     * Check EmailJS environment variables.
+     */
+    if (
+      !EMAILJS_SERVICE_ID ||
+      !EMAILJS_TEMPLATE_ID ||
+      !EMAILJS_PUBLIC_KEY
+    ) {
+      setEmailError(
+        'Email service is not configured. Please add the EmailJS environment variables in Vercel.'
+      )
+
+      return
+    }
+
     setEmailLoading(true)
     setEmailSuccess(null)
     setEmailError(null)
@@ -414,18 +517,110 @@ function App() {
       const overallRisk =
         findings.overall_risk || {}
 
-      /*
-       * IMPORTANT:
-       * Do NOT send the entire findings object.
-       *
-       * EmailJS has a 50 KB variable limit.
-       *
-       * We only send summary information.
-       */
+      const totalFindings =
+        findings.findings_count ??
+        findings.findings?.length ??
+        0
 
+      /*
+       * Create readable security findings.
+       */
+      const securityFindings =
+        (findings.findings || [])
+          .map(
+            (finding, index) => {
+              const severity =
+                getSeverity(finding)
+
+              const name =
+                getVulnerabilityName(
+                  finding
+                )
+
+              const assessment =
+                findings
+                  .risk_assessments?.[
+                  index
+                ]
+
+              const fileName =
+                getFileName(
+                  finding.path
+                )
+
+              const line =
+                finding.start?.line ||
+                '-'
+
+              const cwe =
+                getCwe(
+                  assessment,
+                  finding
+                )
+
+              return `
+Finding ${index + 1}
+
+Vulnerability:
+${name}
+
+Severity:
+${severity}
+
+File:
+${fileName}
+
+Line:
+${line}
+
+CWE:
+${cwe}
+
+Message:
+${
+  finding.extra?.message ||
+  'Security vulnerability detected.'
+}
+
+Risk Score:
+${assessment?.risk_score ?? 0}/10
+
+Exploitability:
+${
+  assessment?.exploitability ||
+  'UNKNOWN'
+}
+
+Impact:
+${
+  assessment?.impact ||
+  'Impact information unavailable.'
+}
+
+Recommendation:
+${
+  assessment?.recommendation ||
+  'Review and remediate this vulnerability.'
+}
+
+--------------------------------
+`
+            }
+          )
+          .join('\n')
+
+      /*
+       * EmailJS template parameters.
+       *
+       * These names MUST match the variables
+       * inside your EmailJS template.
+       */
       const templateParams = {
         to_email:
           email.trim(),
+
+        name:
+          'SentinelForge AI',
 
         filename:
           findings.filename ||
@@ -437,54 +632,40 @@ function App() {
           'SECURE',
 
         risk_score:
-          overallRisk.overall_score ?? 0,
-
-        total_findings:
-          findings.findings_count ??
-          findings.findings?.length ??
+          overallRisk.overall_score ??
           0,
 
+        total_findings:
+          totalFindings,
+
         critical:
-          overallRisk.critical ?? 0,
+          overallRisk.critical ??
+          0,
 
         high:
-          overallRisk.high ?? 0,
+          overallRisk.high ??
+          0,
 
         medium:
-          overallRisk.medium ?? 0,
+          overallRisk.medium ??
+          0,
 
         low:
-          overallRisk.low ?? 0,
+          overallRisk.low ??
+          0,
 
         report:
-          `SentinelForge Security Report
+          securityFindings ||
+          'No security findings detected.',
 
-File:
-${findings.filename || file?.name || 'security-report.zip'}
-
-Overall Risk:
-${overallRisk.overall_level || 'SECURE'}
-
-Risk Score:
-${overallRisk.overall_score ?? 0}/10
-
-Total Findings:
-${findings.findings_count ?? findings.findings?.length ?? 0}
-
-Critical:
-${overallRisk.critical ?? 0}
-
-High:
-${overallRisk.high ?? 0}
-
-Medium:
-${overallRisk.medium ?? 0}
-
-Low:
-${overallRisk.low ?? 0}
-
-The complete detailed analysis is available in SentinelForge.`,
+        time:
+          new Date().toLocaleString(),
       }
+
+      console.log(
+        'EmailJS template parameters:',
+        templateParams
+      )
 
       const response =
         await emailjs.send(
@@ -499,7 +680,9 @@ The complete detailed analysis is available in SentinelForge.`,
         response
       )
 
-      if (response.status !== 200) {
+      if (
+        response.status !== 200
+      ) {
         throw new Error(
           'Email service returned an unexpected response.'
         )
@@ -508,6 +691,8 @@ The complete detailed analysis is available in SentinelForge.`,
       setEmailSuccess(
         `Security report sent successfully to ${email.trim()}`
       )
+
+      setEmail('')
     } catch (err) {
       console.error(
         'Email report error:',
@@ -528,9 +713,7 @@ The complete detailed analysis is available in SentinelForge.`,
   // SEVERITY
   // ============================================================
 
-  const getSeverity = (
-    finding
-  ) => {
+  const getSeverity = (finding) => {
     const severity =
       finding?.extra?.severity ||
       finding?.extra?.metadata?.severity
@@ -593,7 +776,9 @@ The complete detailed analysis is available in SentinelForge.`,
         ?.vulnerability_class
 
     if (
-      Array.isArray(vulnerabilities) &&
+      Array.isArray(
+        vulnerabilities
+      ) &&
       vulnerabilities.length > 0
     ) {
       return vulnerabilities[0]
@@ -619,17 +804,13 @@ The complete detailed analysis is available in SentinelForge.`,
       }
 
       if (
-        lowerCheckId.includes(
-          'command'
-        )
+        lowerCheckId.includes('command')
       ) {
         return 'Command Injection'
       }
 
       if (
-        lowerCheckId.includes(
-          'secret'
-        )
+        lowerCheckId.includes('secret')
       ) {
         return 'Hardcoded Secret'
       }
@@ -642,9 +823,7 @@ The complete detailed analysis is available in SentinelForge.`,
   // FILE NAME
   // ============================================================
 
-  const getFileName = (
-    path
-  ) => {
+  const getFileName = (path) => {
     if (!path) {
       return 'Unknown file'
     }
@@ -658,9 +837,7 @@ The complete detailed analysis is available in SentinelForge.`,
   // RISK CLASS
   // ============================================================
 
-  const getRiskClass = (
-    level
-  ) => {
+  const getRiskClass = (level) => {
     if (!level) {
       return 'medium'
     }
@@ -670,7 +847,7 @@ The complete detailed analysis is available in SentinelForge.`,
   }
 
   // ============================================================
-  // CWE FORMATTER
+  // CWE
   // ============================================================
 
   const getCwe = (
@@ -775,7 +952,6 @@ The complete detailed analysis is available in SentinelForge.`,
           </div>
 
           <div>
-
             <h1>
               SentinelForge
             </h1>
@@ -783,7 +959,6 @@ The complete detailed analysis is available in SentinelForge.`,
             <span>
               AI Security Platform
             </span>
-
           </div>
 
         </div>
@@ -816,11 +991,9 @@ The complete detailed analysis is available in SentinelForge.`,
 
           <div className="system-status">
 
-            <span className="status-dot">
-            </span>
+            <span className="status-dot"></span>
 
             <div>
-
               <strong>
                 Backend Online
               </strong>
@@ -828,7 +1001,6 @@ The complete detailed analysis is available in SentinelForge.`,
               <small>
                 FastAPI connected
               </small>
-
             </div>
 
           </div>
@@ -860,12 +1032,8 @@ The complete detailed analysis is available in SentinelForge.`,
           </div>
 
           <div className="online">
-
-            <span>
-            </span>
-
+            <span></span>
             Cloud Backend
-
           </div>
 
         </header>
@@ -950,15 +1118,12 @@ The complete detailed analysis is available in SentinelForge.`,
               </div>
 
               <h4>
-
                 {file
                   ? file.name
                   : 'Drop your ZIP file here'}
-
               </h4>
 
               <p>
-
                 {file
                   ? `${(
                       file.size /
@@ -966,7 +1131,6 @@ The complete detailed analysis is available in SentinelForge.`,
                       1024
                     ).toFixed(2)} MB`
                   : 'or click to browse files'}
-
               </p>
 
             </label>
@@ -982,15 +1146,12 @@ The complete detailed analysis is available in SentinelForge.`,
 
               {scanning ? (
                 <>
-                  <span className="spinner">
-                  </span>
-
+                  <span className="spinner"></span>
                   Scanning Code...
                 </>
               ) : (
                 <>
                   Start Security Scan
-
                   <span>
                     →
                   </span>
@@ -1064,12 +1225,10 @@ The complete detailed analysis is available in SentinelForge.`,
                         ?.overall_level
                     )}`}
                   >
-
                     {findings
                       .overall_risk
                       ?.overall_level ||
                       'SECURE'}
-
                   </div>
 
                 </div>
@@ -1077,11 +1236,9 @@ The complete detailed analysis is available in SentinelForge.`,
                 <div className="risk-score">
 
                   <div className="risk-score-number">
-
                     {findings
                       .overall_risk
                       ?.overall_score ?? 0}
-
                   </div>
 
                   <div className="risk-score-label">
@@ -1093,7 +1250,6 @@ The complete detailed analysis is available in SentinelForge.`,
                 <div className="risk-breakdown">
 
                   <div>
-
                     <span>
                       Critical
                     </span>
@@ -1103,11 +1259,9 @@ The complete detailed analysis is available in SentinelForge.`,
                         .overall_risk
                         ?.critical ?? 0}
                     </strong>
-
                   </div>
 
                   <div>
-
                     <span>
                       High
                     </span>
@@ -1117,11 +1271,9 @@ The complete detailed analysis is available in SentinelForge.`,
                         .overall_risk
                         ?.high ?? 0}
                     </strong>
-
                   </div>
 
                   <div>
-
                     <span>
                       Medium
                     </span>
@@ -1131,11 +1283,9 @@ The complete detailed analysis is available in SentinelForge.`,
                         .overall_risk
                         ?.medium ?? 0}
                     </strong>
-
                   </div>
 
                   <div>
-
                     <span>
                       Low
                     </span>
@@ -1145,7 +1295,6 @@ The complete detailed analysis is available in SentinelForge.`,
                         .overall_risk
                         ?.low ?? 0}
                     </strong>
-
                   </div>
 
                 </div>
@@ -1206,7 +1355,7 @@ The complete detailed analysis is available in SentinelForge.`,
 
                     <p>
                       Enter your email address to receive
-                      the security analysis summary.
+                      the complete security analysis report.
                     </p>
 
                   </div>
@@ -1269,15 +1418,12 @@ The complete detailed analysis is available in SentinelForge.`,
 
                     {emailLoading ? (
                       <>
-                        <span className="spinner">
-                        </span>
-
+                        <span className="spinner"></span>
                         Sending Report...
                       </>
                     ) : (
                       <>
                         ✉ Send Report
-
                         <span>
                           →
                         </span>
@@ -1436,20 +1582,20 @@ The complete detailed analysis is available in SentinelForge.`,
 
                     <p>
                       Detected vulnerabilities in{' '}
-
                       <strong>
                         {findings.filename ||
                           'uploaded repository'}
                       </strong>
-
                     </p>
 
                   </div>
 
                   <span className="finding-count">
+
                     {findings.findings_count}
                     {' '}
                     Findings
+
                   </span>
 
                 </div>
@@ -1526,7 +1672,6 @@ The complete detailed analysis is available in SentinelForge.`,
                             <div
                               className={`finding-severity ${severity.toLowerCase()}`}
                             >
-
                               {severity ===
                               'CRITICAL'
                                 ? '!!'
@@ -1537,7 +1682,6 @@ The complete detailed analysis is available in SentinelForge.`,
                                   'MEDIUM'
                                 ? '•'
                                 : '✓'}
-
                             </div>
 
                             {/* MAIN FINDING */}
@@ -1675,13 +1819,14 @@ The complete detailed analysis is available in SentinelForge.`,
                                 >
 
                                   {isFixing ? (
-                                    <>
-                                      <span className="spinner">
-                                      </span>
 
+                                    <>
+                                      <span className="spinner"></span>
                                       Generating Fix...
                                     </>
+
                                   ) : (
+
                                     <>
                                       🛠 Generate Auto-Fix
 
@@ -1689,23 +1834,21 @@ The complete detailed analysis is available in SentinelForge.`,
                                         →
                                       </span>
                                     </>
+
                                   )}
 
                                 </button>
 
                                 <small>
-                                  AI will actually fix this
-                                  vulnerable file and create a
-                                  new downloadable copy.
-                                  Your original repository
+                                  AI will generate a secure
+                                  fixed copy of this vulnerable
+                                  file. Your original repository
                                   will not be modified.
                                 </small>
 
                               </div>
 
-                              {/* =================================================
-                                  AUTO FIX ERROR
-                              ================================================= */}
+                              {/* AUTO FIX ERROR */}
 
                               {fixError && (
 
@@ -1770,7 +1913,7 @@ The complete detailed analysis is available in SentinelForge.`,
                                       }}
                                     >
                                       {fixResult.filename ||
-                                        'fixed_source_file'}
+                                        'fixed_source_file.txt'}
                                     </span>
 
                                   </div>
@@ -1789,6 +1932,7 @@ The complete detailed analysis is available in SentinelForge.`,
                                   {/* DOWNLOAD BUTTON */}
 
                                   <button
+                                    type="button"
                                     className="auto-fix-button"
                                     onClick={() =>
                                       handleDownloadFixedFile(
@@ -1799,13 +1943,10 @@ The complete detailed analysis is available in SentinelForge.`,
                                       marginTop: '16px',
                                     }}
                                   >
-
                                     ⬇ Download Fixed File
-
                                     <span>
                                       →
                                     </span>
-
                                   </button>
 
                                   {/* DISCLAIMER */}
