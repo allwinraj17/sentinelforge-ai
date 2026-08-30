@@ -1,101 +1,123 @@
-import requests
-
-from app.config import settings
+from app.services.groq_service import generate_ai_response
 
 
-def generate_ai_response(prompt: str) -> str:
+def generate_fix(
+    vulnerability: dict,
+    source_code: str,
+) -> str:
     """
-    Send prompt to Groq using direct HTTP request.
+    Generate a corrected version of the vulnerable source code.
+
+    IMPORTANT:
+    - The original repository is never modified.
+    - The AI returns the complete corrected file content.
+    - The backend will save the corrected content as a NEW file.
     """
 
-    if not settings.groq_api_key:
-        raise ValueError("GROQ_API_KEY is not configured.")
+    check_id = vulnerability.get(
+        "check_id",
+        "unknown",
+    )
 
-    url = "https://api.groq.com/openai/v1/chat/completions"
+    message = vulnerability.get(
+        "extra",
+        {},
+    ).get(
+        "message",
+        "",
+    )
 
-    headers = {
-        "Authorization": f"Bearer {settings.groq_api_key}",
-        "Content-Type": "application/json",
-    }
+    file_path = vulnerability.get(
+        "path",
+        "",
+    )
 
-    payload = {
-        "model": settings.groq_model,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a cybersecurity AI assistant. "
-                    "Analyze software security issues carefully "
-                    "and provide accurate, safe recommendations."
-                ),
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            },
-        ],
-        "temperature": 0.1,
-    }
+    line = vulnerability.get(
+        "start",
+        {},
+    ).get(
+        "line",
+        "",
+    )
 
-    try:
-        response = requests.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=90,
-        )
+    prompt = f"""
+You are the Auto-Fix Agent of SentinelForge AI.
 
-        if response.status_code != 200:
-            try:
-                error_data = response.json()
-                error_message = error_data.get(
-                    "error",
-                    {}
-                ).get(
-                    "message",
-                    response.text,
-                )
-            except Exception:
-                error_message = response.text
+Your job is to FIX the vulnerable source code provided below.
 
-            raise RuntimeError(
-                f"Groq API error ({response.status_code}): "
-                f"{error_message}"
-            )
+The original repository MUST NOT be modified.
 
-        data = response.json()
+The backend will create a NEW fixed file from your response.
 
-        choices = data.get("choices", [])
+IMPORTANT RULES:
 
-        if not choices:
-            raise RuntimeError(
-                "Groq returned no response choices."
-            )
+1. Actually fix the vulnerability.
+2. Preserve the original functionality.
+3. Make the smallest practical security change.
+4. Do NOT rewrite unrelated code.
+5. Do NOT invent libraries or dependencies.
+6. Do NOT remove working functionality.
+7. Use the libraries already present in the source code.
+8. Return the COMPLETE corrected source file.
+9. Do NOT return only a code snippet.
+10. Do NOT include markdown code fences.
+11. Do NOT include explanations outside the required format.
+12. Never claim that the original repository was modified.
+13. If the vulnerability cannot safely be fixed because context is insufficient, clearly say so.
+14. Preserve imports and formatting wherever possible.
+15. The returned FIXED_CODE must be directly usable as a source file.
 
-        content = (
-            choices[0]
-            .get("message", {})
-            .get("content")
-        )
+VULNERABILITY
+=============
 
-        if not content:
-            raise RuntimeError(
-                "Groq returned an empty response."
-            )
+Rule ID:
+{check_id}
 
-        return content
+Message:
+{message}
 
-    except requests.exceptions.Timeout:
-        raise RuntimeError(
-            "Groq request timed out. Please try Auto-Fix again."
-        )
+File:
+{file_path}
 
-    except requests.exceptions.ConnectionError:
-        raise RuntimeError(
-            "Unable to connect to Groq API from the backend."
-        )
+Detected line:
+{line}
 
-    except requests.exceptions.RequestException as e:
-        raise RuntimeError(
-            f"Groq request failed: {str(e)}"
-        )
+ORIGINAL SOURCE CODE
+====================
+
+{source_code}
+
+RETURN EXACTLY IN THIS FORMAT:
+
+VULNERABILITY:
+<short vulnerability name>
+
+ROOT CAUSE:
+<short explanation>
+
+SECURITY IMPACT:
+<short explanation>
+
+FIXED_CODE:
+<complete corrected source code>
+
+EXPLANATION:
+<short explanation of exactly what was changed>
+
+CONFIDENCE:
+<LOW / MEDIUM / HIGH>
+
+If the source code does not contain enough context to safely fix the vulnerability:
+
+CONFIDENCE:
+LOW
+
+and return:
+
+FIXED_CODE:
+NOT_AVAILABLE
+
+Do not use markdown code fences around FIXED_CODE.
+"""
+
+    return generate_ai_response(prompt)

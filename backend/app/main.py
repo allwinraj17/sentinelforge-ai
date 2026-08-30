@@ -1,9 +1,8 @@
 import io
 import json
-import os
-import zipfile
-import tempfile
 from pathlib import Path
+
+import httpx
 
 from fastapi import (
     FastAPI,
@@ -12,11 +11,12 @@ from fastapi import (
     HTTPException,
     Form,
 )
+
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-import httpx
 
 from pydantic import BaseModel, EmailStr
+
 
 # ============================================================
 # EMAIL AGENT
@@ -30,6 +30,7 @@ from app.services.email_service import (
     send_security_report,
 )
 
+
 # ============================================================
 # AUTO-FIX AGENT
 # ============================================================
@@ -42,11 +43,13 @@ from app.services.code_context import (
     get_code_context,
 )
 
+
 # ============================================================
 # CONFIGURATION
 # ============================================================
 
 from app.config import settings
+
 
 # ============================================================
 # DATABASE
@@ -59,6 +62,7 @@ from app.database import (
 
 from app import models
 
+
 # ============================================================
 # SCANNER
 # ============================================================
@@ -68,6 +72,7 @@ from app.scanner import (
     run_semgrep_scan,
     cleanup_temp,
 )
+
 
 # ============================================================
 # AI ANALYSIS
@@ -80,6 +85,7 @@ from app.schemas import (
 from app.ai_service import (
     analyze_with_gemini,
 )
+
 
 # ============================================================
 # RISK ENGINE
@@ -120,6 +126,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 print("============================================================")
 print("SentinelForge AI - CORS Configuration")
@@ -177,6 +184,7 @@ async def health_check():
 async def upload_and_scan(
     file: UploadFile = File(...),
 ):
+
     """
     Upload ZIP repository.
 
@@ -198,7 +206,6 @@ async def upload_and_scan(
     # ========================================================
 
     if not file.filename:
-
         raise HTTPException(
             status_code=400,
             detail="No filename was provided.",
@@ -207,7 +214,6 @@ async def upload_and_scan(
     filename = file.filename.strip()
 
     if not filename.lower().endswith(".zip"):
-
         raise HTTPException(
             status_code=400,
             detail="Only .zip files are supported.",
@@ -224,7 +230,6 @@ async def upload_and_scan(
         contents = await file.read()
 
         if not contents:
-
             raise HTTPException(
                 status_code=400,
                 detail="The uploaded ZIP file is empty.",
@@ -349,11 +354,17 @@ async def upload_and_scan(
         # ====================================================
 
         return {
+
             "success": True,
+
             "filename": filename,
+
             "findings_count": len(findings),
+
             "findings": findings,
+
             "risk_assessments": risk_assessments,
+
             "overall_risk": overall_risk,
         }
 
@@ -384,8 +395,9 @@ async def upload_and_scan(
 async def analyze_findings(
     request: AIAnalyzeRequest,
 ):
+
     """
-    Analyze security findings using AI.
+    Analyze security findings using Gemini.
     """
 
     if not request.findings:
@@ -413,7 +425,9 @@ async def analyze_findings(
         )
 
         return {
+
             "success": True,
+
             "analysis": analysis,
         }
 
@@ -470,17 +484,16 @@ async def generate_auto_fix(
     vulnerability: str = Form(...),
     source_code: str = Form(...),
 ):
+
     """
-    Generate a fixed version of a vulnerable source file.
+    Generate a secure fixed version of a vulnerable source file.
 
     IMPORTANT:
 
-    The original uploaded repository is NEVER modified.
-
-    The AI generates corrected source code.
-
-    The backend creates a NEW file in memory and
-    returns that file to the frontend for download.
+    - The original repository is NEVER modified.
+    - Groq-powered Auto-Fix Agent generates the corrected code.
+    - The backend creates a NEW file in memory.
+    - The corrected file is returned for download.
     """
 
     # ========================================================
@@ -512,7 +525,7 @@ async def generate_auto_fix(
         )
 
     # ========================================================
-    # CALL AUTO-FIX AGENT
+    # CALL GROQ AUTO-FIX AGENT
     # ========================================================
 
     try:
@@ -546,51 +559,72 @@ async def generate_auto_fix(
             ),
         )
 
-    # ========================================================
-    # FIND FIXED_CODE SECTION
-    # ========================================================
-
-    marker = "FIXED_CODE:"
-
-    if marker not in fix_response:
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Auto-Fix Agent did not return "
-                "a valid FIXED_CODE section."
-            ),
-        )
-
-    fixed_code = (
+    fixed_code = str(
         fix_response
-        .split(marker, 1)[1]
-    )
+    ).strip()
 
     # ========================================================
-    # REMOVE EXPLANATION SECTION
+    # SUPPORT BOTH RESPONSE FORMATS
+    #
+    # FORMAT 1:
+    # FIXED_CODE:
+    # actual code
+    #
+    # FORMAT 2:
+    # actual code directly
+    #
+    # Your current Groq agent uses FORMAT 2.
     # ========================================================
 
-    if "EXPLANATION:" in fixed_code:
+    if "FIXED_CODE:" in fixed_code:
 
-        fixed_code = (
-            fixed_code
-            .split(
+        fixed_code = fixed_code.split(
+            "FIXED_CODE:",
+            1
+        )[1].strip()
+
+        if "EXPLANATION:" in fixed_code:
+
+            fixed_code = fixed_code.split(
                 "EXPLANATION:",
-                1,
-            )[0]
-        )
-
-    fixed_code = fixed_code.strip()
+                1
+            )[0].strip()
 
     # ========================================================
-    # CHECK IF FIX WAS POSSIBLE
+    # REMOVE MARKDOWN CODE FENCES
     # ========================================================
 
-    if (
-        not fixed_code
-        or fixed_code == "NOT_AVAILABLE"
-    ):
+    if fixed_code.startswith("```"):
+
+        lines = fixed_code.splitlines()
+
+        # Remove first fence
+        if lines and lines[0].strip().startswith("```"):
+
+            lines = lines[1:]
+
+        # Remove last fence
+        if lines and lines[-1].strip() == "```":
+
+            lines = lines[:-1]
+
+        fixed_code = "\n".join(
+            lines
+        ).strip()
+
+    # ========================================================
+    # CHECK IF AI FAILED TO GENERATE CODE
+    # ========================================================
+
+    invalid_values = [
+        "",
+        "NOT_AVAILABLE",
+        "NOT AVAILABLE",
+        "UNABLE_TO_FIX",
+        "UNABLE TO FIX",
+    ]
+
+    if fixed_code.strip().upper() in invalid_values:
 
         raise HTTPException(
             status_code=422,
@@ -599,28 +633,6 @@ async def generate_auto_fix(
                 "safely generate a fixed file."
             ),
         )
-
-    # ========================================================
-    # REMOVE ACCIDENTAL MARKDOWN FENCES
-    # ========================================================
-
-    if fixed_code.startswith(
-        "```"
-    ):
-
-        lines = fixed_code.splitlines()
-
-        if lines:
-
-            lines = lines[1:]
-
-        if lines and lines[-1].strip() == "```":
-
-            lines = lines[:-1]
-
-        fixed_code = "\n".join(
-            lines
-        ).strip()
 
     # ========================================================
     # GET ORIGINAL FILE PATH
@@ -679,15 +691,22 @@ async def generate_auto_fix(
     # ========================================================
 
     return StreamingResponse(
+
         file_stream,
+
         media_type="application/octet-stream",
+
         headers={
+
             "Content-Disposition": (
                 "attachment; "
                 f'filename="{fixed_filename}"'
             ),
+
             "X-Auto-Fix": "true",
+
             "X-Original-File": original_name,
+
             "X-Repository-Modified": "false",
         },
     )
@@ -697,9 +716,7 @@ async def generate_auto_fix(
 # EMAIL REPORT REQUEST
 # ============================================================
 
-class EmailReportRequest(
-    BaseModel
-):
+class EmailReportRequest(BaseModel):
 
     email: EmailStr
 
@@ -721,6 +738,7 @@ class EmailReportRequest(
 async def email_security_report(
     request: EmailReportRequest,
 ):
+
     """
     Generate a professional security report
     and send it to the user's email using Resend.
@@ -775,7 +793,7 @@ async def email_security_report(
         )
 
         # ====================================================
-        # RESEND
+        # SEND USING RESEND
         # ====================================================
 
         result = send_security_report(
@@ -789,14 +807,19 @@ async def email_security_report(
         # ====================================================
 
         return {
+
             "success": True,
+
             "message": (
                 "Security report sent successfully."
             ),
+
             "email": str(
                 request.email
             ),
+
             "filename": request.filename,
+
             "email_id": (
                 result.get("id")
                 if isinstance(
