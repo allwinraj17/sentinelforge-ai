@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     groq_model: str = "openai/gpt-oss-120b"
 
     # ========================================================
+    # EMAIL / RESEND
+    # ========================================================
+
+    resend_api_key: str | None = None
+
+    email_from: str = "onboarding@resend.dev"
+
+    # ========================================================
     # SETTINGS CONFIGURATION
     # ========================================================
 

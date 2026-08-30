@@ -2,13 +2,33 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import json
+from pydantic import BaseModel, EmailStr
+
+# ============================================================
+# EMAIL AGENT
+# ============================================================
+
+from app.agents.email_agent import generate_security_report_html
+from app.services.email_service import send_security_report
+
+# ============================================================
+# AUTO-FIX AGENT
+# ============================================================
 
 from app.agents.auto_fix_agent import generate_fix
 from app.services.code_context import get_code_context
 
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
 from app.config import settings
 from app.database import engine, Base
 from app import models
+
+# ============================================================
+# SCANNER
+# ============================================================
 
 from app.scanner import (
     extract_zip_to_temp,
@@ -16,8 +36,16 @@ from app.scanner import (
     cleanup_temp,
 )
 
+# ============================================================
+# AI ANALYSIS
+# ============================================================
+
 from app.schemas import AIAnalyzeRequest
 from app.ai_service import analyze_with_gemini
+
+# ============================================================
+# RISK ENGINE
+# ============================================================
 
 from app.risk_engine import (
     assess_findings,
@@ -40,16 +68,13 @@ app = FastAPI(
 # CORS CONFIGURATION
 # ============================================================
 
-# ============================================================
-# CORS CONFIGURATION
-# ============================================================
-
 allowed_origins = [
     "https://sentinelforge-ai.vercel.app",
     "https://sentinelforge-ai-aaa-ac6c.vercel.app",
     "https://sentinelforge-l7z3qg4an-aaa-ac6c.vercel.app",
     "https://sentinelforge-ai-git-phase-3-aaa-ac6c.vercel.app",
 
+    # Local development
     "http://localhost:5173",
     "http://localhost:3000",
 ]
@@ -61,6 +86,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 print("============================================================")
 print("SentinelForge AI - CORS Configuration")
 print("============================================================")
@@ -116,7 +142,7 @@ async def upload_and_scan(
     file: UploadFile = File(...)
 ):
     """
-    Upload a ZIP file.
+    Upload ZIP repository.
 
     Phase 1:
         Semgrep security scan
@@ -124,11 +150,8 @@ async def upload_and_scan(
     Phase 2:
         Risk assessment
 
-    Phase 3 preparation:
-        Attach source code context to each finding
-
-    The actual Auto-Fix Agent is called separately
-    through /scan/auto-fix.
+    Phase 3:
+        Attach source code context
     """
 
     # ========================================================
@@ -136,6 +159,7 @@ async def upload_and_scan(
     # ========================================================
 
     if not file.filename:
+
         raise HTTPException(
             status_code=400,
             detail="No filename was provided.",
@@ -144,6 +168,7 @@ async def upload_and_scan(
     filename = file.filename.strip()
 
     if not filename.lower().endswith(".zip"):
+
         raise HTTPException(
             status_code=400,
             detail="Only .zip files are supported.",
@@ -160,6 +185,7 @@ async def upload_and_scan(
         contents = await file.read()
 
         if not contents:
+
             raise HTTPException(
                 status_code=400,
                 detail="The uploaded ZIP file is empty.",
@@ -239,7 +265,7 @@ async def upload_and_scan(
             )
 
         # ====================================================
-        # PHASE 3 PREPARATION
+        # PHASE 3
         # ATTACH SOURCE CODE CONTEXT
         # ====================================================
 
@@ -305,7 +331,6 @@ async def upload_and_scan(
 
             except Exception:
 
-                # Never hide original result/error
                 pass
 
 
@@ -318,13 +343,8 @@ async def analyze_findings(
     request: AIAnalyzeRequest
 ):
     """
-    Analyze security findings using the configured
-    AI provider.
+    Analyze security findings using AI.
     """
-
-    # ========================================================
-    # VALIDATE FINDINGS
-    # ========================================================
 
     if not request.findings:
 
@@ -332,10 +352,6 @@ async def analyze_findings(
             status_code=400,
             detail="No findings to analyze.",
         )
-
-    # ========================================================
-    # VALIDATE API KEY
-    # ========================================================
 
     if not request.api_key:
 
@@ -349,10 +365,6 @@ async def analyze_findings(
 
     try:
 
-        # ====================================================
-        # CALL AI SERVICE
-        # ====================================================
-
         analysis = await analyze_with_gemini(
             request.api_key,
             request.findings,
@@ -362,10 +374,6 @@ async def analyze_findings(
             "success": True,
             "analysis": analysis,
         }
-
-    # ========================================================
-    # AI PROVIDER HTTP ERROR
-    # ========================================================
 
     except httpx.HTTPStatusError as e:
 
@@ -389,10 +397,6 @@ async def analyze_findings(
             ),
         )
 
-    # ========================================================
-    # AI PROVIDER CONNECTION ERROR
-    # ========================================================
-
     except httpx.RequestError:
 
         raise HTTPException(
@@ -402,10 +406,6 @@ async def analyze_findings(
                 "the AI provider."
             ),
         )
-
-    # ========================================================
-    # UNEXPECTED ERROR
-    # ========================================================
 
     except Exception as e:
 
@@ -488,3 +488,117 @@ async def generate_auto_fix(
                 f"{str(e)}"
             ),
         )
+
+
+# ============================================================
+# EMAIL REPORT REQUEST
+# ============================================================
+
+class EmailReportRequest(BaseModel):
+
+    email: EmailStr
+
+    filename: str
+
+    findings: list
+
+    risk_assessments: list
+
+    overall_risk: dict
+
+
+# ============================================================
+# PHASE 3
+# EMAIL SECURITY REPORT AGENT
+# ============================================================
+
+@app.post("/scan/email-report")
+async def email_security_report(
+    request: EmailReportRequest
+):
+    """
+    Generate a professional security report
+    and send it to the user's email using Resend.
+    """
+
+    # ========================================================
+    # CHECK RESEND API KEY
+    # ========================================================
+
+    if not settings.resend_api_key:
+
+        raise HTTPException(
+            status_code=500,
+            detail="RESEND_API_KEY is not configured.",
+        )
+
+    # ========================================================
+    # CHECK FINDINGS
+    # ========================================================
+
+    if request.findings is None:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Findings are required.",
+        )
+
+    try:
+
+        # ====================================================
+        # EMAIL AGENT
+        # GENERATE HTML
+        # ====================================================
+
+        html_report = generate_security_report_html(
+            request.filename,
+            request.findings,
+            request.risk_assessments,
+            request.overall_risk,
+        )
+
+        # ====================================================
+        # EMAIL SUBJECT
+        # ====================================================
+
+        subject = (
+            "SentinelForge AI Security Report - "
+            f"{request.filename}"
+        )
+
+        # ====================================================
+        # RESEND
+        # ====================================================
+
+        result = send_security_report(
+            str(request.email),
+            subject,
+            html_report,
+        )
+
+        # ====================================================
+        # SUCCESS
+        # ====================================================
+
+        return {
+            "success": True,
+            "message": "Security report sent successfully.",
+            "email": str(request.email),
+            "filename": request.filename,
+            "email_id": (
+                result.get("id")
+                if isinstance(result, dict)
+                else None
+            ),
+        }
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Email Agent failed: "
+                f"{str(e)}"
+            ),
+        )
+
