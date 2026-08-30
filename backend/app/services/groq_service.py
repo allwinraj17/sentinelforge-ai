@@ -1,72 +1,101 @@
-from groq import Groq
+import requests
 
 from app.config import settings
 
 
 def generate_ai_response(prompt: str) -> str:
     """
-    Send a prompt to Groq and return the AI response.
+    Send prompt to Groq using direct HTTP request.
     """
 
     if not settings.groq_api_key:
         raise ValueError("GROQ_API_KEY is not configured.")
 
-    print("============================================================")
-    print("GROQ REQUEST START")
-    print("============================================================")
-    print(f"Model: {settings.groq_model}")
-    print(f"API key configured: {bool(settings.groq_api_key)}")
-    print(f"Prompt length: {len(prompt)}")
+    url = "https://api.groq.com/openai/v1/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {settings.groq_api_key}",
+        "Content-Type": "application/json",
+    }
+
+    payload = {
+        "model": settings.groq_model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a cybersecurity AI assistant. "
+                    "Analyze software security issues carefully "
+                    "and provide accurate, safe recommendations."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        "temperature": 0.1,
+    }
 
     try:
-        client = Groq(
-            api_key=settings.groq_api_key,
-            timeout=60.0,
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=90,
         )
 
-        print("Groq client created.")
-        print("Sending request to Groq...")
+        if response.status_code != 200:
+            try:
+                error_data = response.json()
+                error_message = error_data.get(
+                    "error",
+                    {}
+                ).get(
+                    "message",
+                    response.text,
+                )
+            except Exception:
+                error_message = response.text
 
-        response = client.chat.completions.create(
-            model=settings.groq_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a cybersecurity AI assistant. "
-                        "Analyze software security issues carefully "
-                        "and provide accurate, safe recommendations."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": prompt,
-                },
-            ],
-            temperature=0.1,
+            raise RuntimeError(
+                f"Groq API error ({response.status_code}): "
+                f"{error_message}"
+            )
+
+        data = response.json()
+
+        choices = data.get("choices", [])
+
+        if not choices:
+            raise RuntimeError(
+                "Groq returned no response choices."
+            )
+
+        content = (
+            choices[0]
+            .get("message", {})
+            .get("content")
         )
 
-        print("Groq response received.")
+        if not content:
+            raise RuntimeError(
+                "Groq returned an empty response."
+            )
 
-        if not response.choices:
-            raise ValueError("Groq returned no choices.")
+        return content
 
-        result = response.choices[0].message.content
+    except requests.exceptions.Timeout:
+        raise RuntimeError(
+            "Groq request timed out. Please try Auto-Fix again."
+        )
 
-        if not result:
-            raise ValueError("Groq returned an empty response.")
+    except requests.exceptions.ConnectionError:
+        raise RuntimeError(
+            "Unable to connect to Groq API from the backend."
+        )
 
-        print("GROQ REQUEST SUCCESS")
-        print("============================================================")
-
-        return result
-
-    except Exception as e:
-        print("============================================================")
-        print("GROQ API ERROR")
-        print("============================================================")
-        print(f"Error type: {type(e).__name__}")
-        print(f"Error message: {str(e)}")
-        print("============================================================")
-
-        raise
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(
+            f"Groq request failed: {str(e)}"
+        )
