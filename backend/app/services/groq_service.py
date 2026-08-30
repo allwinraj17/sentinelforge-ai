@@ -1,123 +1,106 @@
-from app.services.groq_service import generate_ai_response
+import os
+
+from groq import Groq
 
 
-def generate_fix(
-    vulnerability: dict,
-    source_code: str,
-) -> str:
+# ============================================================
+# GROQ CONFIGURATION
+# ============================================================
+
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
+# You can change this model if needed.
+GROQ_MODEL = os.getenv(
+    "GROQ_MODEL",
+    "llama-3.3-70b-versatile",
+)
+
+
+# ============================================================
+# GENERATE AI RESPONSE
+# ============================================================
+
+def generate_ai_response(prompt: str) -> str:
     """
-    Generate a corrected version of the vulnerable source code.
+    Send a prompt to Groq and return the AI response as plain text.
 
-    IMPORTANT:
-    - The original repository is never modified.
-    - The AI returns the complete corrected file content.
-    - The backend will save the corrected content as a NEW file.
+    This function is used by:
+    - Auto-Fix Agent
+    - Other SentinelForge AI agents
+
+    The function does not modify files or repositories.
     """
 
-    check_id = vulnerability.get(
-        "check_id",
-        "unknown",
+    # --------------------------------------------------------
+    # VALIDATE API KEY
+    # --------------------------------------------------------
+
+    if not GROQ_API_KEY:
+        raise RuntimeError(
+            "GROQ_API_KEY is not configured."
+        )
+
+    # --------------------------------------------------------
+    # VALIDATE PROMPT
+    # --------------------------------------------------------
+
+    if not prompt or not prompt.strip():
+        raise ValueError(
+            "AI prompt cannot be empty."
+        )
+
+    # --------------------------------------------------------
+    # CREATE GROQ CLIENT
+    # --------------------------------------------------------
+
+    client = Groq(
+        api_key=GROQ_API_KEY
     )
 
-    message = vulnerability.get(
-        "extra",
-        {},
-    ).get(
-        "message",
-        "",
+    # --------------------------------------------------------
+    # SEND REQUEST TO GROQ
+    # --------------------------------------------------------
+
+    response = client.chat.completions.create(
+        model=GROQ_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a professional software "
+                    "security AI assistant. "
+                    "Follow the user's instructions exactly."
+                ),
+            },
+            {
+                "role": "user",
+                "content": prompt,
+            },
+        ],
+        temperature=0.1,
     )
 
-    file_path = vulnerability.get(
-        "path",
-        "",
-    )
+    # --------------------------------------------------------
+    # EXTRACT RESPONSE
+    # --------------------------------------------------------
 
-    line = vulnerability.get(
-        "start",
-        {},
-    ).get(
-        "line",
-        "",
-    )
+    if not response.choices:
+        raise RuntimeError(
+            "Groq returned an empty response."
+        )
 
-    prompt = f"""
-You are the Auto-Fix Agent of SentinelForge AI.
+    message = response.choices[0].message
 
-Your job is to FIX the vulnerable source code provided below.
+    if not message:
+        raise RuntimeError(
+            "Groq returned an empty message."
+        )
 
-The original repository MUST NOT be modified.
+    content = message.content
 
-The backend will create a NEW fixed file from your response.
+    if not content:
+        raise RuntimeError(
+            "Groq returned empty content."
+        )
 
-IMPORTANT RULES:
-
-1. Actually fix the vulnerability.
-2. Preserve the original functionality.
-3. Make the smallest practical security change.
-4. Do NOT rewrite unrelated code.
-5. Do NOT invent libraries or dependencies.
-6. Do NOT remove working functionality.
-7. Use the libraries already present in the source code.
-8. Return the COMPLETE corrected source file.
-9. Do NOT return only a code snippet.
-10. Do NOT include markdown code fences.
-11. Do NOT include explanations outside the required format.
-12. Never claim that the original repository was modified.
-13. If the vulnerability cannot safely be fixed because context is insufficient, clearly say so.
-14. Preserve imports and formatting wherever possible.
-15. The returned FIXED_CODE must be directly usable as a source file.
-
-VULNERABILITY
-=============
-
-Rule ID:
-{check_id}
-
-Message:
-{message}
-
-File:
-{file_path}
-
-Detected line:
-{line}
-
-ORIGINAL SOURCE CODE
-====================
-
-{source_code}
-
-RETURN EXACTLY IN THIS FORMAT:
-
-VULNERABILITY:
-<short vulnerability name>
-
-ROOT CAUSE:
-<short explanation>
-
-SECURITY IMPACT:
-<short explanation>
-
-FIXED_CODE:
-<complete corrected source code>
-
-EXPLANATION:
-<short explanation of exactly what was changed>
-
-CONFIDENCE:
-<LOW / MEDIUM / HIGH>
-
-If the source code does not contain enough context to safely fix the vulnerability:
-
-CONFIDENCE:
-LOW
-
-and return:
-
-FIXED_CODE:
-NOT_AVAILABLE
-
-Do not use markdown code fences around FIXED_CODE.
-"""
-
-    return generate_ai_response(prompt)
+    return content.strip()
