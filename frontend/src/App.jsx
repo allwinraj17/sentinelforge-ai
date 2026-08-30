@@ -103,10 +103,15 @@ function App() {
         }
       )
 
+      const text = await response.text()
+
+      console.log('SCAN HTTP STATUS:', response.status)
+      console.log('SCAN RAW RESPONSE:', text)
+
       let data = null
 
       try {
-        data = await response.json()
+        data = JSON.parse(text)
       } catch {
         throw new Error(
           `Backend returned an invalid response (${response.status}).`
@@ -119,6 +124,7 @@ function App() {
         throw new Error(
           data?.detail ||
             data?.message ||
+            data?.error ||
             `Security scan failed (${response.status}).`
         )
       }
@@ -196,7 +202,7 @@ function App() {
   }
 
   // ============================================================
-  // EXTRACT FIXED CODE FROM BACKEND RESPONSE
+  // EXTRACT FIXED CODE
   // ============================================================
 
   const extractFixedCode = (data) => {
@@ -205,25 +211,25 @@ function App() {
     }
 
     // ----------------------------------------------------------
-    // Direct JSON fields
+    // Direct fields
     // ----------------------------------------------------------
 
     const directCode =
       data.fixed_code ||
       data.fixedCode ||
-      data.code ||
       data.fixed_source_code ||
-      data.fixedSourceCode
+      data.fixedSourceCode ||
+      data.code
 
     if (
       typeof directCode === 'string' &&
       directCode.trim()
     ) {
-      return directCode
+      return cleanCode(directCode)
     }
 
     // ----------------------------------------------------------
-    // Nested response fields
+    // Nested result
     // ----------------------------------------------------------
 
     if (
@@ -233,15 +239,21 @@ function App() {
       const nestedCode =
         data.result.fixed_code ||
         data.result.fixedCode ||
+        data.result.fixed_source_code ||
+        data.result.fixedSourceCode ||
         data.result.code
 
       if (
         typeof nestedCode === 'string' &&
         nestedCode.trim()
       ) {
-        return nestedCode
+        return cleanCode(nestedCode)
       }
     }
+
+    // ----------------------------------------------------------
+    // Nested data
+    // ----------------------------------------------------------
 
     if (
       data.data &&
@@ -250,33 +262,20 @@ function App() {
       const nestedCode =
         data.data.fixed_code ||
         data.data.fixedCode ||
+        data.data.fixed_source_code ||
+        data.data.fixedSourceCode ||
         data.data.code
 
       if (
         typeof nestedCode === 'string' &&
         nestedCode.trim()
       ) {
-        return nestedCode
+        return cleanCode(nestedCode)
       }
     }
 
     // ----------------------------------------------------------
-    // AI structured text response
-    //
-    // Example:
-    //
-    // VULNERABILITY:
-    // SQL Injection
-    //
-    // ROOT CAUSE:
-    // ...
-    //
-    // FIXED_CODE:
-    // import ...
-    // ...
-    //
-    // EXPLANATION:
-    // ...
+    // AI text response
     // ----------------------------------------------------------
 
     const possibleText =
@@ -287,71 +286,75 @@ function App() {
       data.message ||
       data.result
 
-    if (
-      typeof possibleText === 'string'
-    ) {
-      const marker = 'FIXED_CODE:'
+    if (typeof possibleText === 'string') {
+      const text = possibleText.trim()
 
-      const markerIndex =
-        possibleText.indexOf(marker)
+      // FIXED_CODE:
+      const fixedCodeMatch = text.match(
+        /FIXED_CODE\s*:\s*([\s\S]*?)(?=\n\s*(?:EXPLANATION|CONFIDENCE|$))/i
+      )
 
-      if (markerIndex !== -1) {
-        let code =
-          possibleText.slice(
-            markerIndex + marker.length
-          )
-
-        const explanationMarker =
-          '\nEXPLANATION:'
-
-        const explanationIndex =
-          code.indexOf(explanationMarker)
-
-        if (explanationIndex !== -1) {
-          code =
-            code.slice(
-              0,
-              explanationIndex
-            )
-        }
-
-        const confidenceMarker =
-          '\nCONFIDENCE:'
-
-        const confidenceIndex =
-          code.indexOf(confidenceMarker)
-
-        if (confidenceIndex !== -1) {
-          code =
-            code.slice(
-              0,
-              confidenceIndex
-            )
-        }
-
-        code = code.trim()
-
-        // Remove accidental markdown fences
-        code = code.replace(
-          /^```[a-zA-Z0-9_-]*\s*/,
-          ''
-        )
-
-        code = code.replace(
-          /\s*```$/,
-          ''
+      if (fixedCodeMatch?.[1]) {
+        const code = cleanCode(
+          fixedCodeMatch[1]
         )
 
         if (
           code &&
           code !== 'NOT_AVAILABLE'
         ) {
-          return code.trim()
+          return code
+        }
+      }
+
+      // ```language ... ```
+      const markdownMatch = text.match(
+        /```(?:python|javascript|typescript|java|cpp|c|csharp|php|go|rust|ruby|sql|html|css|jsx|tsx)?\s*([\s\S]*?)```/i
+      )
+
+      if (markdownMatch?.[1]) {
+        const code = markdownMatch[1].trim()
+
+        if (code) {
+          return code
         }
       }
     }
 
     return ''
+  }
+
+  // ============================================================
+  // CLEAN GENERATED CODE
+  // ============================================================
+
+  const cleanCode = (code) => {
+    if (
+      typeof code !== 'string'
+    ) {
+      return ''
+    }
+
+    let cleaned = code.trim()
+
+    // Remove markdown code fences
+    cleaned = cleaned.replace(
+      /^```[a-zA-Z0-9_-]*\s*/i,
+      ''
+    )
+
+    cleaned = cleaned.replace(
+      /\s*```$/i,
+      ''
+    )
+
+    // Remove FIXED_CODE marker if accidentally included
+    cleaned = cleaned.replace(
+      /^FIXED_CODE\s*:\s*/i,
+      ''
+    )
+
+    return cleaned.trim()
   }
 
   // ============================================================
@@ -372,8 +375,7 @@ function App() {
 
     filename = String(filename)
 
-    filename =
-      filename.split(/[\\/]/).pop()
+    filename = filename.split(/[\\/]/).pop()
 
     if (
       !filename ||
@@ -421,8 +423,7 @@ function App() {
 
     filename = String(filename)
 
-    filename =
-      filename.split(/[\\/]/).pop()
+    filename = filename.split(/[\\/]/).pop()
 
     const blob = new Blob(
       [fixedCode],
@@ -536,6 +537,10 @@ function App() {
         file
       )
 
+      console.log(
+        'Sending Auto-Fix request...'
+      )
+
       const response =
         await fetch(
           `${API_URL}/scan/auto-fix`,
@@ -545,16 +550,11 @@ function App() {
           }
         )
 
-      let data = null
-
-      try {
-        data =
-          await response.json()
-      } catch {
-        throw new Error(
-          `Auto-Fix backend returned an invalid response (${response.status}).`
-        )
-      }
+      // IMPORTANT:
+      // Read raw response first.
+      // This lets us see exactly what Render returned.
+      const text =
+        await response.text()
 
       console.log(
         'AUTO-FIX HTTP STATUS:',
@@ -562,12 +562,27 @@ function App() {
       )
 
       console.log(
-        'AUTO-FIX RESPONSE:',
+        'AUTO-FIX RAW RESPONSE:',
+        text
+      )
+
+      let data = null
+
+      try {
+        data = JSON.parse(text)
+      } catch {
+        throw new Error(
+          `Auto-Fix backend returned an invalid response (${response.status}). Response: ${text.substring(0, 500)}`
+        )
+      }
+
+      console.log(
+        'AUTO-FIX JSON RESPONSE:',
         data
       )
 
       // --------------------------------------------------------
-      // HTTP error
+      // HTTP ERROR
       // --------------------------------------------------------
 
       if (!response.ok) {
@@ -586,14 +601,19 @@ function App() {
       }
 
       // --------------------------------------------------------
-      // Extract fixed code from ALL supported formats
+      // EXTRACT FIXED CODE
       // --------------------------------------------------------
 
       const fixedCode =
         extractFixedCode(data)
 
+      console.log(
+        'EXTRACTED FIXED CODE:',
+        fixedCode
+      )
+
       // --------------------------------------------------------
-      // Backend explicitly reported failure
+      // BACKEND EXPLICIT FAILURE
       // --------------------------------------------------------
 
       if (
@@ -610,17 +630,17 @@ function App() {
       }
 
       // --------------------------------------------------------
-      // No fixed code
+      // NO FIXED CODE
       // --------------------------------------------------------
 
       if (!fixedCode) {
         throw new Error(
-          'Auto-Fix Agent returned HTTP 200, but no FIXED_CODE was found in the response.'
+          'Auto-Fix returned HTTP 200, but no fixed code was found in the backend response.'
         )
       }
 
       // --------------------------------------------------------
-      // Normalize result
+      // NORMALIZE RESULT
       // --------------------------------------------------------
 
       const normalizedResult = {
@@ -645,6 +665,7 @@ function App() {
 
       setFixResults((previous) => ({
         ...previous,
+
         [index]:
           normalizedResult,
       }))
@@ -656,6 +677,7 @@ function App() {
 
       setFixErrors((previous) => ({
         ...previous,
+
         [index]:
           err?.message ||
           'Unable to generate the security fix.',
@@ -904,8 +926,8 @@ ${
 
       setEmailError(
         err?.text ||
-          err?.message ||
-          'Unable to send the security report.'
+        err?.message ||
+        'Unable to send the security report.'
       )
     } finally {
       setEmailLoading(false)
@@ -1185,6 +1207,7 @@ ${
           </div>
 
           <div>
+
             <h1>
               SentinelForge
             </h1>
@@ -1192,6 +1215,7 @@ ${
             <span>
               AI Security Platform
             </span>
+
           </div>
 
         </div>
@@ -1267,8 +1291,11 @@ ${
           </div>
 
           <div className="online">
+
             <span></span>
+
             Cloud Backend
+
           </div>
 
         </header>
@@ -1404,6 +1431,7 @@ ${
           ================================================== */}
 
           {error && (
+
             <div className="error-box">
 
               <span>
@@ -1423,6 +1451,7 @@ ${
               </div>
 
             </div>
+
           )}
 
           {/* ==================================================
@@ -1430,6 +1459,7 @@ ${
           ================================================== */}
 
           {findings && (
+
             <>
 
               {/* =================================================
@@ -1459,10 +1489,12 @@ ${
                         ?.overall_level
                     )}`}
                   >
+
                     {findings
                       .overall_risk
                       ?.overall_level ||
                       'SECURE'}
+
                   </div>
 
                 </div>
@@ -1470,9 +1502,11 @@ ${
                 <div className="risk-score">
 
                   <div className="risk-score-number">
+
                     {findings
                       .overall_risk
                       ?.overall_score ?? 0}
+
                   </div>
 
                   <div className="risk-score-label">
@@ -1484,10 +1518,7 @@ ${
                 <div className="risk-breakdown">
 
                   <div>
-                    <span>
-                      Critical
-                    </span>
-
+                    <span>Critical</span>
                     <strong>
                       {findings
                         .overall_risk
@@ -1496,10 +1527,7 @@ ${
                   </div>
 
                   <div>
-                    <span>
-                      High
-                    </span>
-
+                    <span>High</span>
                     <strong>
                       {findings
                         .overall_risk
@@ -1508,10 +1536,7 @@ ${
                   </div>
 
                   <div>
-                    <span>
-                      Medium
-                    </span>
-
+                    <span>Medium</span>
                     <strong>
                       {findings
                         .overall_risk
@@ -1520,10 +1545,7 @@ ${
                   </div>
 
                   <div>
-                    <span>
-                      Low
-                    </span>
-
+                    <span>Low</span>
                     <strong>
                       {findings
                         .overall_risk
@@ -1669,6 +1691,7 @@ ${
                 </div>
 
                 {emailSuccess && (
+
                   <div
                     className="auto-fix-result"
                     style={{
@@ -1685,9 +1708,11 @@ ${
                     </p>
 
                   </div>
+
                 )}
 
                 {emailError && (
+
                   <div
                     className="auto-fix-error"
                     style={{
@@ -1704,6 +1729,7 @@ ${
                     </p>
 
                   </div>
+
                 )}
 
               </div>
@@ -1821,9 +1847,11 @@ ${
                   </div>
 
                   <span className="finding-count">
+
                     {findings.findings_count}
                     {' '}
                     Findings
+
                   </span>
 
                 </div>
@@ -1900,6 +1928,7 @@ ${
                             <div
                               className={`finding-severity ${severity.toLowerCase()}`}
                             >
+
                               {severity ===
                               'CRITICAL'
                                 ? '!!'
@@ -1910,6 +1939,7 @@ ${
                                   'MEDIUM'
                                 ? '•'
                                 : '✓'}
+
                             </div>
 
                             {/* MAIN FINDING */}
@@ -1931,9 +1961,11 @@ ${
                               </div>
 
                               <p className="finding-message">
+
                                 {finding.extra
                                   ?.message ||
                                   'Security vulnerability detected.'}
+
                               </p>
 
                               {/* RISK DETAILS */}
