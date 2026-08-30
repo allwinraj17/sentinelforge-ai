@@ -2,7 +2,8 @@ import { useState } from 'react'
 import emailjs from '@emailjs/browser'
 import './App.css'
 
-const API_URL = 'https://sentinelforge-ai.onrender.com'
+const API_URL =
+  'https://sentinelforge-ai.onrender.com'
 
 const EMAILJS_SERVICE_ID =
   import.meta.env.VITE_EMAILJS_SERVICE_ID
@@ -88,6 +89,7 @@ function App() {
     setEmailError(null)
 
     const formData = new FormData()
+
     formData.append('file', file)
 
     try {
@@ -160,7 +162,6 @@ function App() {
         overall_risk:
           normalizedOverallRisk,
       })
-
     } catch (err) {
       console.error(
         'Scan request error:',
@@ -185,10 +186,48 @@ function App() {
             'Unable to complete the security scan.'
         )
       }
-
     } finally {
       setScanning(false)
     }
+  }
+
+  // ============================================================
+  // DOWNLOAD FIXED FILE
+  // ============================================================
+
+  const handleDownloadFixedFile = (
+    fixResult
+  ) => {
+    if (!fixResult?.fixed_code) {
+      return
+    }
+
+    const blob = new Blob(
+      [fixResult.fixed_code],
+      {
+        type: 'text/plain;charset=utf-8',
+      }
+    )
+
+    const url =
+      URL.createObjectURL(blob)
+
+    const link =
+      document.createElement('a')
+
+    link.href = url
+
+    link.download =
+      fixResult.filename ||
+      'fixed_source_file.txt'
+
+    document.body.appendChild(link)
+
+    link.click()
+
+    document.body.removeChild(link)
+
+    URL.revokeObjectURL(url)
   }
 
   // ============================================================
@@ -200,6 +239,16 @@ function App() {
     index
   ) => {
     if (!finding) {
+      return
+    }
+
+    if (!file) {
+      setFixErrors((previous) => ({
+        ...previous,
+        [index]:
+          'Original ZIP file is no longer available. Please upload the ZIP again.',
+      }))
+
       return
     }
 
@@ -238,30 +287,43 @@ function App() {
     })
 
     try {
-      const formData = new FormData()
+      const formData =
+        new FormData()
 
+      // Vulnerability information
       formData.append(
         'vulnerability',
         JSON.stringify(finding)
       )
 
+      // Source code context
       formData.append(
         'source_code',
         sourceCode
       )
 
-      const response = await fetch(
-        `${API_URL}/scan/auto-fix`,
-        {
-          method: 'POST',
-          body: formData,
-        }
+      // IMPORTANT:
+      // Send the ORIGINAL ZIP.
+      // Backend reads it but never modifies it.
+      formData.append(
+        'file',
+        file
       )
+
+      const response =
+        await fetch(
+          `${API_URL}/scan/auto-fix`,
+          {
+            method: 'POST',
+            body: formData,
+          }
+        )
 
       let data
 
       try {
-        data = await response.json()
+        data =
+          await response.json()
       } catch {
         throw new Error(
           `Auto-Fix backend returned an invalid response (${response.status}).`
@@ -283,11 +345,11 @@ function App() {
         )
       }
 
+      // Save fixed file result
       setFixResults((previous) => ({
         ...previous,
         [index]: data,
       }))
-
     } catch (err) {
       console.error(
         'Auto-Fix request error:',
@@ -300,7 +362,6 @@ function App() {
           err?.message ||
           'Unable to generate the security fix.',
       }))
-
     } finally {
       setFixLoading((previous) => ({
         ...previous,
@@ -333,22 +394,13 @@ function App() {
     const emailPattern =
       /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
-    if (!emailPattern.test(email.trim())) {
-      setEmailError(
-        'Please enter a valid email address.'
-      )
-
-      return
-    }
-
-    // Check EmailJS configuration
     if (
-      !EMAILJS_SERVICE_ID ||
-      !EMAILJS_TEMPLATE_ID ||
-      !EMAILJS_PUBLIC_KEY
+      !emailPattern.test(
+        email.trim()
+      )
     ) {
       setEmailError(
-        'Email service configuration is missing. Please check the Vercel environment variables.'
+        'Please enter a valid email address.'
       )
 
       return
@@ -362,99 +414,14 @@ function App() {
       const overallRisk =
         findings.overall_risk || {}
 
-      const findingsList =
-        Array.isArray(findings.findings)
-          ? findings.findings
-          : []
-
-      // ========================================================
-      // CREATE SMALL EMAIL REPORT
-      // ========================================================
-      //
-      // IMPORTANT:
-      // Do NOT send the complete findings JSON.
-      //
-      // EmailJS has a 50 KB variables limit.
-      // The source_code and other metadata can make the
-      // complete findings object extremely large.
-      //
-      // So we create a compact human-readable report instead.
-      // ========================================================
-
-      const reportLines =
-        findingsList.map(
-          (finding, index) => {
-            const severity =
-              getSeverity(finding)
-
-            const name =
-              getVulnerabilityName(finding)
-
-            const fileName =
-              getFileName(finding.path)
-
-            const message =
-              finding.extra?.message ||
-              'Security vulnerability detected.'
-
-            const assessment =
-              findings.risk_assessments?.[index] ||
-              {}
-
-            const riskScore =
-              assessment.risk_score ?? 0
-
-            const cwe =
-              getCwe(
-                assessment,
-                finding
-              )
-
-            const recommendation =
-              assessment.recommendation ||
-              'Review and remediate this vulnerability.'
-
-            return [
-              `Finding ${index + 1}`,
-              `Vulnerability: ${name}`,
-              `Severity: ${severity}`,
-              `File: ${fileName}`,
-              `Line: ${finding.start?.line || '-'}`,
-              `CWE: ${cwe}`,
-              `Risk Score: ${riskScore}/10`,
-              `Message: ${message}`,
-              `Recommendation: ${recommendation}`,
-              '------------------------------',
-            ].join('\n')
-          }
-        )
-
-      let reportText =
-        reportLines.length > 0
-          ? reportLines.join('\n')
-          : 'No vulnerabilities detected.'
-
-      // ========================================================
-      // EXTRA SIZE PROTECTION
-      // ========================================================
-
-      const MAX_REPORT_SIZE = 30000
-
-      if (
-        reportText.length >
-        MAX_REPORT_SIZE
-      ) {
-        reportText =
-          reportText.substring(
-            0,
-            MAX_REPORT_SIZE
-          ) +
-          '\n\n[Report shortened because of email size limits.]'
-      }
-
-      // ========================================================
-      // EMAILJS TEMPLATE PARAMETERS
-      // ========================================================
+      /*
+       * IMPORTANT:
+       * Do NOT send the entire findings object.
+       *
+       * EmailJS has a 50 KB variable limit.
+       *
+       * We only send summary information.
+       */
 
       const templateParams = {
         to_email:
@@ -474,7 +441,8 @@ function App() {
 
         total_findings:
           findings.findings_count ??
-          findingsList.length,
+          findings.findings?.length ??
+          0,
 
         critical:
           overallRisk.critical ?? 0,
@@ -488,26 +456,35 @@ function App() {
         low:
           overallRisk.low ?? 0,
 
-        // SMALL TEXT REPORT
         report:
-          reportText,
+          `SentinelForge Security Report
+
+File:
+${findings.filename || file?.name || 'security-report.zip'}
+
+Overall Risk:
+${overallRisk.overall_level || 'SECURE'}
+
+Risk Score:
+${overallRisk.overall_score ?? 0}/10
+
+Total Findings:
+${findings.findings_count ?? findings.findings?.length ?? 0}
+
+Critical:
+${overallRisk.critical ?? 0}
+
+High:
+${overallRisk.high ?? 0}
+
+Medium:
+${overallRisk.medium ?? 0}
+
+Low:
+${overallRisk.low ?? 0}
+
+The complete detailed analysis is available in SentinelForge.`,
       }
-
-      // ========================================================
-      // DEBUG SIZE
-      // ========================================================
-
-      console.log(
-        'Email report size:',
-        JSON.stringify(
-          templateParams
-        ).length,
-        'bytes'
-      )
-
-      // ========================================================
-      // SEND EMAIL
-      // ========================================================
 
       const response =
         await emailjs.send(
@@ -531,7 +508,6 @@ function App() {
       setEmailSuccess(
         `Security report sent successfully to ${email.trim()}`
       )
-
     } catch (err) {
       console.error(
         'Email report error:',
@@ -543,7 +519,6 @@ function App() {
           err?.message ||
           'Unable to send the security report.'
       )
-
     } finally {
       setEmailLoading(false)
     }
@@ -553,7 +528,9 @@ function App() {
   // SEVERITY
   // ============================================================
 
-  const getSeverity = (finding) => {
+  const getSeverity = (
+    finding
+  ) => {
     const severity =
       finding?.extra?.severity ||
       finding?.extra?.metadata?.severity
@@ -566,25 +543,29 @@ function App() {
       String(severity).toUpperCase()
 
     if (
-      normalizedSeverity === 'ERROR'
+      normalizedSeverity ===
+      'ERROR'
     ) {
       return 'HIGH'
     }
 
     if (
-      normalizedSeverity === 'WARNING'
+      normalizedSeverity ===
+      'WARNING'
     ) {
       return 'MEDIUM'
     }
 
     if (
-      normalizedSeverity === 'INFO'
+      normalizedSeverity ===
+      'INFO'
     ) {
       return 'LOW'
     }
 
     if (
-      normalizedSeverity === 'CRITICAL'
+      normalizedSeverity ===
+      'CRITICAL'
     ) {
       return 'CRITICAL'
     }
@@ -638,13 +619,17 @@ function App() {
       }
 
       if (
-        lowerCheckId.includes('command')
+        lowerCheckId.includes(
+          'command'
+        )
       ) {
         return 'Command Injection'
       }
 
       if (
-        lowerCheckId.includes('secret')
+        lowerCheckId.includes(
+          'secret'
+        )
       ) {
         return 'Hardcoded Secret'
       }
@@ -657,7 +642,9 @@ function App() {
   // FILE NAME
   // ============================================================
 
-  const getFileName = (path) => {
+  const getFileName = (
+    path
+  ) => {
     if (!path) {
       return 'Unknown file'
     }
@@ -671,12 +658,15 @@ function App() {
   // RISK CLASS
   // ============================================================
 
-  const getRiskClass = (level) => {
+  const getRiskClass = (
+    level
+  ) => {
     if (!level) {
       return 'medium'
     }
 
-    return String(level).toLowerCase()
+    return String(level)
+      .toLowerCase()
   }
 
   // ============================================================
@@ -688,14 +678,19 @@ function App() {
     finding
   ) => {
     if (
-      Array.isArray(assessment?.cwe) &&
+      Array.isArray(
+        assessment?.cwe
+      ) &&
       assessment.cwe.length > 0
     ) {
-      return assessment.cwe.join(', ')
+      return assessment.cwe.join(
+        ', '
+      )
     }
 
     if (
-      typeof assessment?.cwe === 'string' &&
+      typeof assessment?.cwe ===
+        'string' &&
       assessment.cwe.trim()
     ) {
       return assessment.cwe
@@ -730,15 +725,16 @@ function App() {
     }
 
     if (
-      typeof findings.overall_risk?.high ===
-      'number'
+      typeof findings.overall_risk
+        ?.high === 'number'
     ) {
       return findings.overall_risk.high
     }
 
     return findings.findings.filter(
       (finding) =>
-        getSeverity(finding) === 'HIGH'
+        getSeverity(finding) ===
+        'HIGH'
     ).length
   }
 
@@ -753,7 +749,8 @@ function App() {
 
     return new Set(
       findings.findings.map(
-        (finding) => finding.path
+        (finding) =>
+          finding.path
       )
     ).size
   }
@@ -765,7 +762,9 @@ function App() {
   return (
     <div className="app">
 
-      {/* SIDEBAR */}
+      {/* ======================================================
+          SIDEBAR
+      ====================================================== */}
 
       <aside className="sidebar">
 
@@ -776,6 +775,7 @@ function App() {
           </div>
 
           <div>
+
             <h1>
               SentinelForge
             </h1>
@@ -783,6 +783,7 @@ function App() {
             <span>
               AI Security Platform
             </span>
+
           </div>
 
         </div>
@@ -815,9 +816,11 @@ function App() {
 
           <div className="system-status">
 
-            <span className="status-dot"></span>
+            <span className="status-dot">
+            </span>
 
             <div>
+
               <strong>
                 Backend Online
               </strong>
@@ -825,6 +828,7 @@ function App() {
               <small>
                 FastAPI connected
               </small>
+
             </div>
 
           </div>
@@ -833,7 +837,9 @@ function App() {
 
       </aside>
 
-      {/* MAIN */}
+      {/* ======================================================
+          MAIN
+      ====================================================== */}
 
       <main className="main">
 
@@ -855,7 +861,8 @@ function App() {
 
           <div className="online">
 
-            <span></span>
+            <span>
+            </span>
 
             Cloud Backend
 
@@ -867,7 +874,9 @@ function App() {
 
         <section className="content">
 
-          {/* HERO */}
+          {/* ==================================================
+              HERO
+          ================================================== */}
 
           <div className="hero">
 
@@ -899,7 +908,9 @@ function App() {
 
           </div>
 
-          {/* UPLOAD */}
+          {/* ==================================================
+              UPLOAD
+          ================================================== */}
 
           <div className="upload-card">
 
@@ -928,7 +939,9 @@ function App() {
               <input
                 type="file"
                 accept=".zip"
-                onChange={handleFileChange}
+                onChange={
+                  handleFileChange
+                }
                 hidden
               />
 
@@ -937,12 +950,15 @@ function App() {
               </div>
 
               <h4>
+
                 {file
                   ? file.name
                   : 'Drop your ZIP file here'}
+
               </h4>
 
               <p>
+
                 {file
                   ? `${(
                       file.size /
@@ -950,6 +966,7 @@ function App() {
                       1024
                     ).toFixed(2)} MB`
                   : 'or click to browse files'}
+
               </p>
 
             </label>
@@ -957,18 +974,26 @@ function App() {
             <button
               className="scan-button"
               onClick={handleScan}
-              disabled={!file || scanning}
+              disabled={
+                !file ||
+                scanning
+              }
             >
 
               {scanning ? (
                 <>
-                  <span className="spinner"></span>
+                  <span className="spinner">
+                  </span>
+
                   Scanning Code...
                 </>
               ) : (
                 <>
                   Start Security Scan
-                  <span>→</span>
+
+                  <span>
+                    →
+                  </span>
                 </>
               )}
 
@@ -976,12 +1001,17 @@ function App() {
 
           </div>
 
-          {/* ERROR */}
+          {/* ==================================================
+              ERROR
+          ================================================== */}
 
           {error && (
+
             <div className="error-box">
 
-              <span>!</span>
+              <span>
+                !
+              </span>
 
               <div>
 
@@ -996,14 +1026,20 @@ function App() {
               </div>
 
             </div>
+
           )}
 
-          {/* RESULTS */}
+          {/* ==================================================
+              RESULTS
+          ================================================== */}
 
           {findings && (
+
             <>
 
-              {/* PHASE 2 */}
+              {/* =================================================
+                  PHASE 2
+              ================================================= */}
 
               <div className="risk-overview">
 
@@ -1023,13 +1059,17 @@ function App() {
 
                   <div
                     className={`overall-risk-badge ${getRiskClass(
-                      findings.overall_risk
+                      findings
+                        .overall_risk
                         ?.overall_level
                     )}`}
                   >
-                    {findings.overall_risk
+
+                    {findings
+                      .overall_risk
                       ?.overall_level ||
                       'SECURE'}
+
                   </div>
 
                 </div>
@@ -1038,7 +1078,8 @@ function App() {
 
                   <div className="risk-score-number">
 
-                    {findings.overall_risk
+                    {findings
+                      .overall_risk
                       ?.overall_score ?? 0}
 
                   </div>
@@ -1052,46 +1093,68 @@ function App() {
                 <div className="risk-breakdown">
 
                   <div>
-                    <span>Critical</span>
+
+                    <span>
+                      Critical
+                    </span>
 
                     <strong>
-                      {findings.overall_risk
+                      {findings
+                        .overall_risk
                         ?.critical ?? 0}
                     </strong>
+
                   </div>
 
                   <div>
-                    <span>High</span>
+
+                    <span>
+                      High
+                    </span>
 
                     <strong>
-                      {findings.overall_risk
+                      {findings
+                        .overall_risk
                         ?.high ?? 0}
                     </strong>
+
                   </div>
 
                   <div>
-                    <span>Medium</span>
+
+                    <span>
+                      Medium
+                    </span>
 
                     <strong>
-                      {findings.overall_risk
+                      {findings
+                        .overall_risk
                         ?.medium ?? 0}
                     </strong>
+
                   </div>
 
                   <div>
-                    <span>Low</span>
+
+                    <span>
+                      Low
+                    </span>
 
                     <strong>
-                      {findings.overall_risk
+                      {findings
+                        .overall_risk
                         ?.low ?? 0}
                     </strong>
+
                   </div>
 
                 </div>
 
               </div>
 
-              {/* PHASE 3 */}
+              {/* =================================================
+                  PHASE 3
+              ================================================= */}
 
               <div className="risk-overview">
 
@@ -1123,7 +1186,9 @@ function App() {
 
               </div>
 
-              {/* EMAIL REPORT */}
+              {/* =================================================
+                  EMAIL REPORT
+              ================================================= */}
 
               <div className="upload-card email-report-card">
 
@@ -1141,7 +1206,7 @@ function App() {
 
                     <p>
                       Enter your email address to receive
-                      the complete security analysis report.
+                      the security analysis summary.
                     </p>
 
                   </div>
@@ -1166,16 +1231,22 @@ function App() {
                     placeholder="Enter your email address"
                     value={email}
                     onChange={(e) => {
-                      setEmail(e.target.value)
+                      setEmail(
+                        e.target.value
+                      )
+
                       setEmailSuccess(null)
                       setEmailError(null)
                     }}
-                    disabled={emailLoading}
+                    disabled={
+                      emailLoading
+                    }
                     style={{
                       flex: '1',
                       minWidth: '240px',
                       padding: '14px 16px',
-                      border: '1px solid #d1d5db',
+                      border:
+                        '1px solid #d1d5db',
                       borderRadius: '8px',
                       fontSize: '15px',
                       outline: 'none',
@@ -1184,8 +1255,12 @@ function App() {
 
                   <button
                     className="scan-button"
-                    onClick={handleSendEmail}
-                    disabled={emailLoading}
+                    onClick={
+                      handleSendEmail
+                    }
+                    disabled={
+                      emailLoading
+                    }
                     style={{
                       marginTop: 0,
                       minWidth: '190px',
@@ -1194,13 +1269,18 @@ function App() {
 
                     {emailLoading ? (
                       <>
-                        <span className="spinner"></span>
+                        <span className="spinner">
+                        </span>
+
                         Sending Report...
                       </>
                     ) : (
                       <>
                         ✉ Send Report
-                        <span>→</span>
+
+                        <span>
+                          →
+                        </span>
                       </>
                     )}
 
@@ -1209,6 +1289,7 @@ function App() {
                 </div>
 
                 {emailSuccess && (
+
                   <div
                     className="auto-fix-result"
                     style={{
@@ -1225,9 +1306,11 @@ function App() {
                     </p>
 
                   </div>
+
                 )}
 
                 {emailError && (
+
                   <div
                     className="auto-fix-error"
                     style={{
@@ -1244,11 +1327,14 @@ function App() {
                     </p>
 
                   </div>
+
                 )}
 
               </div>
 
-              {/* STATISTICS */}
+              {/* =================================================
+                  STATISTICS
+              ================================================= */}
 
               <div className="stats">
 
@@ -1334,7 +1420,9 @@ function App() {
 
               </div>
 
-              {/* SECURITY FINDINGS */}
+              {/* =================================================
+                  SECURITY FINDINGS
+              ================================================= */}
 
               <div className="findings-section">
 
@@ -1348,16 +1436,20 @@ function App() {
 
                     <p>
                       Detected vulnerabilities in{' '}
+
                       <strong>
                         {findings.filename ||
                           'uploaded repository'}
                       </strong>
+
                     </p>
 
                   </div>
 
                   <span className="finding-count">
-                    {findings.findings_count} Findings
+                    {findings.findings_count}
+                    {' '}
+                    Findings
                   </span>
 
                 </div>
@@ -1368,7 +1460,9 @@ function App() {
 
                   <div className="no-findings">
 
-                    <div>✓</div>
+                    <div>
+                      ✓
+                    </div>
 
                     <h3>
                       No vulnerabilities detected
@@ -1386,10 +1480,15 @@ function App() {
                   <div className="finding-list">
 
                     {findings.findings.map(
-                      (finding, index) => {
+                      (
+                        finding,
+                        index
+                      ) => {
 
                         const severity =
-                          getSeverity(finding)
+                          getSeverity(
+                            finding
+                          )
 
                         const name =
                           getVulnerabilityName(
@@ -1427,6 +1526,7 @@ function App() {
                             <div
                               className={`finding-severity ${severity.toLowerCase()}`}
                             >
+
                               {severity ===
                               'CRITICAL'
                                 ? '!!'
@@ -1437,6 +1537,7 @@ function App() {
                                   'MEDIUM'
                                 ? '•'
                                 : '✓'}
+
                             </div>
 
                             {/* MAIN FINDING */}
@@ -1554,7 +1655,9 @@ function App() {
 
                               </div>
 
-                              {/* AUTO FIX */}
+                              {/* =================================================
+                                  AUTO FIX
+                              ================================================= */}
 
                               <div className="auto-fix-section">
 
@@ -1566,31 +1669,43 @@ function App() {
                                       index
                                     )
                                   }
-                                  disabled={isFixing}
+                                  disabled={
+                                    isFixing
+                                  }
                                 >
 
                                   {isFixing ? (
                                     <>
-                                      <span className="spinner"></span>
+                                      <span className="spinner">
+                                      </span>
+
                                       Generating Fix...
                                     </>
                                   ) : (
                                     <>
                                       🛠 Generate Auto-Fix
-                                      <span>→</span>
+
+                                      <span>
+                                        →
+                                      </span>
                                     </>
                                   )}
 
                                 </button>
 
                                 <small>
-                                  AI will suggest a secure fix.
-                                  Your repository will not be modified.
+                                  AI will actually fix this
+                                  vulnerable file and create a
+                                  new downloadable copy.
+                                  Your original repository
+                                  will not be modified.
                                 </small>
 
                               </div>
 
-                              {/* AUTO FIX ERROR */}
+                              {/* =================================================
+                                  AUTO FIX ERROR
+                              ================================================= */}
 
                               {fixError && (
 
@@ -1608,7 +1723,9 @@ function App() {
 
                               )}
 
-                              {/* AUTO FIX RESULT */}
+                              {/* =================================================
+                                  AUTO FIX RESULT
+                              ================================================= */}
 
                               {fixResult && (
 
@@ -1623,32 +1740,98 @@ function App() {
                                       </span>
 
                                       <h3>
-                                        AI-Generated Security Fix
+                                        AI-Fixed Security File
                                       </h3>
 
                                     </div>
 
                                     <span className="auto-fix-status">
-                                      SUGGESTION ONLY
+                                      FIX GENERATED
                                     </span>
 
                                   </div>
 
+                                  {/* FILE INFORMATION */}
+
+                                  <div
+                                    style={{
+                                      marginTop: '12px',
+                                      marginBottom: '12px',
+                                    }}
+                                  >
+
+                                    <strong>
+                                      Fixed File:
+                                    </strong>
+
+                                    <span
+                                      style={{
+                                        marginLeft: '8px',
+                                      }}
+                                    >
+                                      {fixResult.filename ||
+                                        'fixed_source_file'}
+                                    </span>
+
+                                  </div>
+
+                                  {/* FIXED CODE */}
+
                                   <div className="fix-content">
 
                                     <pre>
-                                      {fixResult.fix ||
-                                        'No fix was returned.'}
+                                      {fixResult.fixed_code ||
+                                        'No fixed code was returned.'}
                                     </pre>
 
                                   </div>
 
-                                  <p className="fix-disclaimer">
-                                    ⚠ This fix is an AI-generated
-                                    suggestion. SentinelForge did
-                                    not modify your repository.
-                                    Review and test the change
-                                    before applying it.
+                                  {/* DOWNLOAD BUTTON */}
+
+                                  <button
+                                    className="auto-fix-button"
+                                    onClick={() =>
+                                      handleDownloadFixedFile(
+                                        fixResult
+                                      )
+                                    }
+                                    style={{
+                                      marginTop: '16px',
+                                    }}
+                                  >
+
+                                    ⬇ Download Fixed File
+
+                                    <span>
+                                      →
+                                    </span>
+
+                                  </button>
+
+                                  {/* DISCLAIMER */}
+
+                                  <p
+                                    className="fix-disclaimer"
+                                    style={{
+                                      marginTop: '12px',
+                                    }}
+                                  >
+
+                                    ✓ SentinelForge created a
+                                    new fixed copy of the
+                                    vulnerable file.
+
+                                    <br />
+
+                                    ✓ The original uploaded ZIP
+                                    was not modified.
+
+                                    <br />
+
+                                    ⚠ Review and test the
+                                    generated file before using
+                                    it in production.
+
                                   </p>
 
                                 </div>
