@@ -1,2270 +1,2733 @@
-import { useState } from 'react'
-import emailjs from '@emailjs/browser'
-import './App.css'
+import { useMemo, useState } from "react";
+import emailjs from "@emailjs/browser";
+import { jsPDF } from "jspdf";
+import JSZip from "jszip";
+import "./App.css";
 
-const API_URL = 'https://sentinelforge-ai.onrender.com'
+
+// ============================================================
+// CONFIGURATION
+// ============================================================
+
+const API_URL =
+  import.meta.env.VITE_API_URL ||
+  "https://sentinelforge-ai.onrender.com";
 
 const EMAILJS_SERVICE_ID =
-  import.meta.env.VITE_EMAILJS_SERVICE_ID
+  import.meta.env.VITE_EMAILJS_SERVICE_ID || "";
 
 const EMAILJS_TEMPLATE_ID =
-  import.meta.env.VITE_EMAILJS_TEMPLATE_ID
+  import.meta.env.VITE_EMAILJS_TEMPLATE_ID || "";
 
 const EMAILJS_PUBLIC_KEY =
-  import.meta.env.VITE_EMAILJS_PUBLIC_KEY
+  import.meta.env.VITE_EMAILJS_PUBLIC_KEY || "";
 
-function App() {
-  // ============================================================
-  // SCAN STATES
-  // ============================================================
 
-  const [file, setFile] = useState(null)
-  const [scanning, setScanning] = useState(false)
-  const [findings, setFindings] = useState(null)
-  const [error, setError] = useState(null)
+// ============================================================
+// DEFAULT PIPELINE
+// ============================================================
 
-  // ============================================================
-  // AUTO-FIX STATES
-  // ============================================================
+const DEFAULT_STAGES = [
+  {
+    id: "repository",
+    title: "Repository Received",
+    status: "pending",
+    message: "",
+  },
+  {
+    id: "extract",
+    title: "Repository Extraction",
+    status: "pending",
+    message: "",
+  },
+  {
+    id: "semgrep",
+    title: "Security Detection",
+    status: "pending",
+    message: "",
+  },
+  {
+    id: "risk",
+    title: "Risk Assessment",
+    status: "pending",
+    message: "",
+  },
+  {
+    id: "ai",
+    title: "AI Security Analysis",
+    status: "pending",
+    message: "",
+  },
+  {
+    id: "fix",
+    title: "AI Auto-Fix",
+    status: "pending",
+    message: "",
+  },
+  {
+    id: "validation",
+    title: "Validation Preparation",
+    status: "pending",
+    message: "",
+  },
+];
 
-  const [fixLoading, setFixLoading] = useState({})
-  const [fixResults, setFixResults] = useState({})
-  const [fixErrors, setFixErrors] = useState({})
 
-  // ============================================================
-  // EMAIL STATES
-  // ============================================================
+// ============================================================
+// HELPERS
+// ============================================================
 
-  const [email, setEmail] = useState('')
-  const [emailLoading, setEmailLoading] = useState(false)
-  const [emailSuccess, setEmailSuccess] = useState(null)
-  const [emailError, setEmailError] = useState(null)
+function normalizePath(path = "") {
+  return String(path)
+    .replaceAll("\\", "/")
+    .replace(/^\.\/+/, "")
+    .replace(/^\/+/, "");
+}
 
-  // ============================================================
-  // FILE SELECTION
-  // ============================================================
 
-  const handleFileChange = (e) => {
-    const selectedFile = e.target.files?.[0]
+function getSeverity(finding, assessment) {
+  return (
+    assessment?.severity ||
+    finding?.extra?.severity ||
+    "UNKNOWN"
+  );
+}
 
-    if (!selectedFile) {
-      return
-    }
 
-    if (!selectedFile.name.toLowerCase().endsWith('.zip')) {
-      setError('Please select a ZIP file.')
-      setFile(null)
-      setFindings(null)
-      return
-    }
+function getVulnerabilityType(finding, assessment) {
+  return (
+    assessment?.vulnerability_type ||
+    finding?.extra?.metadata?.vulnerability_class ||
+    "Security Vulnerability"
+  );
+}
 
-    setFile(selectedFile)
-    setFindings(null)
-    setError(null)
 
-    setFixLoading({})
-    setFixResults({})
-    setFixErrors({})
+function getLine(finding) {
+  return (
+    finding?.start?.line ||
+    finding?.line ||
+    "Unknown"
+  );
+}
 
-    setEmailSuccess(null)
-    setEmailError(null)
+
+function getMessage(finding) {
+  return (
+    finding?.extra?.message ||
+    "Security issue detected."
+  );
+}
+
+
+function getCwe(finding, assessment) {
+  const cwe =
+    assessment?.cwe ||
+    finding?.extra?.metadata?.cwe ||
+    "";
+
+  if (Array.isArray(cwe)) {
+    return cwe.join(", ");
   }
 
-  // ============================================================
-  // SECURITY SCAN
-  // ============================================================
+  return cwe || "Not specified";
+}
 
-  const handleScan = async () => {
-    if (!file) {
-      setError('Please select a ZIP file first.')
-      return
-    }
 
-    setScanning(true)
-    setError(null)
-    setFindings(null)
+function getRiskScore(assessment) {
+  return (
+    assessment?.risk_score ??
+    assessment?.score ??
+    "N/A"
+  );
+}
 
-    setFixLoading({})
-    setFixResults({})
-    setFixErrors({})
 
-    setEmailSuccess(null)
-    setEmailError(null)
+function getRiskLevel(assessment) {
+  return (
+    assessment?.risk_level ||
+    assessment?.level ||
+    "N/A"
+  );
+}
 
-    const formData = new FormData()
-    formData.append('file', file)
 
-    try {
-      const response = await fetch(
-        `${API_URL}/scan/upload`,
-        {
-          method: 'POST',
-          body: formData,
-        }
-      )
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
 
-      const text = await response.text()
+  const link = document.createElement("a");
 
-      console.log('SCAN HTTP STATUS:', response.status)
-      console.log('SCAN RAW RESPONSE:', text)
+  link.href = url;
+  link.download = filename;
 
-      let data = null
+  document.body.appendChild(link);
 
-      try {
-        data = JSON.parse(text)
-      } catch {
-        throw new Error(
-          `Backend returned an invalid response (${response.status}).`
+  link.click();
+
+  link.remove();
+
+  setTimeout(() => {
+    URL.revokeObjectURL(url);
+  }, 1000);
+}
+
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+
+// ============================================================
+// APP
+// ============================================================
+
+export default function App() {
+  // ----------------------------------------------------------
+  // INPUT
+  // ----------------------------------------------------------
+
+  const [role, setRole] = useState("student");
+  const [email, setEmail] = useState("");
+  const [selectedFile, setSelectedFile] = useState(null);
+
+  // ----------------------------------------------------------
+  // STATE
+  // ----------------------------------------------------------
+
+  const [running, setRunning] = useState(false);
+  const [completed, setCompleted] = useState(false);
+
+  const [error, setError] = useState("");
+
+  const [scanData, setScanData] = useState(null);
+
+  const [stages, setStages] = useState(
+    DEFAULT_STAGES
+  );
+
+  const [emailStatus, setEmailStatus] =
+    useState("");
+
+  const [reportStatus, setReportStatus] =
+    useState("");
+
+  const [zipStatus, setZipStatus] =
+    useState("");
+
+  const [pdfDownloaded, setPdfDownloaded] =
+    useState(false);
+
+  const [zipDownloaded, setZipDownloaded] =
+    useState(false);
+
+
+  // ----------------------------------------------------------
+  // DERIVED DATA
+  // ----------------------------------------------------------
+
+  const findings = scanData?.findings || [];
+
+  const riskAssessments =
+    scanData?.risk_assessments || [];
+
+  const overallRisk =
+    scanData?.overall_risk || {};
+
+  const aiAnalysis =
+    scanData?.ai_analysis || "";
+
+  const fixes =
+    scanData?.fixes || [];
+
+
+  const successfulFixCount = useMemo(() => {
+    return fixes.filter(
+      (item) => item?.success
+    ).length;
+  }, [fixes]);
+
+
+  const failedFixCount = useMemo(() => {
+    return fixes.filter(
+      (item) => !item?.success
+    ).length;
+  }, [fixes]);
+
+
+  const severityCounts = useMemo(() => {
+    const counts = {
+      CRITICAL: 0,
+      HIGH: 0,
+      MEDIUM: 0,
+      LOW: 0,
+      INFO: 0,
+    };
+
+    findings.forEach((finding, index) => {
+      const assessment =
+        riskAssessments[index] || {};
+
+      const severity = String(
+        getSeverity(
+          finding,
+          assessment
         )
-      }
-
-      console.log('SCAN RESPONSE:', data)
-
-      if (!response.ok) {
-        throw new Error(
-          data?.detail ||
-            data?.message ||
-            data?.error ||
-            `Security scan failed (${response.status}).`
-        )
-      }
-
-      if (!data) {
-        throw new Error(
-          'The backend returned an empty response.'
-        )
-      }
-
-      const normalizedFindings =
-        Array.isArray(data.findings)
-          ? data.findings
-          : []
-
-      const normalizedRiskAssessments =
-        Array.isArray(data.risk_assessments)
-          ? data.risk_assessments
-          : []
-
-      const normalizedOverallRisk =
-        data.overall_risk || {
-          overall_score: 0,
-          overall_level: 'SECURE',
-          total_findings: 0,
-          critical: 0,
-          high: 0,
-          medium: 0,
-          low: 0,
-        }
-
-      setFindings({
-        ...data,
-
-        findings: normalizedFindings,
-
-        findings_count:
-          typeof data.findings_count === 'number'
-            ? data.findings_count
-            : normalizedFindings.length,
-
-        risk_assessments:
-          normalizedRiskAssessments,
-
-        overall_risk:
-          normalizedOverallRisk,
-      })
-    } catch (err) {
-      console.error(
-        'Scan request error:',
-        err
-      )
-
-      const errorMessage =
-        err?.message?.toLowerCase() || ''
+      ).toUpperCase();
 
       if (
-        err instanceof TypeError ||
-        errorMessage.includes('fetch') ||
-        errorMessage.includes('failed to fetch') ||
-        errorMessage.includes('network')
+        Object.prototype.hasOwnProperty.call(
+          counts,
+          severity
+        )
       ) {
-        setError(
-          'Unable to connect to the SentinelForge backend. Please check that the Render backend is running.'
-        )
-      } else {
-        setError(
-          err?.message ||
-            'Unable to complete the security scan.'
-        )
+        counts[severity] += 1;
       }
-    } finally {
-      setScanning(false)
-    }
+    });
+
+    return counts;
+  }, [
+    findings,
+    riskAssessments,
+  ]);
+
+
+  // ==========================================================
+  // FILE SELECT
+  // ==========================================================
+
+  function handleFileChange(event) {
+    const file =
+      event.target.files?.[0] || null;
+
+    setSelectedFile(file);
+
+    setError("");
+    setCompleted(false);
+
+    setScanData(null);
+
+    setStages(DEFAULT_STAGES);
+
+    setEmailStatus("");
+    setReportStatus("");
+    setZipStatus("");
+
+    setPdfDownloaded(false);
+    setZipDownloaded(false);
   }
 
-  // ============================================================
-  // EXTRACT FIXED CODE
-  // ============================================================
 
-  const extractFixedCode = (data) => {
-    if (!data) {
-      return ''
-    }
+  // ==========================================================
+  // START AUTONOMOUS ANALYSIS
+  // ==========================================================
 
-    // ----------------------------------------------------------
-    // Direct fields
-    // ----------------------------------------------------------
+  async function startAutonomousAnalysis() {
+    setError("");
 
-    const directCode =
-      data.fixed_code ||
-      data.fixedCode ||
-      data.fixed_source_code ||
-      data.fixedSourceCode ||
-      data.code
+    setCompleted(false);
 
-    if (
-      typeof directCode === 'string' &&
-      directCode.trim()
-    ) {
-      return cleanCode(directCode)
-    }
+    setScanData(null);
 
-    // ----------------------------------------------------------
-    // Nested result
-    // ----------------------------------------------------------
+    setEmailStatus("");
+    setReportStatus("");
+    setZipStatus("");
 
-    if (
-      data.result &&
-      typeof data.result === 'object'
-    ) {
-      const nestedCode =
-        data.result.fixed_code ||
-        data.result.fixedCode ||
-        data.result.fixed_source_code ||
-        data.result.fixedSourceCode ||
-        data.result.code
+    setPdfDownloaded(false);
+    setZipDownloaded(false);
 
-      if (
-        typeof nestedCode === 'string' &&
-        nestedCode.trim()
-      ) {
-        return cleanCode(nestedCode)
-      }
-    }
+    // --------------------------------------------------------
+    // VALIDATE INPUT
+    // --------------------------------------------------------
 
-    // ----------------------------------------------------------
-    // Nested data
-    // ----------------------------------------------------------
-
-    if (
-      data.data &&
-      typeof data.data === 'object'
-    ) {
-      const nestedCode =
-        data.data.fixed_code ||
-        data.data.fixedCode ||
-        data.data.fixed_source_code ||
-        data.data.fixedSourceCode ||
-        data.data.code
-
-      if (
-        typeof nestedCode === 'string' &&
-        nestedCode.trim()
-      ) {
-        return cleanCode(nestedCode)
-      }
-    }
-
-    // ----------------------------------------------------------
-    // AI text response
-    // ----------------------------------------------------------
-
-    const possibleText =
-      data.response ||
-      data.ai_response ||
-      data.aiResponse ||
-      data.content ||
-      data.message ||
-      data.result
-
-    if (typeof possibleText === 'string') {
-      const text = possibleText.trim()
-
-      // FIXED_CODE:
-      const fixedCodeMatch = text.match(
-        /FIXED_CODE\s*:\s*([\s\S]*?)(?=\n\s*(?:EXPLANATION|CONFIDENCE|$))/i
-      )
-
-      if (fixedCodeMatch?.[1]) {
-        const code = cleanCode(
-          fixedCodeMatch[1]
-        )
-
-        if (
-          code &&
-          code !== 'NOT_AVAILABLE'
-        ) {
-          return code
-        }
-      }
-
-      // ```language ... ```
-      const markdownMatch = text.match(
-        /```(?:python|javascript|typescript|java|cpp|c|csharp|php|go|rust|ruby|sql|html|css|jsx|tsx)?\s*([\s\S]*?)```/i
-      )
-
-      if (markdownMatch?.[1]) {
-        const code = markdownMatch[1].trim()
-
-        if (code) {
-          return code
-        }
-      }
-    }
-
-    return ''
-  }
-
-  // ============================================================
-  // CLEAN GENERATED CODE
-  // ============================================================
-
-  const cleanCode = (code) => {
-    if (
-      typeof code !== 'string'
-    ) {
-      return ''
-    }
-
-    let cleaned = code.trim()
-
-    // Remove markdown code fences
-    cleaned = cleaned.replace(
-      /^```[a-zA-Z0-9_-]*\s*/i,
-      ''
-    )
-
-    cleaned = cleaned.replace(
-      /\s*```$/i,
-      ''
-    )
-
-    // Remove FIXED_CODE marker if accidentally included
-    cleaned = cleaned.replace(
-      /^FIXED_CODE\s*:\s*/i,
-      ''
-    )
-
-    return cleaned.trim()
-  }
-
-  // ============================================================
-  // EXTRACT FILENAME
-  // ============================================================
-
-  const extractFilename = (
-    data,
-    finding
-  ) => {
-    let filename =
-      data?.filename ||
-      data?.file_name ||
-      data?.fixed_filename ||
-      data?.fixedFileName ||
-      finding?.path ||
-      'fixed_source_file.txt'
-
-    filename = String(filename)
-
-    filename = filename.split(/[\\/]/).pop()
-
-    if (
-      !filename ||
-      filename === '.' ||
-      filename === '..'
-    ) {
-      filename = 'fixed_source_file.txt'
-    }
-
-    return filename
-  }
-
-  // ============================================================
-  // DOWNLOAD FIXED FILE
-  // ============================================================
-
-  const handleDownloadFixedFile = (
-    fixResult
-  ) => {
-    if (!fixResult) {
-      return
-    }
-
-    const fixedCode =
-      fixResult.fixed_code ||
-      fixResult.fixedCode ||
-      fixResult.code ||
-      ''
-
-    if (
-      typeof fixedCode !== 'string' ||
-      !fixedCode.trim()
-    ) {
-      alert(
-        'No fixed code was returned by the Auto-Fix Agent.'
-      )
-      return
-    }
-
-    let filename =
-      fixResult.filename ||
-      fixResult.file_name ||
-      fixResult.fixed_filename ||
-      'fixed_source_file.txt'
-
-    filename = String(filename)
-
-    filename = filename.split(/[\\/]/).pop()
-
-    const blob = new Blob(
-      [fixedCode],
-      {
-        type: 'text/plain;charset=utf-8',
-      }
-    )
-
-    const downloadUrl =
-      window.URL.createObjectURL(blob)
-
-    const link =
-      document.createElement('a')
-
-    link.href = downloadUrl
-    link.download = filename
-
-    document.body.appendChild(link)
-
-    link.click()
-
-    document.body.removeChild(link)
-
-    setTimeout(() => {
-      window.URL.revokeObjectURL(
-        downloadUrl
-      )
-    }, 1000)
-  }
-
-  // ============================================================
-  // AUTO-FIX AGENT
-  // ============================================================
-
-  const handleAutoFix = async (
-    finding,
-    index
-  ) => {
-    if (!finding) {
-      return
-    }
-
-    if (!file) {
-      setFixErrors((previous) => ({
-        ...previous,
-        [index]:
-          'Original ZIP file is no longer available. Please upload the ZIP again.',
-      }))
-
-      return
-    }
-
-    const sourceCode =
-      finding.source_code ||
-      finding.sourceCode ||
-      ''
-
-    if (
-      typeof sourceCode !== 'string' ||
-      !sourceCode.trim()
-    ) {
-      setFixErrors((previous) => ({
-        ...previous,
-        [index]:
-          'Source code context is not available for this vulnerability.',
-      }))
-
-      return
-    }
-
-    setFixLoading((previous) => ({
-      ...previous,
-      [index]: true,
-    }))
-
-    setFixErrors((previous) => {
-      const updated = {
-        ...previous,
-      }
-
-      delete updated[index]
-
-      return updated
-    })
-
-    setFixResults((previous) => {
-      const updated = {
-        ...previous,
-      }
-
-      delete updated[index]
-
-      return updated
-    })
-
-    try {
-      const formData = new FormData()
-
-      formData.append(
-        'vulnerability',
-        JSON.stringify(finding)
-      )
-
-      formData.append(
-        'source_code',
-        sourceCode
-      )
-
-      formData.append(
-        'file',
-        file
-      )
-
-      console.log(
-        'Sending Auto-Fix request...'
-      )
-
-      const response =
-        await fetch(
-          `${API_URL}/scan/auto-fix`,
-          {
-            method: 'POST',
-            body: formData,
-          }
-        )
-
-      // IMPORTANT:
-      // Read raw response first.
-      // This lets us see exactly what Render returned.
-      const text =
-        await response.text()
-
-      console.log(
-        'AUTO-FIX HTTP STATUS:',
-        response.status
-      )
-
-      console.log(
-        'AUTO-FIX RAW RESPONSE:',
-        text
-      )
-
-      let data = null
-
-      try {
-        data = JSON.parse(text)
-      } catch {
-        throw new Error(
-          `Auto-Fix backend returned an invalid response (${response.status}). Response: ${text.substring(0, 500)}`
-        )
-      }
-
-      console.log(
-        'AUTO-FIX JSON RESPONSE:',
-        data
-      )
-
-      // --------------------------------------------------------
-      // HTTP ERROR
-      // --------------------------------------------------------
-
-      if (!response.ok) {
-        throw new Error(
-          data?.detail ||
-            data?.message ||
-            data?.error ||
-            `Auto-Fix failed (${response.status}).`
-        )
-      }
-
-      if (!data) {
-        throw new Error(
-          'Auto-Fix returned an empty response.'
-        )
-      }
-
-      // --------------------------------------------------------
-      // EXTRACT FIXED CODE
-      // --------------------------------------------------------
-
-      const fixedCode =
-        extractFixedCode(data)
-
-      console.log(
-        'EXTRACTED FIXED CODE:',
-        fixedCode
-      )
-
-      // --------------------------------------------------------
-      // BACKEND EXPLICIT FAILURE
-      // --------------------------------------------------------
-
-      if (
-        data.success === false &&
-        !fixedCode
-      ) {
-        throw new Error(
-          data.detail ||
-            data.message ||
-            data.error ||
-            data.reason ||
-            'Auto-Fix Agent failed to generate a fix.'
-        )
-      }
-
-      // --------------------------------------------------------
-      // NO FIXED CODE
-      // --------------------------------------------------------
-
-      if (!fixedCode) {
-        throw new Error(
-          'Auto-Fix returned HTTP 200, but no fixed code was found in the backend response.'
-        )
-      }
-
-      // --------------------------------------------------------
-      // NORMALIZE RESULT
-      // --------------------------------------------------------
-
-      const normalizedResult = {
-        ...data,
-
-        success: true,
-
-        fixed_code:
-          fixedCode,
-
-        filename:
-          extractFilename(
-            data,
-            finding
-          ),
-      }
-
-      console.log(
-        'NORMALIZED AUTO-FIX RESULT:',
-        normalizedResult
-      )
-
-      setFixResults((previous) => ({
-        ...previous,
-
-        [index]:
-          normalizedResult,
-      }))
-    } catch (err) {
-      console.error(
-        'Auto-Fix request error:',
-        err
-      )
-
-      setFixErrors((previous) => ({
-        ...previous,
-
-        [index]:
-          err?.message ||
-          'Unable to generate the security fix.',
-      }))
-    } finally {
-      setFixLoading((previous) => ({
-        ...previous,
-        [index]: false,
-      }))
-    }
-  }
-
-  // ============================================================
-  // SEND SECURITY REPORT BY EMAIL
-  // ============================================================
-
-  const handleSendEmail = async () => {
-    if (!findings) {
-      setEmailError(
-        'Please complete a security scan first.'
-      )
-
-      return
+    if (!role) {
+      setError(
+        "Please select your role."
+      );
+      return;
     }
 
     if (!email.trim()) {
-      setEmailError(
-        'Please enter your email address.'
-      )
-
-      return
+      setError(
+        "Please enter your email address."
+      );
+      return;
     }
 
-    const emailPattern =
-      /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!email.includes("@")) {
+      setError(
+        "Please enter a valid email address."
+      );
+      return;
+    }
+
+    if (!selectedFile) {
+      setError(
+        "Please upload a repository ZIP file."
+      );
+      return;
+    }
 
     if (
-      !emailPattern.test(
-        email.trim()
-      )
+      !selectedFile.name
+        .toLowerCase()
+        .endsWith(".zip")
     ) {
-      setEmailError(
-        'Please enter a valid email address.'
-      )
-
-      return
+      setError(
+        "Only ZIP repository files are supported."
+      );
+      return;
     }
+
+    // --------------------------------------------------------
+    // START
+    // --------------------------------------------------------
+
+    setRunning(true);
+
+    setStages(
+      DEFAULT_STAGES.map((stage, index) => {
+        if (index === 0) {
+          return {
+            ...stage,
+            status: "running",
+            message:
+              "Preparing repository submission...",
+          };
+        }
+
+        return {
+          ...stage,
+          status: "pending",
+          message: "",
+        };
+      })
+    );
+
+    try {
+      // ------------------------------------------------------
+      // BUILD FORM DATA
+      // ------------------------------------------------------
+
+      const formData = new FormData();
+
+      formData.append(
+        "role",
+        role
+      );
+
+      formData.append(
+        "email",
+        email.trim()
+      );
+
+      formData.append(
+        "file",
+        selectedFile
+      );
+
+      // ------------------------------------------------------
+      // SEND TO MASTER ENDPOINT
+      // ------------------------------------------------------
+
+      const response = await fetch(
+        `${API_URL}/scan/start`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      let data = null;
+
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error(
+          `Backend returned an invalid response (${response.status}).`
+        );
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data?.detail ||
+            "Autonomous security analysis failed."
+        );
+      }
+
+      if (!data?.success) {
+        throw new Error(
+          data?.message ||
+            "Autonomous analysis did not complete successfully."
+        );
+      }
+
+      // ------------------------------------------------------
+      // STORE RESULTS
+      // ------------------------------------------------------
+
+      setScanData(data);
+
+      // ------------------------------------------------------
+      // USE BACKEND PIPELINE STATUS
+      // ------------------------------------------------------
+
+      if (
+        Array.isArray(data.stages) &&
+        data.stages.length > 0
+      ) {
+        setStages(data.stages);
+      } else {
+        setStages(
+          DEFAULT_STAGES.map(
+            (stage) => ({
+              ...stage,
+              status: "completed",
+            })
+          )
+        );
+      }
+
+      setCompleted(true);
+
+      // ------------------------------------------------------
+      // AUTO ACTIONS
+      // ------------------------------------------------------
+
+      // Generate and download PDF.
+      try {
+        await generatePDFReport(
+          data
+        );
+
+        setPdfDownloaded(true);
+        setReportStatus(
+          "Security report PDF generated and downloaded."
+        );
+      } catch (pdfError) {
+        console.error(
+          "PDF generation error:",
+          pdfError
+        );
+
+        setReportStatus(
+          `PDF generation failed: ${pdfError.message}`
+        );
+      }
+
+      // Generate and download fixed repository ZIP.
+      try {
+        await generateFixedRepositoryZip(
+          selectedFile,
+          data
+        );
+      } catch (zipError) {
+        console.error(
+          "Fixed ZIP error:",
+          zipError
+        );
+
+        setZipStatus(
+          `Fixed repository ZIP failed: ${zipError.message}`
+        );
+      }
+
+      // Send email.
+      try {
+        await sendEmailReport(
+          data
+        );
+      } catch (emailError) {
+        console.error(
+          "Email error:",
+          emailError
+        );
+
+        setEmailStatus(
+          `Email delivery failed: ${emailError.message}`
+        );
+      }
+
+    } catch (requestError) {
+      console.error(
+        "Autonomous analysis error:",
+        requestError
+      );
+
+      setError(
+        requestError.message ||
+          "Something went wrong."
+      );
+
+      setStages(
+        DEFAULT_STAGES.map(
+          (stage) => ({
+            ...stage,
+            status: "pending",
+          })
+        )
+      );
+
+    } finally {
+      setRunning(false);
+    }
+  }
+
+
+  // ==========================================================
+  // PDF GENERATION
+  // ==========================================================
+
+  async function generatePDFReport(data) {
+    const reportRole =
+      data?.role || role;
+
+    const reportFindings =
+      data?.findings || [];
+
+    const reportAssessments =
+      data?.risk_assessments || [];
+
+    const reportRisk =
+      data?.overall_risk || {};
+
+    const reportAI =
+      data?.ai_analysis || "";
+
+    const reportFixes =
+      data?.fixes || [];
+
+    const repositoryName =
+      data?.filename ||
+      selectedFile?.name ||
+      "repository.zip";
+
+
+    const doc = new jsPDF({
+      unit: "mm",
+      format: "a4",
+    });
+
+
+    let y = 18;
+
+    const pageWidth =
+      doc.internal.pageSize.getWidth();
+
+    const pageHeight =
+      doc.internal.pageSize.getHeight();
+
+
+    function addPageIfNeeded(
+      requiredHeight = 12
+    ) {
+      if (
+        y + requiredHeight >
+        pageHeight - 16
+      ) {
+        doc.addPage();
+        y = 18;
+      }
+    }
+
+
+    function writeText(
+      text,
+      options = {}
+    ) {
+      const fontSize =
+        options.fontSize || 10;
+
+      const bold =
+        options.bold || false;
+
+      const maxWidth =
+        options.maxWidth ||
+        pageWidth - 30;
+
+      const lineHeight =
+        options.lineHeight ||
+        5;
+
+      doc.setFontSize(
+        fontSize
+      );
+
+      doc.setFont(
+        "helvetica",
+        bold ? "bold" : "normal"
+      );
+
+      const lines =
+        doc.splitTextToSize(
+          String(text ?? ""),
+          maxWidth
+        );
+
+      addPageIfNeeded(
+        lines.length *
+          lineHeight +
+          2
+      );
+
+      doc.text(
+        lines,
+        15,
+        y
+      );
+
+      y +=
+        lines.length *
+        lineHeight;
+
+      return lines;
+    }
+
+
+    // --------------------------------------------------------
+    // HEADER
+    // --------------------------------------------------------
+
+    doc.setFontSize(22);
+
+    doc.setFont(
+      "helvetica",
+      "bold"
+    );
+
+    doc.text(
+      "SentinelForge AI",
+      15,
+      y
+    );
+
+    y += 8;
+
+    doc.setFontSize(12);
+
+    doc.setFont(
+      "helvetica",
+      "normal"
+    );
+
+    doc.text(
+      "Autonomous Repository Security Analysis Report",
+      15,
+      y
+    );
+
+    y += 10;
+
+    doc.line(
+      15,
+      y,
+      pageWidth - 15,
+      y
+    );
+
+    y += 10;
+
+
+    // --------------------------------------------------------
+    // REPORT INFORMATION
+    // --------------------------------------------------------
+
+    writeText(
+      `Repository: ${repositoryName}`,
+      {
+        bold: true,
+        fontSize: 11,
+      }
+    );
+
+    writeText(
+      `Role: ${
+        reportRole === "student"
+          ? "Student"
+          : "Developer"
+      }`
+    );
+
+    writeText(
+      `Email: ${data?.email || email}`
+    );
+
+    writeText(
+      `Vulnerabilities Detected: ${
+        reportFindings.length
+      }`
+    );
+
+    writeText(
+      `Overall Risk Score: ${
+        reportRisk.score ??
+        reportRisk.overall_score ??
+        "N/A"
+      }`
+    );
+
+    writeText(
+      `Overall Risk Level: ${
+        reportRisk.risk_level ??
+        reportRisk.level ??
+        "N/A"
+      }`
+    );
+
+    y += 5;
+
+
+    // --------------------------------------------------------
+    // STUDENT REPORT
+    // --------------------------------------------------------
+
+    if (
+      reportRole === "student"
+    ) {
+      writeText(
+        "Security Learning Summary",
+        {
+          fontSize: 15,
+          bold: true,
+        }
+      );
+
+      writeText(
+        "This section explains the security issues in a simple and educational manner."
+      );
+
+      y += 4;
+
+      if (
+        reportFindings.length === 0
+      ) {
+        writeText(
+          "No security vulnerabilities were detected during the automated security scan."
+        );
+      }
+
+
+      reportFindings.forEach(
+        (finding, index) => {
+          const assessment =
+            reportAssessments[
+              index
+            ] || {};
+
+          const vulnerability =
+            getVulnerabilityType(
+              finding,
+              assessment
+            );
+
+          const path =
+            finding?.path ||
+            "Unknown";
+
+          const line =
+            getLine(finding);
+
+          const message =
+            getMessage(finding);
+
+          const impact =
+            assessment?.impact ||
+            "Potential impact depends on how the vulnerable functionality is used.";
+
+          const exploitability =
+            assessment?.exploitability ||
+            "An attacker may be able to abuse the vulnerable code depending on application exposure and input control.";
+
+          const recommendation =
+            assessment?.recommendation ||
+            "Apply secure coding practices and validate untrusted input.";
+
+          writeText(
+            `Vulnerability ${index + 1}: ${vulnerability}`,
+            {
+              fontSize: 13,
+              bold: true,
+            }
+          );
+
+          writeText(
+            `Where: ${path} at line ${line}`
+          );
+
+          writeText(
+            `What was detected: ${message}`
+          );
+
+          writeText(
+            `Possible attack path: ${exploitability}`
+          );
+
+          writeText(
+            `Impact if not fixed: ${impact}`
+          );
+
+          writeText(
+            `Prevention / Fix: ${recommendation}`
+          );
+
+          writeText(
+            "What SentinelForge AI did: The repository was scanned, the risk was assessed, and an AI-generated remediation copy was prepared when sufficient source context was available."
+          );
+
+          y += 5;
+        }
+      );
+    }
+
+
+    // --------------------------------------------------------
+    // DEVELOPER REPORT
+    // --------------------------------------------------------
+
+    else {
+      writeText(
+        "Technical Security Findings",
+        {
+          fontSize: 15,
+          bold: true,
+        }
+      );
+
+      y += 4;
+
+      if (
+        reportFindings.length === 0
+      ) {
+        writeText(
+          "No security vulnerabilities were detected during the automated security scan."
+        );
+      }
+
+
+      reportFindings.forEach(
+        (finding, index) => {
+          const assessment =
+            reportAssessments[
+              index
+            ] || {};
+
+          const vulnerability =
+            getVulnerabilityType(
+              finding,
+              assessment
+            );
+
+          const checkId =
+            finding?.check_id ||
+            "Unknown";
+
+          const path =
+            finding?.path ||
+            "Unknown";
+
+          const line =
+            getLine(finding);
+
+          const severity =
+            getSeverity(
+              finding,
+              assessment
+            );
+
+          const cwe =
+            getCwe(
+              finding,
+              assessment
+            );
+
+          const riskScore =
+            getRiskScore(
+              assessment
+            );
+
+          const riskLevel =
+            getRiskLevel(
+              assessment
+            );
+
+          const message =
+            getMessage(finding);
+
+          const impact =
+            assessment?.impact ||
+            "Not specified";
+
+          const exploitability =
+            assessment?.exploitability ||
+            "Not specified";
+
+          const recommendation =
+            assessment?.recommendation ||
+            "Not specified";
+
+
+          writeText(
+            `Finding ${index + 1}: ${vulnerability}`,
+            {
+              fontSize: 13,
+              bold: true,
+            }
+          );
+
+          writeText(
+            `Semgrep Rule: ${checkId}`
+          );
+
+          writeText(
+            `File: ${path}`
+          );
+
+          writeText(
+            `Line: ${line}`
+          );
+
+          writeText(
+            `Severity: ${severity}`
+          );
+
+          writeText(
+            `CWE: ${cwe}`
+          );
+
+          writeText(
+            `Risk Score: ${riskScore}`
+          );
+
+          writeText(
+            `Risk Level: ${riskLevel}`
+          );
+
+          writeText(
+            `Semgrep Message: ${message}`
+          );
+
+          writeText(
+            `Impact: ${impact}`
+          );
+
+          writeText(
+            `Exploitability: ${exploitability}`
+          );
+
+          writeText(
+            `Recommended Remediation: ${recommendation}`
+          );
+
+          if (
+            finding?.source_code
+          ) {
+            writeText(
+              "Source Context:",
+              {
+                bold: true,
+              }
+            );
+
+            writeText(
+              finding.source_code,
+              {
+                fontSize: 8,
+                lineHeight: 4,
+              }
+            );
+          }
+
+          y += 5;
+        }
+      );
+    }
+
+
+    // --------------------------------------------------------
+    // AI ANALYSIS
+    // --------------------------------------------------------
+
+    writeText(
+      "AI Security Analysis",
+      {
+        fontSize: 15,
+        bold: true,
+      }
+    );
+
+    if (reportAI) {
+      writeText(
+        reportAI,
+        {
+          fontSize: 9,
+          lineHeight: 4.5,
+        }
+      );
+    } else {
+      writeText(
+        "No AI analysis was returned."
+      );
+    }
+
+    y += 4;
+
+
+    // --------------------------------------------------------
+    // AUTO-FIX
+    // --------------------------------------------------------
+
+    writeText(
+      "AI Auto-Fix Summary",
+      {
+        fontSize: 15,
+        bold: true,
+      }
+    );
+
+    writeText(
+      `Successful fixes generated: ${
+        reportFixes.filter(
+          (item) => item?.success
+        ).length
+      }`
+    );
+
+    writeText(
+      `Fixes that could not be generated: ${
+        reportFixes.filter(
+          (item) => !item?.success
+        ).length
+      }`
+    );
+
+    writeText(
+      "The original uploaded repository was not modified. SentinelForge AI generated corrected copies for findings where sufficient source context was available."
+    );
+
+    writeText(
+      "Important: Phase 4 does not perform a second security scan after auto-fix generation. Therefore the generated fixes are not claimed as security-verified."
+    );
+
+
+    // --------------------------------------------------------
+    // SEVERITY SUMMARY
+    // --------------------------------------------------------
+
+    writeText(
+      "Severity Summary",
+      {
+        fontSize: 15,
+        bold: true,
+      }
+    );
+
+    writeText(
+      `Critical: ${
+        severityCounts.CRITICAL
+      }`
+    );
+
+    writeText(
+      `High: ${
+        severityCounts.HIGH
+      }`
+    );
+
+    writeText(
+      `Medium: ${
+        severityCounts.MEDIUM
+      }`
+    );
+
+    writeText(
+      `Low: ${
+        severityCounts.LOW
+      }`
+    );
+
+    writeText(
+      `Info: ${
+        severityCounts.INFO
+      }`
+    );
+
+
+    // --------------------------------------------------------
+    // FOOTER
+    // --------------------------------------------------------
+
+    addPageIfNeeded(10);
+
+    y += 8;
+
+    doc.line(
+      15,
+      y,
+      pageWidth - 15,
+      y
+    );
+
+    y += 7;
+
+    writeText(
+      "Generated by SentinelForge AI.",
+      {
+        fontSize: 8,
+      }
+    );
+
+    writeText(
+      "Autonomous analysis completed without a post-fix second security scan.",
+      {
+        fontSize: 8,
+      }
+    );
+
+
+    // --------------------------------------------------------
+    // DOWNLOAD
+    // --------------------------------------------------------
+
+    const safeName =
+      String(repositoryName)
+        .replace(/\.zip$/i, "")
+        .replace(/[^\w.-]+/g, "_");
+
+    doc.save(
+      `SentinelForge_${safeName}_Security_Report.pdf`
+    );
+  }
+
+
+  // ==========================================================
+  // FIXED REPOSITORY ZIP
+  // ==========================================================
+
+  async function generateFixedRepositoryZip(
+    originalFile,
+    data
+  ) {
+    if (!originalFile) {
+      throw new Error(
+        "Original repository file is unavailable."
+      );
+    }
+
+    const repositoryFixes =
+      data?.fixes || [];
+
+    setZipStatus(
+      "Preparing fixed repository ZIP..."
+    );
+
+    // --------------------------------------------------------
+    // LOAD ORIGINAL ZIP
+    // --------------------------------------------------------
+
+    const originalBuffer =
+      await originalFile.arrayBuffer();
+
+    const zip =
+      await JSZip.loadAsync(
+        originalBuffer
+      );
+
+    // --------------------------------------------------------
+    // APPLY FIXED FILES
+    // --------------------------------------------------------
+
+    let replacedCount = 0;
+    let skippedCount = 0;
+
+    for (
+      const fix of repositoryFixes
+    ) {
+      if (
+        !fix?.success ||
+        !fix?.fixed_code ||
+        !fix?.original_path
+      ) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const targetPath =
+        normalizePath(
+          fix.original_path
+        );
+
+      if (!targetPath) {
+        skippedCount += 1;
+        continue;
+      }
+
+      const exactEntry =
+        zip.file(targetPath);
+
+      if (exactEntry) {
+        zip.file(
+          targetPath,
+          fix.fixed_code
+        );
+
+        replacedCount += 1;
+        continue;
+      }
+
+      // ------------------------------------------------------
+      // TRY "./" VARIANT
+      // ------------------------------------------------------
+
+      const dotEntry =
+        zip.file(
+          `./${targetPath}`
+        );
+
+      if (dotEntry) {
+        zip.file(
+          `./${targetPath}`,
+          fix.fixed_code
+        );
+
+        replacedCount += 1;
+        continue;
+      }
+
+      // ------------------------------------------------------
+      // TRY NORMALIZED ENTRY SEARCH
+      // ------------------------------------------------------
+
+      let matchedEntry = null;
+
+      zip.forEach(
+        (relativePath) => {
+          if (
+            matchedEntry ||
+            relativePath.endsWith("/")
+          ) {
+            return;
+          }
+
+          const normalizedEntry =
+            normalizePath(
+              relativePath
+            );
+
+          if (
+            normalizedEntry ===
+            targetPath
+          ) {
+            matchedEntry =
+              relativePath;
+          }
+        }
+      );
+
+      if (matchedEntry) {
+        zip.file(
+          matchedEntry,
+          fix.fixed_code
+        );
+
+        replacedCount += 1;
+      } else {
+        skippedCount += 1;
+      }
+    }
+
+
+    // --------------------------------------------------------
+    // ADD PHASE 4 MANIFEST
+    // --------------------------------------------------------
+
+    const manifest = {
+      tool: "SentinelForge AI",
+      phase: "Phase 4",
+      repository:
+        data?.filename ||
+        originalFile.name,
+      original_repository_preserved: true,
+      second_security_scan_performed: false,
+      validation_status:
+        data?.validation_status ||
+        "Validation preparation completed.",
+      fixes_generated:
+        repositoryFixes.length,
+      fixes_applied:
+        replacedCount,
+      fixes_not_applied:
+        skippedCount,
+    };
+
+    zip.file(
+      "sentinelforge-phase4-report.json",
+      JSON.stringify(
+        manifest,
+        null,
+        2
+      )
+    );
+
+
+    // --------------------------------------------------------
+    // GENERATE ZIP
+    // --------------------------------------------------------
+
+    setZipStatus(
+      "Creating fixed repository ZIP..."
+    );
+
+    const outputBlob =
+      await zip.generateAsync({
+        type: "blob",
+        compression: "DEFLATE",
+        compressionOptions: {
+          level: 6,
+        },
+      });
+
+
+    // --------------------------------------------------------
+    // DOWNLOAD
+    // --------------------------------------------------------
+
+    const safeName =
+      String(
+        data?.filename ||
+          originalFile.name
+      )
+        .replace(/\.zip$/i, "")
+        .replace(/[^\w.-]+/g, "_");
+
+    downloadBlob(
+      outputBlob,
+      `SentinelForge_${safeName}_Fixed_Repository.zip`
+    );
+
+    setZipDownloaded(true);
+
+    setZipStatus(
+      `Fixed repository ZIP downloaded. ${replacedCount} file(s) replaced.`
+    );
+  }
+
+
+  // ==========================================================
+  // EMAIL REPORT
+  // ==========================================================
+
+  async function sendEmailReport(data) {
+    setEmailStatus(
+      "Preparing email security report..."
+    );
+
+    // --------------------------------------------------------
+    // CHECK EMAILJS CONFIGURATION
+    // --------------------------------------------------------
 
     if (
       !EMAILJS_SERVICE_ID ||
       !EMAILJS_TEMPLATE_ID ||
       !EMAILJS_PUBLIC_KEY
     ) {
-      setEmailError(
-        'Email service is not configured. Please add the EmailJS environment variables in Vercel.'
-      )
-
-      return
+      throw new Error(
+        "EmailJS environment variables are not configured."
+      );
     }
 
-    setEmailLoading(true)
-    setEmailSuccess(null)
-    setEmailError(null)
+    // --------------------------------------------------------
+    // BUILD EMAIL HTML
+    // --------------------------------------------------------
 
-    try {
-      const overallRisk =
-        findings.overall_risk || {}
+    const reportFindings =
+      data?.findings || [];
 
-      const totalFindings =
-        findings.findings_count ??
-        findings.findings?.length ??
-        0
+    const reportAssessments =
+      data?.risk_assessments || [];
 
-      const securityFindings =
-        (findings.findings || [])
+    const reportRisk =
+      data?.overall_risk || {};
+
+    const reportAI =
+      data?.ai_analysis || "";
+
+    const reportFixes =
+      data?.fixes || [];
+
+
+    let findingsHtml = "";
+
+    if (
+      reportFindings.length === 0
+    ) {
+      findingsHtml =
+        "<p>No security vulnerabilities were detected.</p>";
+    } else {
+      findingsHtml =
+        reportFindings
           .map(
-            (
-              finding,
-              index
-            ) => {
+            (finding, index) => {
+              const assessment =
+                reportAssessments[
+                  index
+                ] || {};
+
+              const vulnerability =
+                getVulnerabilityType(
+                  finding,
+                  assessment
+                );
+
               const severity =
                 getSeverity(
-                  finding
-                )
+                  finding,
+                  assessment
+                );
 
-              const name =
-                getVulnerabilityName(
-                  finding
-                )
-
-              const assessment =
-                findings
-                  .risk_assessments?.[
-                  index
-                ]
-
-              const fileName =
-                getFileName(
-                  finding.path
-                )
+              const path =
+                finding?.path ||
+                "Unknown";
 
               const line =
-                finding.start?.line ||
-                '-'
+                getLine(finding);
 
               const cwe =
                 getCwe(
-                  assessment,
-                  finding
-                )
+                  finding,
+                  assessment
+                );
+
+              const riskScore =
+                getRiskScore(
+                  assessment
+                );
+
+              const recommendation =
+                assessment?.recommendation ||
+                "Not specified";
 
               return `
-Finding ${index + 1}
+                <div style="
+                  border:1px solid #e5e7eb;
+                  border-radius:10px;
+                  padding:16px;
+                  margin-bottom:14px;
+                  font-family:Arial,sans-serif;
+                ">
+                  <h3 style="margin-top:0;">
+                    ${escapeHtml(
+                      vulnerability
+                    )}
+                  </h3>
 
-Vulnerability:
-${name}
+                  <p>
+                    <strong>Severity:</strong>
+                    ${escapeHtml(
+                      severity
+                    )}
+                  </p>
 
-Severity:
-${severity}
+                  <p>
+                    <strong>File:</strong>
+                    ${escapeHtml(
+                      path
+                    )}
+                  </p>
 
-File:
-${fileName}
+                  <p>
+                    <strong>Line:</strong>
+                    ${escapeHtml(
+                      line
+                    )}
+                  </p>
 
-Line:
-${line}
+                  <p>
+                    <strong>CWE:</strong>
+                    ${escapeHtml(
+                      cwe
+                    )}
+                  </p>
 
-CWE:
-${cwe}
+                  <p>
+                    <strong>Risk Score:</strong>
+                    ${escapeHtml(
+                      riskScore
+                    )}
+                  </p>
 
-Message:
-${
-  finding.extra?.message ||
-  'Security vulnerability detected.'
-}
-
-Risk Score:
-${assessment?.risk_score ?? 0}/10
-
-Exploitability:
-${
-  assessment?.exploitability ||
-  'UNKNOWN'
-}
-
-Impact:
-${
-  assessment?.impact ||
-  'Impact information unavailable.'
-}
-
-Recommendation:
-${
-  assessment?.recommendation ||
-  'Review and remediate this vulnerability.'
-}
-
---------------------------------
-`
+                  <p>
+                    <strong>Recommendation:</strong>
+                    ${escapeHtml(
+                      recommendation
+                    )}
+                  </p>
+                </div>
+              `;
             }
           )
-          .join('\n')
+          .join("");
+    }
 
-      const templateParams = {
-        to_email:
-          email.trim(),
 
-        name:
-          'SentinelForge AI',
+    const successfulFixes =
+      reportFixes.filter(
+        (fix) => fix?.success
+      ).length;
 
-        filename:
-          findings.filename ||
-          file?.name ||
-          'security-report.zip',
 
-        overall_risk:
-          overallRisk.overall_level ||
-          'SECURE',
+    const roleText =
+      data?.role === "student"
+        ? "Student"
+        : "Developer";
 
-        risk_score:
-          overallRisk.overall_score ??
-          0,
 
-        total_findings:
-          totalFindings,
+    const templateParams = {
+      to_email:
+        data?.email ||
+        email,
 
-        critical:
-          overallRisk.critical ??
-          0,
+      recipient_email:
+        data?.email ||
+        email,
 
-        high:
-          overallRisk.high ??
-          0,
+      email:
+        data?.email ||
+        email,
 
-        medium:
-          overallRisk.medium ??
-          0,
+      user_email:
+        data?.email ||
+        email,
 
-        low:
-          overallRisk.low ??
-          0,
+      role:
+        roleText,
 
-        report:
-          securityFindings ||
-          'No security findings detected.',
+      repository:
+        data?.filename ||
+        selectedFile?.name ||
+        "repository.zip",
 
-        time:
-          new Date().toLocaleString(),
+      filename:
+        data?.filename ||
+        selectedFile?.name ||
+        "repository.zip",
+
+      findings_count:
+        reportFindings.length,
+
+      risk_score:
+        reportRisk.score ??
+        reportRisk.overall_score ??
+        "N/A",
+
+      risk_level:
+        reportRisk.risk_level ??
+        reportRisk.level ??
+        "N/A",
+
+      fixes_generated:
+        successfulFixes,
+
+      findings_html:
+        findingsHtml,
+
+      ai_analysis:
+        reportAI,
+
+      validation_status:
+        data?.validation_status ||
+        "Validation preparation completed. No second security scan was performed.",
+
+      subject:
+        `SentinelForge AI Security Report - ${
+          data?.filename ||
+          "Repository"
+        }`,
+    };
+
+
+    setEmailStatus(
+      "Sending security report..."
+    );
+
+
+    // --------------------------------------------------------
+    // SEND THROUGH EMAILJS
+    // --------------------------------------------------------
+
+    await emailjs.send(
+      EMAILJS_SERVICE_ID,
+      EMAILJS_TEMPLATE_ID,
+      templateParams,
+      {
+        publicKey:
+          EMAILJS_PUBLIC_KEY,
       }
+    );
 
-      console.log(
-        'EmailJS template parameters:',
-        templateParams
-      )
 
-      const response =
-        await emailjs.send(
-          EMAILJS_SERVICE_ID,
-          EMAILJS_TEMPLATE_ID,
-          templateParams,
-          EMAILJS_PUBLIC_KEY
-        )
+    setEmailStatus(
+      `Security report sent successfully to ${
+        data?.email || email
+      }.`
+    );
+  }
 
-      console.log(
-        'EmailJS response:',
-        response
-      )
 
-      if (
-        response.status !== 200
-      ) {
-        throw new Error(
-          'Email service returned an unexpected response.'
-        )
-      }
+  // ==========================================================
+  // RESET
+  // ==========================================================
 
-      setEmailSuccess(
-        `Security report sent successfully to ${email.trim()}`
-      )
+  function resetAnalysis() {
+    setRole("student");
+    setEmail("");
+    setSelectedFile(null);
 
-      setEmail('')
-    } catch (err) {
-      console.error(
-        'Email report error:',
-        err
-      )
+    setRunning(false);
+    setCompleted(false);
 
-      setEmailError(
-        err?.text ||
-        err?.message ||
-        'Unable to send the security report.'
-      )
-    } finally {
-      setEmailLoading(false)
+    setError("");
+
+    setScanData(null);
+
+    setStages(
+      DEFAULT_STAGES
+    );
+
+    setEmailStatus("");
+    setReportStatus("");
+    setZipStatus("");
+
+    setPdfDownloaded(false);
+    setZipDownloaded(false);
+
+    const input =
+      document.getElementById(
+        "repository-upload"
+      );
+
+    if (input) {
+      input.value = "";
     }
   }
 
-  // ============================================================
-  // SEVERITY
-  // ============================================================
 
-  const getSeverity = (
-    finding
-  ) => {
-    const severity =
-      finding?.extra?.severity ||
-      finding?.extra?.metadata?.severity
-
-    if (!severity) {
-      return 'MEDIUM'
-    }
-
-    const normalizedSeverity =
-      String(
-        severity
-      ).toUpperCase()
-
-    if (
-      normalizedSeverity ===
-      'ERROR'
-    ) {
-      return 'HIGH'
-    }
-
-    if (
-      normalizedSeverity ===
-      'WARNING'
-    ) {
-      return 'MEDIUM'
-    }
-
-    if (
-      normalizedSeverity ===
-      'INFO'
-    ) {
-      return 'LOW'
-    }
-
-    if (
-      normalizedSeverity ===
-      'CRITICAL'
-    ) {
-      return 'CRITICAL'
-    }
-
-    if (
-      [
-        'HIGH',
-        'MEDIUM',
-        'LOW',
-      ].includes(
-        normalizedSeverity
-      )
-    ) {
-      return normalizedSeverity
-    }
-
-    return 'MEDIUM'
-  }
-
-  // ============================================================
-  // VULNERABILITY NAME
-  // ============================================================
-
-  const getVulnerabilityName = (
-    finding
-  ) => {
-    const vulnerabilities =
-      finding?.extra?.metadata
-        ?.vulnerability_class
-
-    if (
-      Array.isArray(
-        vulnerabilities
-      ) &&
-      vulnerabilities.length > 0
-    ) {
-      return vulnerabilities[0]
-    }
-
-    const checkId =
-      finding?.check_id
-
-    if (checkId) {
-      const lowerCheckId =
-        checkId.toLowerCase()
-
-      if (
-        lowerCheckId.includes(
-          'sql'
-        )
-      ) {
-        return 'SQL Injection'
-      }
-
-      if (
-        lowerCheckId.includes(
-          'xss'
-        )
-      ) {
-        return 'Cross-Site Scripting'
-      }
-
-      if (
-        lowerCheckId.includes(
-          'command'
-        )
-      ) {
-        return 'Command Injection'
-      }
-
-      if (
-        lowerCheckId.includes(
-          'secret'
-        )
-      ) {
-        return 'Hardcoded Secret'
-      }
-    }
-
-    return 'Security Vulnerability'
-  }
-
-  // ============================================================
-  // FILE NAME
-  // ============================================================
-
-  const getFileName = (
-    path
-  ) => {
-    if (!path) {
-      return 'Unknown file'
-    }
-
-    return String(path)
-      .split(/[\\/]/)
-      .pop()
-  }
-
-  // ============================================================
-  // RISK CLASS
-  // ============================================================
-
-  const getRiskClass = (
-    level
-  ) => {
-    if (!level) {
-      return 'medium'
-    }
-
-    return String(level)
-      .toLowerCase()
-  }
-
-  // ============================================================
-  // CWE
-  // ============================================================
-
-  const getCwe = (
-    assessment,
-    finding
-  ) => {
-    if (
-      Array.isArray(
-        assessment?.cwe
-      ) &&
-      assessment.cwe.length > 0
-    ) {
-      return assessment.cwe.join(
-        ', '
-      )
-    }
-
-    if (
-      typeof assessment?.cwe ===
-        'string' &&
-      assessment.cwe.trim()
-    ) {
-      return assessment.cwe
-    }
-
-    const cwe =
-      finding?.extra?.metadata?.cwe
-
-    if (
-      Array.isArray(cwe) &&
-      cwe.length > 0
-    ) {
-      return cwe.join(
-        ', '
-      )
-    }
-
-    if (
-      typeof cwe === 'string'
-    ) {
-      return cwe
-    }
-
-    return 'Security'
-  }
-
-  // ============================================================
-  // HIGH RISK COUNT
-  // ============================================================
-
-  const getHighRiskCount = () => {
-    if (!findings) {
-      return 0
-    }
-
-    if (
-      typeof findings
-        .overall_risk
-        ?.high === 'number'
-    ) {
-      return findings
-        .overall_risk
-        .high
-    }
-
-    return (
-      findings.findings || []
-    ).filter(
-      (finding) =>
-        getSeverity(
-          finding
-        ) === 'HIGH'
-    ).length
-  }
-
-  // ============================================================
-  // FILE COUNT
-  // ============================================================
-
-  const getFilesAffected = () => {
-    if (
-      !findings?.findings
-    ) {
-      return 0
-    }
-
-    return new Set(
-      findings.findings.map(
-        (finding) =>
-          finding.path
-      )
-    ).size
-  }
-
-  // ============================================================
+  // ==========================================================
   // RENDER
-  // ============================================================
+  // ==========================================================
 
   return (
-    <div className="app">
+    <div className="app-shell">
 
-      {/* ======================================================
-          SIDEBAR
-      ====================================================== */}
+      {/* ================================================== */}
+      {/* HEADER */}
+      {/* ================================================== */}
 
-      <aside className="sidebar">
+      <header className="app-header">
 
-        <div className="brand">
-
-          <div className="brand-icon">
-            🛡
+        <div className="brand-block">
+          <div className="brand-mark">
+            SF
           </div>
 
           <div>
-
             <h1>
-              SentinelForge
+              SentinelForge AI
             </h1>
 
-            <span>
-              AI Security Platform
-            </span>
-
+            <p>
+              Autonomous Repository Security
+            </p>
           </div>
-
         </div>
 
-        <nav>
-
-          <div className="nav-item active">
-            <span>▣</span>
-            Dashboard
-          </div>
-
-          <div className="nav-item">
-            <span>⌕</span>
-            Security Scan
-          </div>
-
-          <div className="nav-item">
-            <span>▤</span>
-            Reports
-          </div>
-
-          <div className="nav-item">
-            <span>⚙</span>
-            Settings
-          </div>
-
-        </nav>
-
-        <div className="sidebar-bottom">
-
-          <div className="system-status">
-
-            <span className="status-dot"></span>
-
-            <div>
-
-              <strong>
-                Backend Online
-              </strong>
-
-              <small>
-                FastAPI connected
-              </small>
-
-            </div>
-
-          </div>
-
+        <div className="phase-badge">
+          PHASE 4
         </div>
 
-      </aside>
+      </header>
 
-      {/* ======================================================
-          MAIN
-      ====================================================== */}
 
-      <main className="main">
+      {/* ================================================== */}
+      {/* MAIN */}
+      {/* ================================================== */}
 
-        {/* TOP BAR */}
+      <main className="main-container">
 
-        <header className="topbar">
+        {!completed && (
+          <>
+            {/* ============================================ */}
+            {/* HERO */}
+            {/* ============================================ */}
 
-          <div>
+            <section className="hero-section">
 
-            <span className="breadcrumb">
-              Dashboard / Security Scanner
-            </span>
+              <div className="hero-content">
 
-            <h2>
-              Code Security
-            </h2>
+                <span className="hero-label">
+                  AUTONOMOUS SECURITY
+                </span>
 
-          </div>
-
-          <div className="online">
-
-            <span></span>
-
-            Cloud Backend
-
-          </div>
-
-        </header>
-
-        {/* CONTENT */}
-
-        <section className="content">
-
-          {/* ==================================================
-              HERO
-          ================================================== */}
-
-          <div className="hero">
-
-            <div>
-
-              <div className="hero-label">
-                SECURITY ANALYSIS
-              </div>
-
-              <h3>
-                Protect your code before
-                <br />
-                it reaches production.
-              </h3>
-
-              <p>
-                Upload a ZIP file and
-                SentinelForge will scan your
-                source code for security
-                vulnerabilities and generate
-                AI-powered security fixes.
-              </p>
-
-            </div>
-
-            <div className="hero-shield">
-              🛡
-            </div>
-
-          </div>
-
-          {/* ==================================================
-              UPLOAD
-          ================================================== */}
-
-          <div className="upload-card">
-
-            <div className="section-title">
-
-              <div>
-
-                <h3>
-                  Scan Code
-                </h3>
+                <h2>
+                  Secure your repository
+                  <br />
+                  with one click.
+                </h2>
 
                 <p>
-                  Upload your project as a ZIP file
+                  Upload your repository and let
+                  SentinelForge AI automatically
+                  detect vulnerabilities, assess risk,
+                  analyze the code, generate fixes,
+                  prepare the final report and deliver
+                  the results.
                 </p>
 
               </div>
 
-              <span className="supported">
-                ZIP ONLY
-              </span>
+            </section>
 
-            </div>
 
-            <label className="drop-zone">
+            {/* ============================================ */}
+            {/* INPUT CARD */}
+            {/* ============================================ */}
 
-              <input
-                type="file"
-                accept=".zip"
-                onChange={
-                  handleFileChange
-                }
-                hidden
-              />
+            <section className="input-card">
 
-              <div className="upload-icon">
-                ↑
-              </div>
-
-              <h4>
-                {file
-                  ? file.name
-                  : 'Drop your ZIP file here'}
-              </h4>
-
-              <p>
-                {file
-                  ? `${(
-                      file.size /
-                      1024 /
-                      1024
-                    ).toFixed(2)} MB`
-                  : 'or click to browse files'}
-              </p>
-
-            </label>
-
-            <button
-              className="scan-button"
-              onClick={
-                handleScan
-              }
-              disabled={
-                !file ||
-                scanning
-              }
-            >
-
-              {scanning ? (
-                <>
-                  <span className="spinner"></span>
-                  Scanning Code...
-                </>
-              ) : (
-                <>
-                  Start Security Scan
+              <div className="section-heading">
+                <div>
                   <span>
-                    →
-                  </span>
-                </>
-              )}
-
-            </button>
-
-          </div>
-
-          {/* ==================================================
-              ERROR
-          ================================================== */}
-
-          {error && (
-
-            <div className="error-box">
-
-              <span>
-                !
-              </span>
-
-              <div>
-
-                <strong>
-                  Scan Error
-                </strong>
-
-                <p>
-                  {error}
-                </p>
-
-              </div>
-
-            </div>
-
-          )}
-
-          {/* ==================================================
-              RESULTS
-          ================================================== */}
-
-          {findings && (
-
-            <>
-
-              {/* =================================================
-                  PHASE 2
-              ================================================= */}
-
-              <div className="risk-overview">
-
-                <div className="risk-overview-header">
-
-                  <div>
-
-                    <span className="hero-label">
-                      PHASE 2
-                    </span>
-
-                    <h3>
-                      Overall Security Risk
-                    </h3>
-
-                  </div>
-
-                  <div
-                    className={`overall-risk-badge ${getRiskClass(
-                      findings
-                        .overall_risk
-                        ?.overall_level
-                    )}`}
-                  >
-
-                    {findings
-                      .overall_risk
-                      ?.overall_level ||
-                      'SECURE'}
-
-                  </div>
-
-                </div>
-
-                <div className="risk-score">
-
-                  <div className="risk-score-number">
-
-                    {findings
-                      .overall_risk
-                      ?.overall_score ?? 0}
-
-                  </div>
-
-                  <div className="risk-score-label">
-                    / 10 Risk Score
-                  </div>
-
-                </div>
-
-                <div className="risk-breakdown">
-
-                  <div>
-                    <span>Critical</span>
-                    <strong>
-                      {findings
-                        .overall_risk
-                        ?.critical ?? 0}
-                    </strong>
-                  </div>
-
-                  <div>
-                    <span>High</span>
-                    <strong>
-                      {findings
-                        .overall_risk
-                        ?.high ?? 0}
-                    </strong>
-                  </div>
-
-                  <div>
-                    <span>Medium</span>
-                    <strong>
-                      {findings
-                        .overall_risk
-                        ?.medium ?? 0}
-                    </strong>
-                  </div>
-
-                  <div>
-                    <span>Low</span>
-                    <strong>
-                      {findings
-                        .overall_risk
-                        ?.low ?? 0}
-                    </strong>
-                  </div>
-
-                </div>
-
-              </div>
-
-              {/* =================================================
-                  PHASE 3
-              ================================================= */}
-
-              <div className="risk-overview">
-
-                <div className="risk-overview-header">
-
-                  <div>
-
-                    <span className="hero-label">
-                      PHASE 3
-                    </span>
-
-                    <h3>
-                      AI Auto-Fix Agent
-                    </h3>
-
-                    <p>
-                      Generate secure code-fix
-                      suggestions using the detected
-                      vulnerability and source-code context.
-                    </p>
-
-                  </div>
-
-                  <div className="overall-risk-badge">
-                    AI POWERED
-                  </div>
-
-                </div>
-
-              </div>
-
-              {/* =================================================
-                  EMAIL REPORT
-              ================================================= */}
-
-              <div className="upload-card email-report-card">
-
-                <div className="section-title">
-
-                  <div>
-
-                    <span className="hero-label">
-                      REPORT DELIVERY
-                    </span>
-
-                    <h3>
-                      Email Security Report
-                    </h3>
-
-                    <p>
-                      Enter your email address to receive
-                      the complete security analysis report.
-                    </p>
-
-                  </div>
-
-                  <span className="supported">
-                    EMAILJS
+                    STEP 1
                   </span>
 
+                  <h3>
+                    Tell us about you
+                  </h3>
                 </div>
+              </div>
 
-                <div
-                  style={{
-                    display: 'flex',
-                    gap: '12px',
-                    marginTop: '20px',
-                    flexWrap: 'wrap',
-                  }}
-                >
 
-                  <input
-                    type="email"
-                    placeholder="Enter your email address"
-                    value={email}
-                    onChange={(e) => {
-                      setEmail(
-                        e.target.value
-                      )
+              {/* ROLE */}
 
-                      setEmailSuccess(null)
-                      setEmailError(null)
-                    }}
-                    disabled={
-                      emailLoading
-                    }
-                    style={{
-                      flex: '1',
-                      minWidth: '240px',
-                      padding: '14px 16px',
-                      border:
-                        '1px solid #d1d5db',
-                      borderRadius: '8px',
-                      fontSize: '15px',
-                      outline: 'none',
-                    }}
-                  />
+              <div className="input-group">
+
+                <label>
+                  Role
+                </label>
+
+                <div className="role-grid">
 
                   <button
-                    className="scan-button"
-                    onClick={
-                      handleSendEmail
+                    type="button"
+                    className={
+                      role === "student"
+                        ? "role-option active"
+                        : "role-option"
                     }
-                    disabled={
-                      emailLoading
+                    onClick={() =>
+                      setRole(
+                        "student"
+                      )
                     }
-                    style={{
-                      marginTop: 0,
-                      minWidth: '190px',
-                    }}
+                    disabled={running}
                   >
+                    <span className="role-icon">
+                      🎓
+                    </span>
 
-                    {emailLoading ? (
-                      <>
-                        <span className="spinner"></span>
-                        Sending Report...
-                      </>
-                    ) : (
-                      <>
-                        ✉ Send Report
-                        <span>
-                          →
-                        </span>
-                      </>
-                    )}
+                    <span>
+                      <strong>
+                        Student
+                      </strong>
 
+                      <small>
+                        Educational security report
+                      </small>
+                    </span>
+                  </button>
+
+
+                  <button
+                    type="button"
+                    className={
+                      role === "developer"
+                        ? "role-option active"
+                        : "role-option"
+                    }
+                    onClick={() =>
+                      setRole(
+                        "developer"
+                      )
+                    }
+                    disabled={running}
+                  >
+                    <span className="role-icon">
+                      💻
+                    </span>
+
+                    <span>
+                      <strong>
+                        Developer
+                      </strong>
+
+                      <small>
+                        Technical security report
+                      </small>
+                    </span>
                   </button>
 
                 </div>
 
-                {emailSuccess && (
+              </div>
 
-                  <div
-                    className="auto-fix-result"
-                    style={{
-                      marginTop: '18px',
-                    }}
-                  >
 
-                    <strong>
-                      ✓ Report Sent Successfully
-                    </strong>
+              {/* EMAIL */}
 
-                    <p>
-                      {emailSuccess}
-                    </p>
+              <div className="input-group">
 
-                  </div>
+                <label htmlFor="email">
+                  Email address
+                </label>
 
-                )}
-
-                {emailError && (
-
-                  <div
-                    className="auto-fix-error"
-                    style={{
-                      marginTop: '18px',
-                    }}
-                  >
-
-                    <strong>
-                      Email Error
-                    </strong>
-
-                    <p>
-                      {emailError}
-                    </p>
-
-                  </div>
-
-                )}
+                <input
+                  id="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(event) =>
+                    setEmail(
+                      event.target.value
+                    )
+                  }
+                  disabled={running}
+                />
 
               </div>
 
-              {/* =================================================
-                  STATISTICS
-              ================================================= */}
 
-              <div className="stats">
+              {/* FILE */}
 
-                <div className="stat-card">
+              <div className="input-group">
 
-                  <div className="stat-icon">
-                    ◉
-                  </div>
+                <label>
+                  Repository ZIP
+                </label>
 
-                  <div>
+                <label
+                  htmlFor="repository-upload"
+                  className={
+                    running
+                      ? "upload-box disabled"
+                      : "upload-box"
+                  }
+                >
 
-                    <span>
-                      Total Findings
-                    </span>
+                  <input
+                    id="repository-upload"
+                    type="file"
+                    accept=".zip,application/zip"
+                    onChange={
+                      handleFileChange
+                    }
+                    disabled={running}
+                  />
 
-                    <strong>
-                      {findings.findings_count}
-                    </strong>
-
-                  </div>
-
-                </div>
-
-                <div className="stat-card danger">
-
-                  <div className="stat-icon">
-                    !
-                  </div>
-
-                  <div>
-
-                    <span>
-                      High Risk
-                    </span>
-
-                    <strong>
-                      {getHighRiskCount()}
-                    </strong>
-
-                  </div>
-
-                </div>
-
-                <div className="stat-card">
-
-                  <div className="stat-icon">
-                    #
-                  </div>
-
-                  <div>
-
-                    <span>
-                      Files Affected
-                    </span>
-
-                    <strong>
-                      {getFilesAffected()}
-                    </strong>
-
-                  </div>
-
-                </div>
-
-                <div className="stat-card">
-
-                  <div className="stat-icon">
-                    ✓
-                  </div>
-
-                  <div>
-
-                    <span>
-                      Scanner
-                    </span>
-
-                    <strong>
-                      Semgrep
-                    </strong>
-
-                  </div>
-
-                </div>
-
-              </div>
-
-              {/* =================================================
-                  SECURITY FINDINGS
-              ================================================= */}
-
-              <div className="findings-section">
-
-                <div className="section-title">
-
-                  <div>
-
-                    <h3>
-                      Security Findings
-                    </h3>
-
-                    <p>
-                      Detected vulnerabilities in{' '}
-                      <strong>
-                        {findings.filename ||
-                          'uploaded repository'}
-                      </strong>
-                    </p>
-
-                  </div>
-
-                  <span className="finding-count">
-
-                    {findings.findings_count}
-                    {' '}
-                    Findings
-
+                  <span className="upload-icon">
+                    ↑
                   </span>
 
+                  <strong>
+                    {selectedFile
+                      ? selectedFile.name
+                      : "Choose repository ZIP"}
+                  </strong>
+
+                  <small>
+                    Maximum 50 MB
+                  </small>
+
+                </label>
+
+              </div>
+
+
+              {/* ERROR */}
+
+              {error && (
+                <div className="error-box">
+                  {error}
+                </div>
+              )}
+
+
+              {/* START */}
+
+              <button
+                type="button"
+                className="start-button"
+                onClick={
+                  startAutonomousAnalysis
+                }
+                disabled={running}
+              >
+
+                {running ? (
+                  <>
+                    <span className="spinner" />
+                    Autonomous Analysis Running...
+                  </>
+                ) : (
+                  <>
+                    Start Autonomous Analysis
+                    <span>
+                      →
+                    </span>
+                  </>
+                )}
+
+              </button>
+
+            </section>
+
+
+            {/* ============================================ */}
+            {/* PIPELINE PREVIEW */}
+            {/* ============================================ */}
+
+            <section className="pipeline-card">
+
+              <div className="section-heading">
+                <div>
+                  <span>
+                    AUTONOMOUS PIPELINE
+                  </span>
+
+                  <h3>
+                    One request. Full security workflow.
+                  </h3>
+                </div>
+              </div>
+
+
+              <div className="pipeline-preview">
+
+                {DEFAULT_STAGES.map(
+                  (stage, index) => (
+                    <div
+                      className="preview-stage"
+                      key={stage.id}
+                    >
+
+                      <div className="preview-number">
+                        {index + 1}
+                      </div>
+
+                      <div>
+                        <strong>
+                          {stage.title}
+                        </strong>
+                      </div>
+
+                    </div>
+                  )
+                )}
+
+              </div>
+
+            </section>
+          </>
+        )}
+
+
+        {/* ================================================== */}
+        {/* RUNNING */}
+        {/* ================================================== */}
+
+        {running && (
+          <section className="results-section">
+
+            <div className="processing-card">
+
+              <div className="processing-icon">
+                <span className="spinner large" />
+              </div>
+
+              <h2>
+                SentinelForge AI is working
+              </h2>
+
+              <p>
+                Your repository is being processed
+                autonomously. Please keep this page open.
+              </p>
+
+              <div className="processing-note">
+                Detection → Risk → AI Analysis →
+                Auto-Fix → Validation Preparation
+              </div>
+
+            </div>
+
+          </section>
+        )}
+
+
+        {/* ================================================== */}
+        {/* RESULTS */}
+        {/* ================================================== */}
+
+        {completed && scanData && (
+          <section className="results-section">
+
+            {/* ============================================ */}
+            {/* SUCCESS HEADER */}
+            {/* ============================================ */}
+
+            <div className="results-header">
+
+              <div>
+                <span className="hero-label">
+                  ANALYSIS COMPLETED
+                </span>
+
+                <h2>
+                  Your repository security
+                  analysis is ready.
+                </h2>
+
+                <p>
+                  {scanData.filename}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={resetAnalysis}
+              >
+                New Analysis
+              </button>
+
+            </div>
+
+
+            {/* ============================================ */}
+            {/* PIPELINE */}
+            {/* ============================================ */}
+
+            <div className="results-card">
+
+              <div className="section-heading">
+                <div>
+                  <span>
+                    PIPELINE
+                  </span>
+
+                  <h3>
+                    Autonomous execution
+                  </h3>
+                </div>
+              </div>
+
+
+              <div className="pipeline-list">
+
+                {stages.map(
+                  (stage, index) => {
+
+                    const status =
+                      stage.status ||
+                      "pending";
+
+                    return (
+                      <div
+                        className={`pipeline-item ${status}`}
+                        key={
+                          stage.id ||
+                          index
+                        }
+                      >
+
+                        <div className="pipeline-icon">
+
+                          {status ===
+                            "completed" && (
+                            <span>
+                              ✓
+                            </span>
+                          )}
+
+                          {status ===
+                            "running" && (
+                            <span className="spinner" />
+                          )}
+
+                          {status ===
+                            "skipped" && (
+                            <span>
+                              –
+                            </span>
+                          )}
+
+                          {status ===
+                            "pending" && (
+                            <span>
+                              {index + 1}
+                            </span>
+                          )}
+
+                        </div>
+
+                        <div className="pipeline-content">
+
+                          <strong>
+                            {stage.title}
+                          </strong>
+
+                          {stage.message && (
+                            <p>
+                              {stage.message}
+                            </p>
+                          )}
+
+                        </div>
+
+                        <div className="pipeline-status">
+                          {status}
+                        </div>
+
+                      </div>
+                    );
+                  }
+                )}
+
+              </div>
+
+            </div>
+
+
+            {/* ============================================ */}
+            {/* OVERVIEW */}
+            {/* ============================================ */}
+
+            <div className="stats-grid">
+
+              <div className="stat-card">
+                <span>
+                  FINDINGS
+                </span>
+
+                <strong>
+                  {findings.length}
+                </strong>
+              </div>
+
+              <div className="stat-card">
+                <span>
+                  RISK SCORE
+                </span>
+
+                <strong>
+                  {
+                    overallRisk.score ??
+                    overallRisk.overall_score ??
+                    "N/A"
+                  }
+                </strong>
+              </div>
+
+              <div className="stat-card">
+                <span>
+                  RISK LEVEL
+                </span>
+
+                <strong>
+                  {
+                    overallRisk.risk_level ??
+                    overallRisk.level ??
+                    "N/A"
+                  }
+                </strong>
+              </div>
+
+              <div className="stat-card">
+                <span>
+                  FIXES GENERATED
+                </span>
+
+                <strong>
+                  {successfulFixCount}
+                </strong>
+              </div>
+
+            </div>
+
+
+            {/* ============================================ */}
+            {/* SEVERITY */}
+            {/* ============================================ */}
+
+            <div className="results-card">
+
+              <div className="section-heading">
+                <div>
+                  <span>
+                    SEVERITY
+                  </span>
+
+                  <h3>
+                    Finding distribution
+                  </h3>
+                </div>
+              </div>
+
+              <div className="severity-grid">
+
+                <div>
+                  <strong>
+                    {severityCounts.CRITICAL}
+                  </strong>
+                  <span>
+                    Critical
+                  </span>
                 </div>
 
-                {/* NO FINDINGS */}
+                <div>
+                  <strong>
+                    {severityCounts.HIGH}
+                  </strong>
+                  <span>
+                    High
+                  </span>
+                </div>
 
-                {findings.findings.length === 0 ? (
+                <div>
+                  <strong>
+                    {severityCounts.MEDIUM}
+                  </strong>
+                  <span>
+                    Medium
+                  </span>
+                </div>
 
-                  <div className="no-findings">
+                <div>
+                  <strong>
+                    {severityCounts.LOW}
+                  </strong>
+                  <span>
+                    Low
+                  </span>
+                </div>
 
-                    <div>
-                      ✓
-                    </div>
+                <div>
+                  <strong>
+                    {severityCounts.INFO}
+                  </strong>
+                  <span>
+                    Info
+                  </span>
+                </div>
 
-                    <h3>
-                      No vulnerabilities detected
-                    </h3>
+              </div>
 
-                    <p>
-                      Your code passed the current
-                      security checks.
-                    </p>
+            </div>
 
-                  </div>
 
-                ) : (
+            {/* ============================================ */}
+            {/* AI ANALYSIS */}
+            {/* ============================================ */}
 
-                  <div className="finding-list">
+            <div className="results-card">
 
-                    {findings.findings.map(
-                      (
-                        finding,
-                        index
-                      ) => {
+              <div className="section-heading">
+                <div>
+                  <span>
+                    GROQ AI
+                  </span>
 
-                        const severity =
-                          getSeverity(
-                            finding
-                          )
+                  <h3>
+                    Security analysis
+                  </h3>
+                </div>
+              </div>
 
-                        const name =
-                          getVulnerabilityName(
-                            finding
-                          )
+              <div className="analysis-box">
+                {aiAnalysis ||
+                  "No AI analysis returned."}
+              </div>
 
-                        const assessment =
-                          findings
-                            .risk_assessments?.[
-                            index
-                          ]
+            </div>
 
-                        const fixResult =
-                          fixResults[index]
 
-                        const fixError =
-                          fixErrors[index]
+            {/* ============================================ */}
+            {/* FINDINGS */}
+            {/* ============================================ */}
 
-                        const isFixing =
-                          fixLoading[index]
+            <div className="results-card">
 
-                        return (
+              <div className="section-heading">
+                <div>
+                  <span>
+                    SECURITY FINDINGS
+                  </span>
 
-                          <div
-                            className="finding-card"
-                            key={
-                              finding?.check_id
-                                ? `${finding.check_id}-${index}`
-                                : index
-                            }
-                          >
+                  <h3>
+                    Detected vulnerabilities
+                  </h3>
+                </div>
+              </div>
 
-                            {/* SEVERITY ICON */}
 
-                            <div
-                              className={`finding-severity ${severity.toLowerCase()}`}
-                            >
+              {findings.length === 0 ? (
+                <div className="secure-box">
+                  ✓ No security vulnerabilities
+                  were detected.
+                </div>
+              ) : (
+                <div className="finding-list">
 
-                              {severity ===
-                              'CRITICAL'
-                                ? '!!'
-                                : severity ===
-                                  'HIGH'
-                                ? '!'
-                                : severity ===
-                                  'MEDIUM'
-                                ? '•'
-                                : '✓'}
+                  {findings.map(
+                    (finding, index) => {
+                      const assessment =
+                        riskAssessments[
+                          index
+                        ] || {};
 
+                      const vulnerability =
+                        getVulnerabilityType(
+                          finding,
+                          assessment
+                        );
+
+                      const severity =
+                        getSeverity(
+                          finding,
+                          assessment
+                        );
+
+                      return (
+                        <article
+                          className="finding-card"
+                          key={index}
+                        >
+
+                          <div className="finding-header">
+
+                            <div>
+                              <span className="finding-number">
+                                FINDING {index + 1}
+                              </span>
+
+                              <h4>
+                                {vulnerability}
+                              </h4>
                             </div>
 
-                            {/* MAIN FINDING */}
+                            <span className="severity-badge">
+                              {severity}
+                            </span>
 
-                            <div className="finding-main">
+                          </div>
 
-                              <div className="finding-heading">
 
-                                <h4>
-                                  {name}
-                                </h4>
+                          <div className="finding-meta">
 
-                                <span
-                                  className={`severity ${severity.toLowerCase()}`}
-                                >
-                                  {severity}
-                                </span>
+                            <div>
+                              <span>
+                                File
+                              </span>
 
-                              </div>
-
-                              <p className="finding-message">
-
-                                {finding.extra
-                                  ?.message ||
-                                  'Security vulnerability detected.'}
-
-                              </p>
-
-                              {/* RISK DETAILS */}
-
-                              {assessment && (
-
-                                <div className="risk-details">
-
-                                  <div className="risk-detail">
-
-                                    <span>
-                                      Risk Score
-                                    </span>
-
-                                    <strong>
-                                      {assessment.risk_score ??
-                                        0}
-                                      /10
-                                    </strong>
-
-                                  </div>
-
-                                  <div className="risk-detail">
-
-                                    <span>
-                                      Exploitability
-                                    </span>
-
-                                    <strong>
-                                      {assessment.exploitability ||
-                                        'UNKNOWN'}
-                                    </strong>
-
-                                  </div>
-
-                                  <div className="risk-detail-wide">
-
-                                    <span>
-                                      Impact
-                                    </span>
-
-                                    <p>
-                                      {assessment.impact ||
-                                        'Impact information unavailable.'}
-                                    </p>
-
-                                  </div>
-
-                                  <div className="risk-detail-wide">
-
-                                    <span>
-                                      Recommendation
-                                    </span>
-
-                                    <p>
-                                      {assessment.recommendation ||
-                                        'Review and remediate this vulnerability.'}
-                                    </p>
-
-                                  </div>
-
-                                </div>
-
-                              )}
-
-                              {/* FINDING META */}
-
-                              <div className="finding-meta">
-
-                                <span>
-                                  📄{' '}
-                                  {getFileName(
-                                    finding.path
-                                  )}
-                                </span>
-
-                                <span>
-                                  Line{' '}
-                                  {finding.start?.line ||
-                                    '-'}
-                                </span>
-
-                                <span>
-                                  {getCwe(
-                                    assessment,
-                                    finding
-                                  )}
-                                </span>
-
-                              </div>
-
-                              {/* =================================================
-                                  AUTO FIX
-                              ================================================= */}
-
-                              <div className="auto-fix-section">
-
-                                <button
-                                  className="auto-fix-button"
-                                  onClick={() =>
-                                    handleAutoFix(
-                                      finding,
-                                      index
-                                    )
-                                  }
-                                  disabled={
-                                    isFixing
-                                  }
-                                >
-
-                                  {isFixing ? (
-                                    <>
-                                      <span className="spinner"></span>
-                                      Generating Fix...
-                                    </>
-                                  ) : (
-                                    <>
-                                      🛠 Generate Auto-Fix
-                                      <span>
-                                        →
-                                      </span>
-                                    </>
-                                  )}
-
-                                </button>
-
-                                <small>
-                                  AI will generate a secure
-                                  fixed copy of this vulnerable
-                                  file. Your original repository
-                                  will not be modified.
-                                </small>
-
-                              </div>
-
-                              {/* AUTO FIX ERROR */}
-
-                              {fixError && (
-
-                                <div className="auto-fix-error">
-
-                                  <strong>
-                                    Auto-Fix Error
-                                  </strong>
-
-                                  <p>
-                                    {fixError}
-                                  </p>
-
-                                </div>
-
-                              )}
-
-                              {/* =================================================
-                                  AUTO FIX RESULT
-                              ================================================= */}
-
-                              {fixResult && (
-
-                                <div className="auto-fix-result">
-
-                                  <div className="auto-fix-result-header">
-
-                                    <div>
-
-                                      <span className="hero-label">
-                                        PHASE 3 RESULT
-                                      </span>
-
-                                      <h3>
-                                        AI-Fixed Security File
-                                      </h3>
-
-                                    </div>
-
-                                    <span className="auto-fix-status">
-                                      FIX GENERATED
-                                    </span>
-
-                                  </div>
-
-                                  {/* FILE INFORMATION */}
-
-                                  <div
-                                    style={{
-                                      marginTop: '12px',
-                                      marginBottom: '12px',
-                                    }}
-                                  >
-
-                                    <strong>
-                                      Fixed File:
-                                    </strong>
-
-                                    <span
-                                      style={{
-                                        marginLeft: '8px',
-                                      }}
-                                    >
-                                      {fixResult.filename ||
-                                        'fixed_source_file.txt'}
-                                    </span>
-
-                                  </div>
-
-                                  {/* FIXED CODE */}
-
-                                  <div className="fix-content">
-
-                                    <pre>
-                                      {fixResult.fixed_code ||
-                                        'No fixed code was returned.'}
-                                    </pre>
-
-                                  </div>
-
-                                  {/* DOWNLOAD BUTTON */}
-
-                                  <button
-                                    type="button"
-                                    className="auto-fix-button"
-                                    onClick={() =>
-                                      handleDownloadFixedFile(
-                                        fixResult
-                                      )
-                                    }
-                                    style={{
-                                      marginTop: '16px',
-                                    }}
-                                  >
-
-                                    ⬇ Download Fixed File
-
-                                    <span>
-                                      →
-                                    </span>
-
-                                  </button>
-
-                                  {/* DISCLAIMER */}
-
-                                  <p
-                                    className="fix-disclaimer"
-                                    style={{
-                                      marginTop: '12px',
-                                    }}
-                                  >
-
-                                    ✓ SentinelForge created a
-                                    new fixed copy of the
-                                    vulnerable file.
-
-                                    <br />
-
-                                    ✓ The original uploaded ZIP
-                                    was not modified.
-
-                                    <br />
-
-                                    ⚠ Review and test the
-                                    generated file before using
-                                    it in production.
-
-                                  </p>
-
-                                </div>
-
-                              )}
-
+                              <strong>
+                                {finding?.path ||
+                                  "Unknown"}
+                              </strong>
                             </div>
 
-                            {/* ARROW */}
+                            <div>
+                              <span>
+                                Line
+                              </span>
 
-                            <div className="finding-arrow">
-                              →
+                              <strong>
+                                {getLine(
+                                  finding
+                                )}
+                              </strong>
+                            </div>
+
+                            <div>
+                              <span>
+                                CWE
+                              </span>
+
+                              <strong>
+                                {getCwe(
+                                  finding,
+                                  assessment
+                                )}
+                              </strong>
+                            </div>
+
+                            <div>
+                              <span>
+                                Risk
+                              </span>
+
+                              <strong>
+                                {getRiskScore(
+                                  assessment
+                                )}
+                              </strong>
                             </div>
 
                           </div>
 
-                        )
-                      }
-                    )}
 
-                  </div>
+                          <div className="finding-message">
 
-                )}
+                            <span>
+                              Semgrep Message
+                            </span>
+
+                            <p>
+                              {getMessage(
+                                finding
+                              )}
+                            </p>
+
+                          </div>
+
+
+                          {finding?.source_code && (
+                            <details className="source-details">
+
+                              <summary>
+                                View source context
+                              </summary>
+
+                              <pre>
+                                {finding.source_code}
+                              </pre>
+
+                            </details>
+                          )}
+
+                        </article>
+                      );
+                    }
+                  )}
+
+                </div>
+              )}
+
+            </div>
+
+
+            {/* ============================================ */}
+            {/* FIX SUMMARY */}
+            {/* ============================================ */}
+
+            <div className="results-card">
+
+              <div className="section-heading">
+                <div>
+                  <span>
+                    AI AUTO-FIX
+                  </span>
+
+                  <h3>
+                    Remediation preparation
+                  </h3>
+                </div>
+              </div>
+
+
+              <div className="fix-summary">
+
+                <div>
+                  <strong>
+                    {successfulFixCount}
+                  </strong>
+
+                  <span>
+                    fixes generated
+                  </span>
+                </div>
+
+                <div>
+                  <strong>
+                    {failedFixCount}
+                  </strong>
+
+                  <span>
+                    fixes unavailable
+                  </span>
+                </div>
 
               </div>
 
-            </>
 
-          )}
+              <div className="note-box">
+                The original uploaded repository
+                was not modified. Generated fixes
+                are placed into a new repository ZIP.
+                Phase 4 does not perform a second
+                security scan, so the fixes are not
+                claimed as security-verified.
+              </div>
 
-        </section>
+            </div>
+
+
+            {/* ============================================ */}
+            {/* DELIVERY */}
+            {/* ============================================ */}
+
+            <div className="results-card">
+
+              <div className="section-heading">
+                <div>
+                  <span>
+                    DELIVERY
+                  </span>
+
+                  <h3>
+                    Your generated outputs
+                  </h3>
+                </div>
+              </div>
+
+
+              <div className="delivery-grid">
+
+                <div
+                  className={
+                    pdfDownloaded
+                      ? "delivery-item done"
+                      : "delivery-item"
+                  }
+                >
+                  <span>
+                    {pdfDownloaded
+                      ? "✓"
+                      : "•"}
+                  </span>
+
+                  <div>
+                    <strong>
+                      Security Report PDF
+                    </strong>
+
+                    <small>
+                      {reportStatus ||
+                        "Generated after analysis"}
+                    </small>
+                  </div>
+                </div>
+
+
+                <div
+                  className={
+                    zipDownloaded
+                      ? "delivery-item done"
+                      : "delivery-item"
+                  }
+                >
+                  <span>
+                    {zipDownloaded
+                      ? "✓"
+                      : "•"}
+                  </span>
+
+                  <div>
+                    <strong>
+                      Fixed Repository ZIP
+                    </strong>
+
+                    <small>
+                      {zipStatus ||
+                        "Generated after auto-fix"}
+                    </small>
+                  </div>
+                </div>
+
+
+                <div
+                  className={
+                    emailStatus.startsWith(
+                      "Security report sent"
+                    )
+                      ? "delivery-item done"
+                      : "delivery-item"
+                  }
+                >
+                  <span>
+                    {emailStatus.startsWith(
+                      "Security report sent"
+                    )
+                      ? "✓"
+                      : "•"}
+                  </span>
+
+                  <div>
+                    <strong>
+                      Email Report
+                    </strong>
+
+                    <small>
+                      {emailStatus ||
+                        "Sent to your email"}
+                    </small>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+
+
+            {/* ============================================ */}
+            {/* VALIDATION NOTICE */}
+            {/* ============================================ */}
+
+            <div className="validation-banner">
+
+              <strong>
+                Validation status
+              </strong>
+
+              <p>
+                {scanData.validation_status ||
+                  "Validation preparation completed. No second security scan was performed."}
+              </p>
+
+            </div>
+
+          </section>
+        )}
 
       </main>
 
-    </div>
-  )
-}
 
-export default App
+      {/* ================================================== */}
+      {/* FOOTER */}
+      {/* ================================================== */}
+
+      <footer className="app-footer">
+
+        <span>
+          SentinelForge AI
+        </span>
+
+        <span>
+          Autonomous Security Platform
+        </span>
+
+      </footer>
+
+    </div>
+  );
+}
