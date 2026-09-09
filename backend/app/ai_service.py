@@ -4,39 +4,28 @@ from app.services.groq_service import generate_ai_response
 
 
 # ============================================================
-# PHASE 4 - AI SECURITY ANALYSIS
+# PHASE 4 - COMPACT AI SECURITY ANALYSIS
 # ============================================================
 
-MAX_FINDINGS_FOR_AI = 20
-MAX_SOURCE_CONTEXT_CHARS = 1800
-MAX_MESSAGE_CHARS = 700
+MAX_FINDINGS_FOR_AI = 8
+MAX_SOURCE_CONTEXT_CHARS = 600
+MAX_MESSAGE_CHARS = 300
+MAX_TEXT_CHARS = 350
 
 
-def _clean_text(value, max_chars):
-    """
-    Convert a value to a compact string and limit its size.
-    """
-
+def _compact_text(value, max_chars):
     if value is None:
         return ""
 
     text = str(value).strip()
 
     if len(text) > max_chars:
-        return text[:max_chars] + "\n...[truncated]"
+        return text[:max_chars] + "...[truncated]"
 
     return text
 
 
-def _compact_finding(finding, assessment=None):
-    """
-    Keep only the information required by the AI.
-
-    Large scanner fields such as complete source context,
-    raw metadata and unrelated fields are intentionally
-    removed to keep the Groq request small.
-    """
-
+def _compact_finding(finding, assessment):
     if not isinstance(finding, dict):
         finding = {}
 
@@ -58,16 +47,16 @@ def _compact_finding(finding, assessment=None):
     if not isinstance(start, dict):
         start = {}
 
-    severity = (
-        assessment.get("severity")
-        or extra.get("severity")
-        or "UNKNOWN"
-    )
-
     vulnerability_type = (
         assessment.get("vulnerability_type")
         or metadata.get("vulnerability_class")
         or "Security Vulnerability"
+    )
+
+    severity = (
+        assessment.get("severity")
+        or extra.get("severity")
+        or "UNKNOWN"
     )
 
     cwe = (
@@ -79,84 +68,52 @@ def _compact_finding(finding, assessment=None):
     if isinstance(cwe, list):
         cwe = ", ".join(
             str(item)
-            for item in cwe[:5]
+            for item in cwe[:3]
         )
 
     return {
-        "check_id": _clean_text(
-            finding.get(
-                "check_id",
-                "unknown",
-            ),
-            250,
+        "rule": _compact_text(
+            finding.get("check_id", ""),
+            120,
         ),
-        "vulnerability_type": _clean_text(
+        "type": _compact_text(
             vulnerability_type,
-            250,
+            120,
         ),
-        "severity": _clean_text(
+        "severity": _compact_text(
             severity,
-            50,
+            30,
         ),
-        "cwe": _clean_text(
+        "cwe": _compact_text(
             cwe,
-            150,
+            80,
         ),
-        "path": _clean_text(
-            finding.get(
-                "path",
-                "unknown",
-            ),
-            400,
+        "file": _compact_text(
+            finding.get("path", ""),
+            180,
         ),
         "line": start.get(
             "line",
-            finding.get(
-                "line",
-                "unknown",
-            ),
+            finding.get("line", ""),
         ),
-        "message": _clean_text(
-            extra.get(
-                "message",
-                "Security issue detected.",
-            ),
+        "message": _compact_text(
+            extra.get("message", ""),
             MAX_MESSAGE_CHARS,
         ),
-        "risk_score": assessment.get(
-            "risk_score",
-            "N/A",
+        "risk": _compact_text(
+            assessment.get("risk_score", ""),
+            30,
         ),
-        "risk_level": assessment.get(
-            "risk_level",
-            "N/A",
+        "impact": _compact_text(
+            assessment.get("impact", ""),
+            MAX_TEXT_CHARS,
         ),
-        "impact": _clean_text(
-            assessment.get(
-                "impact",
-                "",
-            ),
-            500,
+        "fix": _compact_text(
+            assessment.get("recommendation", ""),
+            MAX_TEXT_CHARS,
         ),
-        "exploitability": _clean_text(
-            assessment.get(
-                "exploitability",
-                "",
-            ),
-            500,
-        ),
-        "recommendation": _clean_text(
-            assessment.get(
-                "recommendation",
-                "",
-            ),
-            700,
-        ),
-        "source_code": _clean_text(
-            finding.get(
-                "source_code",
-                "",
-            ),
+        "source": _compact_text(
+            finding.get("source_code", ""),
             MAX_SOURCE_CONTEXT_CHARS,
         ),
     }
@@ -168,28 +125,11 @@ def analyze_security_findings(
     risk_assessments=None,
     overall_risk=None,
 ) -> str:
-    """
-    Generate compact but useful AI security analysis.
-
-    The prompt is intentionally limited so that it stays
-    within Groq free-tier token limits.
-    """
 
     if not findings:
         return (
-            "No security vulnerabilities were detected "
-            "during the security scanning stage."
+            "No security vulnerabilities were detected."
         )
-
-    normalized_role = str(
-        role or "developer"
-    ).strip().lower()
-
-    if normalized_role not in {
-        "student",
-        "developer",
-    }:
-        normalized_role = "developer"
 
     if not isinstance(
         risk_assessments,
@@ -202,6 +142,16 @@ def analyze_security_findings(
         dict,
     ):
         overall_risk = {}
+
+    normalized_role = str(
+        role or "developer"
+    ).strip().lower()
+
+    if normalized_role not in {
+        "student",
+        "developer",
+    }:
+        normalized_role = "developer"
 
     # --------------------------------------------------------
     # LIMIT FINDINGS
@@ -216,20 +166,24 @@ def analyze_security_findings(
     for index, finding in enumerate(
         selected_findings
     ):
+
         assessment = {}
 
         if index < len(
             risk_assessments
         ):
-            candidate = risk_assessments[
-                index
-            ]
+
+            possible_assessment = (
+                risk_assessments[index]
+            )
 
             if isinstance(
-                candidate,
+                possible_assessment,
                 dict,
             ):
-                assessment = candidate
+                assessment = (
+                    possible_assessment
+                )
 
         compact_findings.append(
             _compact_finding(
@@ -241,10 +195,7 @@ def analyze_security_findings(
     findings_json = json.dumps(
         compact_findings,
         ensure_ascii=False,
-        separators=(
-            ",",
-            ":",
-        ),
+        separators=(",", ":"),
     )
 
     overall_score = overall_risk.get(
@@ -264,88 +215,76 @@ def analyze_security_findings(
     )
 
     # ========================================================
-    # STUDENT PROMPT
+    # STUDENT
     # ========================================================
 
     if normalized_role == "student":
 
         prompt = f"""
-You are SentinelForge AI, an educational cybersecurity assistant.
+You are SentinelForge AI.
 
-Analyze the following security findings.
+Explain these security findings for a student.
 
-Overall risk score: {overall_score}
-Overall risk level: {overall_level}
+Risk score: {overall_score}
+Risk level: {overall_level}
 
 Findings:
 {findings_json}
 
-Explain the result in simple language.
+For each important finding explain:
+- what it is
+- where it is
+- why it happened
+- possible attack
+- impact
+- prevention
 
-For each important vulnerability explain:
-1. What the vulnerability is.
-2. Where it occurs.
-3. Why it happened.
-4. How an attacker could potentially abuse it.
-5. What could happen if it remains unfixed.
-6. How developers can prevent or fix it.
-7. What SentinelForge AI detected and prepared.
+End with:
+- overall security condition
+- most important fixes
 
-Then provide:
-- Overall security condition.
-- Most important issues to fix first.
-- Practical learning recommendations.
+Use simple language.
 
-Do NOT claim that vulnerabilities were fixed.
-Do NOT claim that fixes were verified.
-Do NOT claim that a second security scan occurred.
+Do not claim the vulnerabilities are fixed.
+Do not claim verification.
+Do not claim a second scan.
 """
 
     # ========================================================
-    # DEVELOPER PROMPT
+    # DEVELOPER
     # ========================================================
 
     else:
 
         prompt = f"""
-You are SentinelForge AI, a senior application security engineer.
+You are SentinelForge AI, a senior security engineer.
 
-Analyze the following repository security findings.
+Analyze these repository security findings.
 
-Overall risk score: {overall_score}
-Overall risk level: {overall_level}
+Risk score: {overall_score}
+Risk level: {overall_level}
 
 Findings:
 {findings_json}
 
-Provide a technical security assessment.
-
-For each significant finding include:
-- Vulnerability type
+For each important finding explain:
+- vulnerability
 - CWE
-- Severity
-- Risk score
-- File/path
-- Line
-- Semgrep rule
-- Semgrep message
-- Root cause
-- Potential attack path
-- Impact
-- Exploitability
-- Recommended remediation
-- Relevant source context
+- severity
+- file and line
+- Semgrep rule/message
+- root cause
+- attack path
+- impact
+- remediation
 
-Then provide:
-- Overall risk assessment.
-- Highest-priority remediation items.
-- Practical developer recommendations.
+End with:
+- overall assessment
+- highest priority fixes
 
-Keep the answer focused and technically useful.
-
-Do NOT claim that vulnerabilities were fixed.
-Do NOT claim that fixes were verified.
-Do NOT claim that a second security scan occurred.
+Do not claim the vulnerabilities are fixed.
+Do not claim verification.
+Do not claim a second scan.
 """
 
     # ========================================================
@@ -380,9 +319,6 @@ Do NOT claim that a second security scan occurred.
 async def analyze_with_groq(
     findings: list,
 ) -> str:
-    """
-    Backward-compatible wrapper.
-    """
 
     return analyze_security_findings(
         findings=findings,
