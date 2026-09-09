@@ -4,39 +4,182 @@ from app.services.groq_service import generate_ai_response
 
 
 # ============================================================
-# SECURITY ANALYSIS AGENT
+# PHASE 4 - AI SECURITY ANALYSIS
 # ============================================================
+
+MAX_FINDINGS_FOR_AI = 20
+MAX_SOURCE_CONTEXT_CHARS = 1800
+MAX_MESSAGE_CHARS = 700
+
+
+def _clean_text(value, max_chars):
+    """
+    Convert a value to a compact string and limit its size.
+    """
+
+    if value is None:
+        return ""
+
+    text = str(value).strip()
+
+    if len(text) > max_chars:
+        return text[:max_chars] + "\n...[truncated]"
+
+    return text
+
+
+def _compact_finding(finding, assessment=None):
+    """
+    Keep only the information required by the AI.
+
+    Large scanner fields such as complete source context,
+    raw metadata and unrelated fields are intentionally
+    removed to keep the Groq request small.
+    """
+
+    if not isinstance(finding, dict):
+        finding = {}
+
+    if not isinstance(assessment, dict):
+        assessment = {}
+
+    extra = finding.get("extra", {})
+
+    if not isinstance(extra, dict):
+        extra = {}
+
+    metadata = extra.get("metadata", {})
+
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    start = finding.get("start", {})
+
+    if not isinstance(start, dict):
+        start = {}
+
+    severity = (
+        assessment.get("severity")
+        or extra.get("severity")
+        or "UNKNOWN"
+    )
+
+    vulnerability_type = (
+        assessment.get("vulnerability_type")
+        or metadata.get("vulnerability_class")
+        or "Security Vulnerability"
+    )
+
+    cwe = (
+        assessment.get("cwe")
+        or metadata.get("cwe")
+        or ""
+    )
+
+    if isinstance(cwe, list):
+        cwe = ", ".join(
+            str(item)
+            for item in cwe[:5]
+        )
+
+    return {
+        "check_id": _clean_text(
+            finding.get(
+                "check_id",
+                "unknown",
+            ),
+            250,
+        ),
+        "vulnerability_type": _clean_text(
+            vulnerability_type,
+            250,
+        ),
+        "severity": _clean_text(
+            severity,
+            50,
+        ),
+        "cwe": _clean_text(
+            cwe,
+            150,
+        ),
+        "path": _clean_text(
+            finding.get(
+                "path",
+                "unknown",
+            ),
+            400,
+        ),
+        "line": start.get(
+            "line",
+            finding.get(
+                "line",
+                "unknown",
+            ),
+        ),
+        "message": _clean_text(
+            extra.get(
+                "message",
+                "Security issue detected.",
+            ),
+            MAX_MESSAGE_CHARS,
+        ),
+        "risk_score": assessment.get(
+            "risk_score",
+            "N/A",
+        ),
+        "risk_level": assessment.get(
+            "risk_level",
+            "N/A",
+        ),
+        "impact": _clean_text(
+            assessment.get(
+                "impact",
+                "",
+            ),
+            500,
+        ),
+        "exploitability": _clean_text(
+            assessment.get(
+                "exploitability",
+                "",
+            ),
+            500,
+        ),
+        "recommendation": _clean_text(
+            assessment.get(
+                "recommendation",
+                "",
+            ),
+            700,
+        ),
+        "source_code": _clean_text(
+            finding.get(
+                "source_code",
+                "",
+            ),
+            MAX_SOURCE_CONTEXT_CHARS,
+        ),
+    }
+
 
 def analyze_security_findings(
     findings: list,
-    role: str = "developer",
+    role="developer",
+    risk_assessments=None,
+    overall_risk=None,
 ) -> str:
     """
-    Analyze security findings using Groq.
+    Generate compact but useful AI security analysis.
 
-    This is the Phase 4 Security Analysis Agent.
-
-    Important:
-    - Does not modify the repository.
-    - Does not generate fixes.
-    - Uses only the findings supplied by SentinelForge.
-    - Produces role-aware security analysis.
+    The prompt is intentionally limited so that it stays
+    within Groq free-tier token limits.
     """
-
-    # --------------------------------------------------------
-    # VALIDATE FINDINGS
-    # --------------------------------------------------------
 
     if not findings:
         return (
-            "No security vulnerabilities were detected. "
-            "The repository passed the current SentinelForge "
-            "security checks."
+            "No security vulnerabilities were detected "
+            "during the security scanning stage."
         )
-
-    # --------------------------------------------------------
-    # NORMALIZE ROLE
-    # --------------------------------------------------------
 
     normalized_role = str(
         role or "developer"
@@ -48,154 +191,197 @@ def analyze_security_findings(
     }:
         normalized_role = "developer"
 
+    if not isinstance(
+        risk_assessments,
+        list,
+    ):
+        risk_assessments = []
+
+    if not isinstance(
+        overall_risk,
+        dict,
+    ):
+        overall_risk = {}
+
     # --------------------------------------------------------
-    # PREPARE FINDINGS DATA
+    # LIMIT FINDINGS
     # --------------------------------------------------------
+
+    selected_findings = findings[
+        :MAX_FINDINGS_FOR_AI
+    ]
+
+    compact_findings = []
+
+    for index, finding in enumerate(
+        selected_findings
+    ):
+        assessment = {}
+
+        if index < len(
+            risk_assessments
+        ):
+            candidate = risk_assessments[
+                index
+            ]
+
+            if isinstance(
+                candidate,
+                dict,
+            ):
+                assessment = candidate
+
+        compact_findings.append(
+            _compact_finding(
+                finding,
+                assessment,
+            )
+        )
 
     findings_json = json.dumps(
-        findings,
-        indent=2,
-        default=str,
+        compact_findings,
+        ensure_ascii=False,
+        separators=(
+            ",",
+            ":",
+        ),
     )
 
-    # --------------------------------------------------------
+    overall_score = overall_risk.get(
+        "score",
+        overall_risk.get(
+            "overall_score",
+            "N/A",
+        ),
+    )
+
+    overall_level = overall_risk.get(
+        "risk_level",
+        overall_risk.get(
+            "level",
+            "N/A",
+        ),
+    )
+
+    # ========================================================
     # STUDENT PROMPT
-    # --------------------------------------------------------
+    # ========================================================
 
     if normalized_role == "student":
 
         prompt = f"""
-You are the Security Education Agent of SentinelForge AI.
+You are SentinelForge AI, an educational cybersecurity assistant.
 
-A software repository was scanned by SentinelForge AI and
-the following security findings were detected.
+Analyze the following security findings.
 
-SECURITY FINDINGS:
+Overall risk score: {overall_score}
+Overall risk level: {overall_level}
+
+Findings:
 {findings_json}
 
-Your job is to explain the detected vulnerabilities in
-simple, educational language for a student.
+Explain the result in simple language.
 
-For EACH vulnerability explain:
+For each important vulnerability explain:
+1. What the vulnerability is.
+2. Where it occurs.
+3. Why it happened.
+4. How an attacker could potentially abuse it.
+5. What could happen if it remains unfixed.
+6. How developers can prevent or fix it.
+7. What SentinelForge AI detected and prepared.
 
-1. What is the vulnerability?
-2. Where was it detected?
-3. Why did it happen?
-4. How could an attacker potentially exploit it?
-5. What could happen if it is not fixed?
-6. How should a developer prevent or fix it?
-7. What security lesson can the student learn?
+Then provide:
+- Overall security condition.
+- Most important issues to fix first.
+- Practical learning recommendations.
 
-After explaining each vulnerability, provide:
-
-- Overall security condition
-- Most important issue to fix first
-- Simple secure-coding recommendations
-
-IMPORTANT RULES:
-
-- Only discuss vulnerabilities present in the supplied findings.
-- Do not invent vulnerabilities.
-- Do not claim that anything has been fixed.
-- Do not claim that SentinelForge verified a fix.
-- Do not say that the repository was modified.
-- Do not provide fake technical details.
-- Keep explanations accurate and beginner-friendly.
+Do NOT claim that vulnerabilities were fixed.
+Do NOT claim that fixes were verified.
+Do NOT claim that a second security scan occurred.
 """
 
-    # --------------------------------------------------------
+    # ========================================================
     # DEVELOPER PROMPT
-    # --------------------------------------------------------
+    # ========================================================
 
     else:
 
         prompt = f"""
-You are the Senior Security Analysis Agent of SentinelForge AI.
+You are SentinelForge AI, a senior application security engineer.
 
-A software repository was scanned by SentinelForge AI and
-the following security findings were detected.
+Analyze the following repository security findings.
 
-SECURITY FINDINGS:
+Overall risk score: {overall_score}
+Overall risk level: {overall_level}
+
+Findings:
 {findings_json}
 
-Provide a professional technical security assessment.
+Provide a technical security assessment.
 
-For EACH vulnerability explain:
-
-1. Vulnerability name
-2. CWE if available
-3. Severity
-4. Risk
-5. Affected file and line
-6. Semgrep rule
-7. Why the vulnerable pattern is insecure
-8. Root cause
-9. Potential attack scenario
-10. Security impact
-11. Exploitability
-12. Recommended remediation
-13. Secure coding recommendation
+For each significant finding include:
+- Vulnerability type
+- CWE
+- Severity
+- Risk score
+- File/path
+- Line
+- Semgrep rule
+- Semgrep message
+- Root cause
+- Potential attack path
+- Impact
+- Exploitability
+- Recommended remediation
+- Relevant source context
 
 Then provide:
+- Overall risk assessment.
+- Highest-priority remediation items.
+- Practical developer recommendations.
 
-- Overall security assessment
-- Highest-priority vulnerabilities
-- Recommended remediation order
-- General repository security recommendations
+Keep the answer focused and technically useful.
 
-IMPORTANT RULES:
-
-- Base the analysis strictly on the supplied findings.
-- Do not invent vulnerabilities.
-- Do not modify files.
-- Do not generate source-code fixes in this step.
-- Do not claim that vulnerabilities are fixed.
-- Do not claim that a fix has been verified.
-- Do not claim that a second scan was performed.
-- Do not claim that the repository was modified.
-- Clearly distinguish detected facts from security recommendations.
+Do NOT claim that vulnerabilities were fixed.
+Do NOT claim that fixes were verified.
+Do NOT claim that a second security scan occurred.
 """
 
-    # --------------------------------------------------------
-    # CALL GROQ
-    # --------------------------------------------------------
+    # ========================================================
+    # GROQ
+    # ========================================================
 
-    analysis = generate_ai_response(
+    response = generate_ai_response(
         prompt
     )
 
-    # --------------------------------------------------------
-    # VALIDATE RESPONSE
-    # --------------------------------------------------------
-
-    if not analysis:
-        raise RuntimeError(
-            "Groq returned an empty security analysis."
+    if not response:
+        raise ValueError(
+            "Groq returned an empty AI analysis."
         )
 
-    analysis = str(
-        analysis
+    response = str(
+        response
     ).strip()
 
-    if not analysis:
-        raise RuntimeError(
-            "Groq returned an empty security analysis."
+    if not response:
+        raise ValueError(
+            "Groq returned an empty AI analysis."
         )
 
-    return analysis
+    return response
 
 
 # ============================================================
-# BACKWARD COMPATIBILITY
+# LEGACY COMPATIBILITY
 # ============================================================
 
 async def analyze_with_groq(
     findings: list,
 ) -> str:
     """
-    Backward-compatible wrapper for the previous Phase 3 API.
-
-    Defaults to developer-oriented analysis.
+    Backward-compatible wrapper.
     """
 
     return analyze_security_findings(
