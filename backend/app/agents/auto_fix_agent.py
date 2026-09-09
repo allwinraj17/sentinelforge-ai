@@ -1,362 +1,493 @@
+from __future__ import annotations
+
+from typing import Any
+
 from app.services.groq_service import generate_ai_response
 
 
 # ============================================================
-# PHASE 4 - AUTO-FIX AGENT
+# LIMITS
 # ============================================================
 
-def generate_fix(
-    vulnerability: dict,
-    source_code: str,
+# Keep the complete source reasonably small so that the
+# Auto-Fix request stays within the Groq token limit.
+MAX_SOURCE_CHARS = 12000
+
+# Keep individual finding information compact.
+MAX_TEXT_CHARS = 500
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def clean_text(
+    value: Any,
+    max_chars: int = MAX_TEXT_CHARS,
 ) -> str:
     """
-    SentinelForge AI Phase 4 Auto-Fix Agent.
-
-    Generates a complete corrected copy of one vulnerable
-    source file.
-
-    IMPORTANT:
-    - Never modifies the original repository.
-    - Never writes directly to the user's uploaded files.
-    - Returns only corrected source code.
-    - Preserves existing functionality whenever possible.
+    Convert a value to compact text.
     """
 
-    if not isinstance(vulnerability, dict):
-        raise ValueError(
-            "Invalid vulnerability data."
+    if value is None:
+        return ""
+
+    text = str(value).strip()
+
+    if len(text) > max_chars:
+        return (
+            text[:max_chars]
+            + "...[truncated]"
         )
 
-    if not isinstance(source_code, str):
-        raise ValueError(
-            "Source code must be a string."
-        )
+    return text
 
-    if not source_code.strip():
-        raise ValueError(
-            "Source code is empty."
-        )
 
-    # ========================================================
-    # EXTRACT FINDING INFORMATION
-    # ========================================================
+def compact_finding(
+    finding: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Keep only security-relevant information from a finding.
 
-    check_id = vulnerability.get(
-        "check_id",
-        "unknown",
-    )
+    Large scanner fields are intentionally ignored.
+    """
 
-    file_path = vulnerability.get(
-        "path",
-        "unknown",
-    )
+    if not isinstance(
+        finding,
+        dict,
+    ):
+        return {}
 
-    start = vulnerability.get(
-        "start",
-        {},
-    )
 
-    if not isinstance(start, dict):
-        start = {}
-
-    line = start.get(
-        "line",
-        "unknown",
-    )
-
-    extra = vulnerability.get(
+    extra = finding.get(
         "extra",
         {},
     )
 
-    if not isinstance(extra, dict):
+    if not isinstance(
+        extra,
+        dict,
+    ):
         extra = {}
 
-    message = extra.get(
-        "message",
-        "Security vulnerability detected.",
-    )
-
-    severity = extra.get(
-        "severity",
-        "",
-    )
 
     metadata = extra.get(
         "metadata",
         {},
     )
 
-    if not isinstance(metadata, dict):
+    if not isinstance(
+        metadata,
+        dict,
+    ):
         metadata = {}
+
+
+    start = finding.get(
+        "start",
+        {},
+    )
+
+    if not isinstance(
+        start,
+        dict,
+    ):
+        start = {}
+
+
+    vulnerability_type = (
+        metadata.get(
+            "vulnerability_class"
+        )
+        or "Security Vulnerability"
+    )
+
 
     cwe = metadata.get(
         "cwe",
         "",
     )
 
-    if isinstance(cwe, list):
+
+    if isinstance(
+        cwe,
+        list,
+    ):
         cwe = ", ".join(
             str(item)
-            for item in cwe
+            for item in cwe[:5]
         )
 
-    vulnerability_class = metadata.get(
-        "vulnerability_class",
-        "",
-    )
 
-    if isinstance(vulnerability_class, list):
-        vulnerability_class = ", ".join(
-            str(item)
-            for item in vulnerability_class
+    return {
+        "rule": clean_text(
+            finding.get(
+                "check_id",
+                "unknown",
+            ),
+            180,
+        ),
+
+        "type": clean_text(
+            vulnerability_type,
+            180,
+        ),
+
+        "severity": clean_text(
+            extra.get(
+                "severity",
+                "UNKNOWN",
+            ),
+            40,
+        ),
+
+        "cwe": clean_text(
+            cwe,
+            120,
+        ),
+
+        "line": start.get(
+            "line",
+            finding.get(
+                "line",
+                "unknown",
+            ),
+        ),
+
+        "message": clean_text(
+            extra.get(
+                "message",
+                "",
+            ),
+            650,
+        ),
+    }
+
+
+def clean_ai_response(
+    response: str,
+) -> str:
+    """
+    Remove accidental Markdown code fences or labels.
+    """
+
+    if not response:
+        return ""
+
+
+    text = str(
+        response
+    ).strip()
+
+
+    lines = text.splitlines()
+
+
+    if not lines:
+        return ""
+
+
+    # --------------------------------------------------------
+    # Remove accidental opening code fence.
+    # --------------------------------------------------------
+
+    if lines[0].strip().startswith(
+        "```"
+    ):
+        lines = lines[1:]
+
+
+    # --------------------------------------------------------
+    # Remove accidental closing code fence.
+    # --------------------------------------------------------
+
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+
+
+    cleaned = "\n".join(
+        lines
+    ).strip()
+
+
+    # --------------------------------------------------------
+    # Remove accidental FIXED_CODE prefix.
+    # --------------------------------------------------------
+
+    if cleaned.startswith(
+        "FIXED_CODE:"
+    ):
+
+        cleaned = cleaned[
+            len("FIXED_CODE:"):
+        ].strip()
+
+
+    return cleaned
+
+
+# ============================================================
+# AUTO-FIX AGENT
+# ============================================================
+
+def generate_fix(
+    vulnerability: dict[str, Any],
+    source_code: str,
+) -> str:
+    """
+    Generate one corrected source file.
+
+    The vulnerability object may contain:
+
+        related_findings
+
+    which represents all Semgrep findings belonging to the
+    same source file.
+
+    This allows several security findings in one file to be
+    fixed with ONE Groq request.
+    """
+
+    if not isinstance(
+        vulnerability,
+        dict,
+    ):
+        raise ValueError(
+            "Invalid vulnerability data."
         )
+
+
+    if not isinstance(
+        source_code,
+        str,
+    ):
+        raise ValueError(
+            "Source code must be a string."
+        )
+
+
+    if not source_code.strip():
+        raise ValueError(
+            "Source code is empty."
+        )
+
 
     # ========================================================
-    # STRICT AUTO-FIX PROMPT
+    # SOURCE SIZE
+    # ========================================================
+
+    if len(source_code) > MAX_SOURCE_CHARS:
+
+        raise ValueError(
+            "Source file is too large for the "
+            "current Auto-Fix token limit."
+        )
+
+
+    # ========================================================
+    # FILE INFORMATION
+    # ========================================================
+
+    file_path = clean_text(
+        vulnerability.get(
+            "path",
+            "unknown",
+        ),
+        400,
+    )
+
+
+    # ========================================================
+    # RELATED FINDINGS
+    # ========================================================
+
+    related_findings = vulnerability.get(
+        "related_findings",
+        [],
+    )
+
+
+    if not isinstance(
+        related_findings,
+        list,
+    ):
+        related_findings = []
+
+
+    # If main.py sends no grouped findings,
+    # fall back to the current finding.
+    if not related_findings:
+
+        related_findings = [
+            vulnerability
+        ]
+
+
+    compact_findings = []
+
+
+    for finding in related_findings:
+
+        compact = compact_finding(
+            finding
+        )
+
+
+        if compact:
+            compact_findings.append(
+                compact
+            )
+
+
+    # ========================================================
+    # FINDING TEXT
+    # ========================================================
+
+    finding_lines = []
+
+
+    for index, finding in enumerate(
+        compact_findings,
+        start=1,
+    ):
+
+        finding_lines.append(
+            f"""
+Finding {index}:
+Rule: {finding.get("rule", "unknown")}
+Type: {finding.get("type", "unknown")}
+Severity: {finding.get("severity", "unknown")}
+CWE: {finding.get("cwe", "not specified")}
+Line: {finding.get("line", "unknown")}
+Message: {finding.get("message", "Security issue detected.")}
+"""
+        )
+
+
+    all_findings_text = "\n".join(
+        finding_lines
+    )
+
+
+    # ========================================================
+    # GROQ PROMPT
     # ========================================================
 
     prompt = f"""
-You are the Auto-Fix Agent of SentinelForge AI.
+You are the Auto-Fix Agent of a software repository
+security analysis system.
 
-You are a senior application security engineer.
+You are fixing ALL security findings listed below that
+belong to the SAME source file.
 
-Your task is to fix ONE specific security vulnerability
-in the source file supplied below.
-
-The backend will use your response as the complete contents
-of a NEW corrected copy of the vulnerable source file.
-
-The original repository MUST NOT be modified.
-
-============================================================
-DETECTED SECURITY ISSUE
-============================================================
-
-Semgrep Rule:
-{check_id}
-
-Vulnerability Class:
-{vulnerability_class}
-
-Severity:
-{severity}
-
-CWE:
-{cwe}
-
-File:
+Source file:
 {file_path}
 
-Detected Line:
-{line}
+Detected security findings:
+{all_findings_text}
 
-Semgrep Message:
-{message}
+IMPORTANT:
+Several Semgrep rules can report the same underlying
+security issue. Treat all supplied findings as one combined
+security remediation task.
 
-============================================================
-STRICT REQUIREMENTS
-============================================================
+Your task is to return the COMPLETE corrected source file.
 
-1. Return the COMPLETE corrected source file.
+Requirements:
 
-2. Actually address the detected vulnerability.
+1. Fix all listed security issues in this source file.
+2. Make the smallest practical security changes.
+3. Preserve existing application functionality.
+4. Preserve unrelated code.
+5. Do not remove working functionality.
+6. Do not introduce unnecessary dependencies.
+7. Prefer libraries already used by the project.
+8. Return the COMPLETE source file.
+9. Do not return a snippet.
+10. Do not return a diff.
+11. Do not return an explanation.
+12. Do not return Markdown code fences.
+13. Do not return a FIXED_CODE label.
+14. Return ONLY the corrected source code.
+15. Do not claim that the code was verified.
+16. Do not claim that another security scan was performed.
 
-3. Preserve the application's existing functionality.
-
-4. Make the smallest practical security change.
-
-5. Do not rewrite unrelated code.
-
-6. Do not remove unrelated functionality.
-
-7. Do not invent dependencies.
-
-8. Do not invent libraries.
-
-9. Prefer libraries already used by the source file.
-
-10. Add an import only when genuinely necessary.
-
-11. Preserve the existing file structure.
-
-12. Preserve existing comments whenever practical.
-
-13. Preserve existing formatting whenever practical.
-
-14. Do not rename variables unless required.
-
-15. Do not change unrelated behavior.
-
-16. Do not return a snippet.
-
-17. Do not return only the vulnerable function.
-
-18. Do not return a diff.
-
-19. Do not return an explanation.
-
-20. Do not use Markdown code fences.
-
-21. Do not use triple backticks.
-
-22. Do not put headings before the source code.
-
-23. Do not put explanations after the source code.
-
-24. Return ONLY the complete corrected source file.
-
-25. If there is insufficient context to safely fix the
-    vulnerability, return the ORIGINAL SOURCE CODE
-    unchanged rather than inventing a solution.
-
-26. Never claim the repository was modified.
-
-27. Never claim the fix was verified.
-
-28. Never claim a second security scan was performed.
-
-============================================================
-SECURITY FIX GUIDANCE
-============================================================
-
-Use the actual vulnerability and source code as the source
-of truth.
-
-Examples of secure remediation:
+Examples:
 
 SQL Injection:
-- Use parameterized queries.
-- Do not concatenate untrusted input into SQL.
+Use parameterized queries or another safe database
+operation instead of string concatenation.
 
-Command Injection:
-- Avoid shell execution with untrusted input.
-- Prefer safe APIs and explicit argument lists.
+Debug Mode:
+Do not expose production debug mode.
 
-Path Traversal:
-- Validate and constrain filesystem paths.
-- Ensure user-controlled paths cannot escape the
-  intended directory.
+Other vulnerabilities:
+Apply the appropriate secure coding remediation based on
+the actual source code and the listed findings.
 
-Hardcoded Secrets:
-- Do not leave credentials in source code.
-- Use environment/configuration mechanisms already
-  supported by the application.
-
-Cross-Site Scripting:
-- Properly encode or sanitize untrusted output.
-
-Unsafe Deserialization:
-- Use safe parsing mechanisms.
-
-Weak Cryptography:
-- Replace insecure cryptographic usage with an
-  appropriate secure implementation already compatible
-  with the project.
-
-Insecure Randomness:
-- Use a cryptographically secure random generator
-  when security-sensitive randomness is required.
-
-These are examples only.
-
-Always analyze the actual source code and Semgrep finding.
+If the security issue cannot be safely fixed with the
+available source context, return the original source code
+unchanged.
 
 ============================================================
-ORIGINAL SOURCE FILE
+ORIGINAL SOURCE CODE
 ============================================================
 
 {source_code}
 
 ============================================================
-FINAL OUTPUT CONTRACT
+FINAL RESPONSE
 ============================================================
 
 Return ONLY the complete corrected source file.
-
-No Markdown.
-No code fences.
-No explanation.
-No headings.
-No analysis.
-No FIXED_CODE label.
-No EXPLANATION label.
-
-Only the corrected source file.
 """
 
+
     # ========================================================
-    # CALL GROQ
+    # GROQ
     # ========================================================
 
     fixed_code = generate_ai_response(
         prompt
     )
 
-    # ========================================================
-    # VALIDATE RESPONSE
-    # ========================================================
 
     if not fixed_code:
         raise ValueError(
             "Auto-Fix Agent returned an empty response."
         )
 
-    fixed_code = str(
+
+    fixed_code = clean_ai_response(
         fixed_code
-    ).strip()
+    )
 
-    if not fixed_code:
-        raise ValueError(
-            "Auto-Fix Agent returned an empty response."
-        )
-
-    # ========================================================
-    # REMOVE ACCIDENTAL MARKDOWN FENCES
-    # ========================================================
-
-    lines = fixed_code.splitlines()
-
-    if lines:
-        first_line = lines[0].strip()
-
-        if first_line.startswith("```"):
-            lines = lines[1:]
-
-    if lines:
-        last_line = lines[-1].strip()
-
-        if lines[-1].strip() == "```":
-            lines = lines[:-1]
-
-    fixed_code = "\n".join(
-        lines
-    ).strip()
-
-    # ========================================================
-    # HANDLE AI FAILURE RESPONSES
-    # ========================================================
-
-    invalid_values = {
-        "",
-        "NOT_AVAILABLE",
-        "NOT AVAILABLE",
-        "UNABLE_TO_FIX",
-        "UNABLE TO FIX",
-    }
-
-    if fixed_code.strip().upper() in invalid_values:
-        raise ValueError(
-            "Auto-Fix Agent could not safely generate a fix."
-        )
-
-    # ========================================================
-    # FINAL VALIDATION
-    # ========================================================
 
     if not fixed_code:
         raise ValueError(
             "Auto-Fix Agent returned empty corrected code."
         )
+
+
+    # ========================================================
+    # INVALID RESPONSE CHECK
+    # ========================================================
+
+    invalid_responses = {
+        "UNABLE_TO_FIX",
+        "UNABLE TO FIX",
+        "NOT_AVAILABLE",
+        "NOT AVAILABLE",
+    }
+
+
+    if fixed_code.strip().upper() in (
+        invalid_responses
+    ):
+
+        raise ValueError(
+            "Auto-Fix Agent could not safely generate a fix."
+        )
+
 
     return fixed_code

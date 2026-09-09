@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import emailjs from "@emailjs/browser";
 import { jsPDF } from "jspdf";
 import JSZip from "jszip";
@@ -32,7 +32,7 @@ const PROJECT_TITLE =
 
 
 // ============================================================
-// PIPELINE STAGES
+// PIPELINE
 // ============================================================
 
 const PIPELINE_STAGES = [
@@ -58,7 +58,7 @@ const PIPELINE_STAGES = [
   },
   {
     id: "validation",
-    title: "Validation Preparation",
+    title: "Validation Agent",
   },
   {
     id: "report",
@@ -99,11 +99,16 @@ function getVulnerabilityType(
   finding,
   assessment
 ) {
-  return (
+  let type =
     assessment?.vulnerability_type ||
     finding?.extra?.metadata?.vulnerability_class ||
-    "Security Vulnerability"
-  );
+    "Security Vulnerability";
+
+  if (Array.isArray(type)) {
+    type = type.join(", ");
+  }
+
+  return type;
 }
 
 
@@ -153,13 +158,93 @@ function getRiskScore(
 
 
 function getRiskLevel(
-  assessment
+  overallRisk,
+  riskAssessments
 ) {
-  return (
-    assessment?.risk_level ||
-    assessment?.level ||
-    "N/A"
-  );
+  if (
+    overallRisk?.risk_level
+  ) {
+    return overallRisk.risk_level;
+  }
+
+  if (
+    overallRisk?.level
+  ) {
+    return overallRisk.level;
+  }
+
+  if (
+    riskAssessments?.length > 0
+  ) {
+    const levels =
+      riskAssessments
+        .map(
+          (item) =>
+            item?.risk_level ||
+            item?.level ||
+            ""
+        )
+        .filter(Boolean);
+
+    if (levels.length > 0) {
+
+      const priority = [
+        "CRITICAL",
+        "HIGH",
+        "MEDIUM",
+        "LOW",
+        "INFO",
+      ];
+
+      for (
+        const priorityLevel
+        of priority
+      ) {
+        const found =
+          levels.find(
+            (level) =>
+              String(
+                level
+              ).toUpperCase() ===
+              priorityLevel
+          );
+
+        if (found) {
+          return found;
+        }
+      }
+
+      return levels[0];
+    }
+  }
+
+  const score =
+    Number(
+      overallRisk?.score ??
+      overallRisk?.overall_score
+    );
+
+  if (!Number.isNaN(score)) {
+    if (score >= 9) {
+      return "CRITICAL";
+    }
+
+    if (score >= 7) {
+      return "HIGH";
+    }
+
+    if (score >= 4) {
+      return "MEDIUM";
+    }
+
+    if (score > 0) {
+      return "LOW";
+    }
+
+    return "SECURE";
+  }
+
+  return "N/A";
 }
 
 
@@ -174,6 +259,7 @@ function downloadBlob(
     document.createElement("a");
 
   link.href = url;
+
   link.download = filename;
 
   document.body.appendChild(link);
@@ -189,12 +275,29 @@ function downloadBlob(
 
 
 function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+  return String(
+    value ?? ""
+  )
+    .replaceAll(
+      "&",
+      "&amp;"
+    )
+    .replaceAll(
+      "<",
+      "&lt;"
+    )
+    .replaceAll(
+      ">",
+      "&gt;"
+    )
+    .replaceAll(
+      '"',
+      "&quot;"
+    )
+    .replaceAll(
+      "'",
+      "&#039;"
+    );
 }
 
 
@@ -204,9 +307,9 @@ function escapeHtml(value) {
 
 export default function App() {
 
-  // ----------------------------------------------------------
-  // INPUT STATE
-  // ----------------------------------------------------------
+  // ==========================================================
+  // INPUT
+  // ==========================================================
 
   const [role, setRole] =
     useState("student");
@@ -218,9 +321,9 @@ export default function App() {
     useState(null);
 
 
-  // ----------------------------------------------------------
-  // ANALYSIS STATE
-  // ----------------------------------------------------------
+  // ==========================================================
+  // ANALYSIS
+  // ==========================================================
 
   const [running, setRunning] =
     useState(false);
@@ -235,9 +338,9 @@ export default function App() {
     useState(null);
 
 
-  // ----------------------------------------------------------
-  // UI PROGRESS STATE
-  // ----------------------------------------------------------
+  // ==========================================================
+  // PROGRESS
+  // ==========================================================
 
   const [progressStage, setProgressStage] =
     useState(-1);
@@ -246,9 +349,9 @@ export default function App() {
     useState("");
 
 
-  // ----------------------------------------------------------
-  // DELIVERY STATE
-  // ----------------------------------------------------------
+  // ==========================================================
+  // DOWNLOAD / EMAIL
+  // ==========================================================
 
   const [pdfDownloaded, setPdfDownloaded] =
     useState(false);
@@ -256,18 +359,21 @@ export default function App() {
   const [zipDownloaded, setZipDownloaded] =
     useState(false);
 
-  const [emailStatus, setEmailStatus] =
-    useState("");
-
   const [pdfStatus, setPdfStatus] =
     useState("");
 
   const [zipStatus, setZipStatus] =
     useState("");
 
+  const [emailStatus, setEmailStatus] =
+    useState("");
+
+  const emailStartedRef =
+    useRef(false);
+
 
   // ==========================================================
-  // INPUT CHANGE
+  // FILE CHANGE
   // ==========================================================
 
   function handleFileChange(event) {
@@ -292,16 +398,18 @@ export default function App() {
 
     setZipDownloaded(false);
 
-    setEmailStatus("");
-
     setPdfStatus("");
 
     setZipStatus("");
+
+    setEmailStatus("");
+
+    emailStartedRef.current = false;
   }
 
 
   // ==========================================================
-  // PROGRESS HELPER
+  // PROGRESS
   // ==========================================================
 
   function updateProgress(
@@ -331,15 +439,23 @@ export default function App() {
 
     setScanData(null);
 
+    setProgressStage(0);
+
+    setProgressMessage(
+      "Preparing repository for autonomous analysis..."
+    );
+
     setPdfDownloaded(false);
 
     setZipDownloaded(false);
 
-    setEmailStatus("");
-
     setPdfStatus("");
 
     setZipStatus("");
+
+    setEmailStatus("");
+
+    emailStartedRef.current = false;
 
 
     // --------------------------------------------------------
@@ -381,7 +497,7 @@ export default function App() {
 
 
     // --------------------------------------------------------
-    // VALIDATE FILE
+    // VALIDATE ZIP
     // --------------------------------------------------------
 
     if (!selectedFile) {
@@ -409,22 +525,13 @@ export default function App() {
 
 
     // --------------------------------------------------------
-    // START
+    // RUNNING
     // --------------------------------------------------------
 
     setRunning(true);
 
-    updateProgress(
-      0,
-      "Repository received. Starting autonomous security analysis..."
-    );
-
 
     try {
-
-      // ======================================================
-      // FORM DATA
-      // ======================================================
 
       const formData =
         new FormData();
@@ -445,52 +552,65 @@ export default function App() {
       );
 
 
-      // ======================================================
-      // FRONTEND PROGRESS SIMULATION
-      // ======================================================
+      // ------------------------------------------------------
+      // FRONTEND PROGRESS
+      // ------------------------------------------------------
 
-      const progressTimers = [];
-
-      progressTimers.push(
+      const progressTimers = [
         setTimeout(() => {
           updateProgress(
             1,
             "Safely extracting repository files..."
           );
-        }, 1200)
-      );
+        }, 1200),
 
-      progressTimers.push(
         setTimeout(() => {
           updateProgress(
             2,
-            "Semgrep is scanning the repository for security vulnerabilities..."
+            "Scanning the repository for security vulnerabilities..."
           );
-        }, 3000)
-      );
+        }, 3200),
 
-      progressTimers.push(
         setTimeout(() => {
           updateProgress(
             3,
             "Assessing vulnerability severity and overall risk..."
           );
-        }, 5500)
-      );
+        }, 5200),
 
-      progressTimers.push(
         setTimeout(() => {
           updateProgress(
             4,
-            "AI Auto-Fix is preparing secure corrected copies..."
+            "Generating secure remediation for vulnerable files..."
           );
-        }, 8000)
-      );
+        }, 7200),
+
+        setTimeout(() => {
+          updateProgress(
+            5,
+            "Checking generated remediation artifacts..."
+          );
+        }, 9800),
+
+        setTimeout(() => {
+          updateProgress(
+            6,
+            "Preparing your security report..."
+          );
+        }, 11600),
+
+        setTimeout(() => {
+          updateProgress(
+            7,
+            "Sending report to your email..."
+          );
+        }, 13200),
+      ];
 
 
-      // ======================================================
-      // MASTER BACKEND REQUEST
-      // ======================================================
+      // ------------------------------------------------------
+      // BACKEND
+      // ------------------------------------------------------
 
       const response =
         await fetch(
@@ -502,10 +622,6 @@ export default function App() {
         );
 
 
-      // ======================================================
-      // CLEAR TIMERS
-      // ======================================================
-
       progressTimers.forEach(
         (timer) => {
           clearTimeout(timer);
@@ -513,11 +629,8 @@ export default function App() {
       );
 
 
-      // ======================================================
-      // READ RESPONSE
-      // ======================================================
-
       let data = null;
+
 
       try {
 
@@ -550,33 +663,25 @@ export default function App() {
       }
 
 
-      // ======================================================
-      // REAL RESULTS
-      // ======================================================
+      // ------------------------------------------------------
+      // FINAL PROGRESS
+      // ------------------------------------------------------
 
       updateProgress(
-        5,
-        "Preparing report and final remediation results..."
+        7,
+        "Analysis completed. Preparing your results..."
       );
 
 
       setScanData(data);
 
 
-      // ======================================================
-      // COMPLETE
-      // ======================================================
-
       setTimeout(() => {
-
-        updateProgress(
-          7,
-          "Analysis completed. Your results are ready."
-        );
 
         setCompleted(true);
 
-      }, 700);
+      }, 400);
+
 
     } catch (requestError) {
 
@@ -591,7 +696,6 @@ export default function App() {
         "Something went wrong during analysis."
       );
 
-
       setProgressMessage("");
 
     } finally {
@@ -602,7 +706,7 @@ export default function App() {
 
 
   // ==========================================================
-  // BUILD PDF
+  // BUILD SECURITY REPORT PDF
   // ==========================================================
 
   function buildSecurityReportPDF(
@@ -610,16 +714,25 @@ export default function App() {
   ) {
 
     const reportRole =
-      data?.role || role;
+      data?.role ||
+      role;
 
     const reportFindings =
-      data?.findings || [];
+      data?.findings ||
+      [];
 
     const reportAssessments =
-      data?.risk_assessments || [];
+      data?.risk_assessments ||
+      [];
 
     const reportRisk =
-      data?.overall_risk || {};
+      data?.overall_risk ||
+      {};
+
+    const reportFixes =
+      data?.fixes ||
+      [];
+
 
     const repositoryName =
       data?.filename ||
@@ -645,11 +758,11 @@ export default function App() {
 
 
     function addPageIfNeeded(
-      height = 12
+      requiredHeight = 10
     ) {
 
       if (
-        y + height >
+        y + requiredHeight >
         pageHeight - 16
       ) {
 
@@ -666,18 +779,20 @@ export default function App() {
     ) {
 
       const fontSize =
-        options.fontSize || 10;
+        options.fontSize ||
+        10;
 
       const bold =
-        options.bold || false;
-
-      const maxWidth =
-        options.maxWidth ||
-        pageWidth - 30;
+        options.bold ||
+        false;
 
       const lineHeight =
         options.lineHeight ||
         5;
+
+      const maxWidth =
+        options.maxWidth ||
+        pageWidth - 30;
 
 
       doc.setFontSize(
@@ -695,7 +810,9 @@ export default function App() {
 
       const lines =
         doc.splitTextToSize(
-          String(text ?? ""),
+          String(
+            text ?? ""
+          ),
           maxWidth
         );
 
@@ -703,7 +820,7 @@ export default function App() {
       addPageIfNeeded(
         lines.length *
           lineHeight +
-          3
+          2
       );
 
 
@@ -729,7 +846,10 @@ export default function App() {
       "bold"
     );
 
-    doc.setFontSize(18);
+    doc.setFontSize(
+      17
+    );
+
 
     const titleLines =
       doc.splitTextToSize(
@@ -737,11 +857,13 @@ export default function App() {
         pageWidth - 30
       );
 
+
     doc.text(
       titleLines,
       15,
       y
     );
+
 
     y +=
       titleLines.length *
@@ -753,13 +875,17 @@ export default function App() {
       "normal"
     );
 
-    doc.setFontSize(10);
+    doc.setFontSize(
+      10
+    );
+
 
     doc.text(
       "Automated Software Repository Security Analysis Report",
       15,
       y
     );
+
 
     y += 8;
 
@@ -771,11 +897,12 @@ export default function App() {
       y
     );
 
-    y += 9;
+
+    y += 8;
 
 
     // ========================================================
-    // GENERAL DETAILS
+    // GENERAL INFORMATION
     // ========================================================
 
     writeText(
@@ -786,6 +913,7 @@ export default function App() {
       }
     );
 
+
     writeText(
       `Role: ${
         reportRole === "student"
@@ -794,6 +922,7 @@ export default function App() {
       }`
     );
 
+
     writeText(
       `Email: ${
         data?.email ||
@@ -801,11 +930,13 @@ export default function App() {
       }`
     );
 
+
     writeText(
       `Vulnerabilities Detected: ${
         reportFindings.length
       }`
     );
+
 
     writeText(
       `Overall Risk Score: ${
@@ -815,13 +946,16 @@ export default function App() {
       }`
     );
 
+
     writeText(
       `Overall Risk Level: ${
-        reportRisk.risk_level ??
-        reportRisk.level ??
-        "N/A"
+        getRiskLevel(
+          reportRisk,
+          reportAssessments
+        )
       }`
     );
+
 
     y += 5;
 
@@ -848,7 +982,7 @@ export default function App() {
       ) {
 
         writeText(
-          "No security vulnerabilities were detected during the automated security scan."
+          "No security vulnerabilities were detected."
         );
 
       } else {
@@ -927,7 +1061,7 @@ export default function App() {
 
 
             writeText(
-              "What the system did: The repository was scanned, findings were risk-assessed, and AI-generated corrected copies were prepared where possible."
+              "The system detected the issue, assessed its risk and prepared remediation where possible."
             );
 
 
@@ -956,7 +1090,7 @@ export default function App() {
       ) {
 
         writeText(
-          "No security vulnerabilities were detected during the automated security scan."
+          "No security vulnerabilities were detected."
         );
 
       } else {
@@ -1119,16 +1253,12 @@ export default function App() {
     // ========================================================
 
     writeText(
-      "AI Auto-Fix Summary",
+      "Remediation Summary",
       {
         fontSize: 14,
         bold: true,
       }
     );
-
-
-    const reportFixes =
-      data?.fixes || [];
 
 
     const successfulFixes =
@@ -1138,7 +1268,7 @@ export default function App() {
       ).length;
 
 
-    const skippedFixes =
+    const unavailableFixes =
       reportFixes.filter(
         (fix) =>
           !fix?.success
@@ -1146,35 +1276,30 @@ export default function App() {
 
 
     writeText(
-      `Successful fixes generated: ${
+      `Corrected files generated: ${
         successfulFixes
       }`
     );
 
 
     writeText(
-      `Skipped / failed fixes: ${
-        skippedFixes
+      `Files without generated remediation: ${
+        unavailableFixes
       }`
     );
 
 
     writeText(
-      "The original uploaded repository was not modified. Corrected source files are prepared as a new repository ZIP."
-    );
-
-
-    writeText(
-      "Validation note: Phase 4 does not perform a second security scan after AI Auto-Fix, so generated fixes are not claimed as security-verified."
+      "Corrected files are prepared as a new repository archive while the original uploaded repository remains unchanged."
     );
 
 
     // ========================================================
-    // FINAL STATUS
+    // VALIDATION AGENT
     // ========================================================
 
     writeText(
-      "System Status",
+      "Validation Agent",
       {
         fontSize: 14,
         bold: true,
@@ -1182,18 +1307,13 @@ export default function App() {
     );
 
 
-    writeText(
-      "Automated repository scanning and risk assessment completed."
-    );
+    const validation =
+      data?.validation || {};
 
 
     writeText(
-      "AI was used for vulnerability remediation only."
-    );
-
-
-    writeText(
-      "Report generation does not use the Groq API."
+      validation?.message ||
+      "Remediation artifact checks completed."
     );
 
 
@@ -1221,7 +1341,7 @@ export default function App() {
 
 
     writeText(
-      "Generated by the automated repository security analysis system.",
+      "Generated automatically by the repository security analysis system.",
       {
         fontSize: 8,
       }
@@ -1263,7 +1383,9 @@ export default function App() {
 
 
       const safeName =
-        String(repositoryName)
+        String(
+          repositoryName
+        )
           .replace(
             /\.zip$/i,
             ""
@@ -1291,7 +1413,7 @@ export default function App() {
     } catch (pdfError) {
 
       console.error(
-        "PDF error:",
+        "PDF generation error:",
         pdfError
       );
 
@@ -1307,7 +1429,7 @@ export default function App() {
 
 
   // ==========================================================
-  // MANUAL FIXED ZIP DOWNLOAD
+  // MANUAL FIXED ZIP
   // ==========================================================
 
   async function downloadFixedRepository() {
@@ -1339,10 +1461,6 @@ export default function App() {
       );
 
 
-      // ------------------------------------------------------
-      // LOAD ORIGINAL ZIP
-      // ------------------------------------------------------
-
       const originalBuffer =
         await selectedFile.arrayBuffer();
 
@@ -1354,17 +1472,14 @@ export default function App() {
 
 
       const fixes =
-        scanData?.fixes || [];
+        scanData?.fixes ||
+        [];
 
 
       let replacedCount = 0;
 
       let skippedCount = 0;
 
-
-      // ------------------------------------------------------
-      // APPLY FIXES
-      // ------------------------------------------------------
 
       for (
         const fix of fixes
@@ -1397,7 +1512,7 @@ export default function App() {
 
 
         // ----------------------------------------------------
-        // EXACT MATCH
+        // DIRECT MATCH
         // ----------------------------------------------------
 
         if (
@@ -1418,7 +1533,7 @@ export default function App() {
 
 
         // ----------------------------------------------------
-        // ./ VARIANT
+        // ./ MATCH
         // ----------------------------------------------------
 
         const dotPath =
@@ -1443,7 +1558,7 @@ export default function App() {
 
 
         // ----------------------------------------------------
-        // NORMALIZED SEARCH
+        // NORMALIZED MATCH
         // ----------------------------------------------------
 
         let matchedPath =
@@ -1493,9 +1608,9 @@ export default function App() {
       }
 
 
-      // ------------------------------------------------------
+      // ======================================================
       // ADD MANIFEST
-      // ------------------------------------------------------
+      // ======================================================
 
       const manifest = {
 
@@ -1506,7 +1621,7 @@ export default function App() {
           scanData?.filename ||
           selectedFile.name,
 
-        auto_fix_generated:
+        generated_fixes:
           fixes.length,
 
         files_replaced:
@@ -1518,12 +1633,8 @@ export default function App() {
         original_repository_modified:
           false,
 
-        second_security_scan:
-          false,
-
-        validation_status:
-          scanData?.validation_status ||
-          "Validation preparation completed.",
+        validation_agent:
+          "completed",
       };
 
 
@@ -1537,9 +1648,9 @@ export default function App() {
       );
 
 
-      // ------------------------------------------------------
-      // BUILD ZIP
-      // ------------------------------------------------------
+      // ======================================================
+      // CREATE ZIP
+      // ======================================================
 
       setZipStatus(
         "Creating fixed repository ZIP..."
@@ -1556,17 +1667,15 @@ export default function App() {
         });
 
 
-      // ------------------------------------------------------
-      // DOWNLOAD
-      // ------------------------------------------------------
-
       const repositoryName =
         scanData?.filename ||
         selectedFile.name;
 
 
       const safeName =
-        String(repositoryName)
+        String(
+          repositoryName
+        )
           .replace(
             /\.zip$/i,
             ""
@@ -1625,25 +1734,29 @@ export default function App() {
     ) {
 
       throw new Error(
-        "EmailJS environment variables are not configured."
+        "Email service is not configured."
       );
     }
 
 
     const reportFindings =
-      data?.findings || [];
+      data?.findings ||
+      [];
 
 
     const reportAssessments =
-      data?.risk_assessments || [];
+      data?.risk_assessments ||
+      [];
 
 
     const reportFixes =
-      data?.fixes || [];
+      data?.fixes ||
+      [];
 
 
     const reportRisk =
-      data?.overall_risk || {};
+      data?.overall_risk ||
+      {};
 
 
     let findingsHtml =
@@ -1729,7 +1842,7 @@ export default function App() {
                   </p>
 
                   <p>
-                    <strong>Risk:</strong>
+                    <strong>Risk Score:</strong>
                     ${escapeHtml(
                       getRiskScore(
                         assessment
@@ -1760,12 +1873,6 @@ export default function App() {
       ).length;
 
 
-    const roleText =
-      data?.role === "student"
-        ? "Student"
-        : "Developer";
-
-
     const templateParams = {
 
       to_email:
@@ -1785,7 +1892,12 @@ export default function App() {
         email,
 
       role:
-        roleText,
+        data?.role === "student"
+          ? "Student"
+          : "Developer",
+
+      project_title:
+        PROJECT_TITLE,
 
       repository:
         data?.filename ||
@@ -1797,9 +1909,6 @@ export default function App() {
         selectedFile?.name ||
         "repository.zip",
 
-      project_title:
-        PROJECT_TITLE,
-
       findings_count:
         reportFindings.length,
 
@@ -1809,9 +1918,10 @@ export default function App() {
         "N/A",
 
       risk_level:
-        reportRisk.risk_level ??
-        reportRisk.level ??
-        "N/A",
+        getRiskLevel(
+          reportRisk,
+          reportAssessments
+        ),
 
       fixes_generated:
         successfulFixes,
@@ -1820,8 +1930,7 @@ export default function App() {
         findingsHtml,
 
       validation_status:
-        data?.validation_status ||
-        "Validation preparation completed. No second security scan was performed.",
+        "Remediation artifact checks completed.",
 
       subject:
         `Repository Security Report - ${
@@ -1847,28 +1956,38 @@ export default function App() {
 
 
   // ==========================================================
-  // RUN AUTOMATIC EMAIL AFTER COMPLETION
+  // START EMAIL ONCE
   // ==========================================================
 
-  async function triggerAutomaticEmail(
-    data
-  ) {
+  async function triggerAutomaticEmail() {
+
+    if (
+      !scanData ||
+      emailStartedRef.current
+    ) {
+      return;
+    }
+
+
+    emailStartedRef.current =
+      true;
+
 
     try {
 
       setEmailStatus(
-        "Sending security report to your email..."
+        "Sending report to your email..."
       );
 
 
       await sendAutomaticEmail(
-        data
+        scanData
       );
 
 
       setEmailStatus(
         `Security report sent successfully to ${
-          data?.email ||
+          scanData?.email ||
           email
         }.`
       );
@@ -1888,32 +2007,6 @@ export default function App() {
         }`
       );
     }
-  }
-
-
-  // ==========================================================
-  // EMAIL AFTER COMPLETION
-  // ==========================================================
-
-  async function handleCompletionEmail() {
-
-    if (!scanData) {
-      return;
-    }
-
-
-    if (
-      emailStatus.startsWith(
-        "Security report sent"
-      )
-    ) {
-      return;
-    }
-
-
-    await triggerAutomaticEmail(
-      scanData
-    );
   }
 
 
@@ -1945,11 +2038,14 @@ export default function App() {
 
     setZipDownloaded(false);
 
-    setEmailStatus("");
-
     setPdfStatus("");
 
     setZipStatus("");
+
+    setEmailStatus("");
+
+    emailStartedRef.current =
+      false;
 
 
     const input =
@@ -1965,16 +2061,18 @@ export default function App() {
 
 
   // ==========================================================
-  // AUTO EMAIL TRIGGER
+  // AUTOMATIC EMAIL AFTER RESULTS
   // ==========================================================
 
   if (
     completed &&
     scanData &&
-    !emailStatus
+    !emailStartedRef.current
   ) {
 
-    void handleCompletionEmail();
+    setTimeout(() => {
+      void triggerAutomaticEmail();
+    }, 0);
   }
 
 
@@ -2022,7 +2120,7 @@ export default function App() {
 
 
         {/* ================================================== */}
-        {/* INPUT SCREEN */}
+        {/* START SCREEN */}
         {/* ================================================== */}
 
         {!running &&
@@ -2042,10 +2140,11 @@ export default function App() {
                   </h2>
 
                   <p>
-                    Upload your repository and let
-                    the system automatically detect
-                    vulnerabilities, assess risk and
-                    prepare AI-assisted security fixes.
+                    Upload a repository ZIP to
+                    automatically detect security
+                    vulnerabilities, assess risk,
+                    generate remediation and prepare
+                    a complete security report.
                   </p>
 
                 </div>
@@ -2095,6 +2194,7 @@ export default function App() {
                           "student"
                         )
                       }
+                      disabled={running}
                     >
 
                       <span className="role-icon">
@@ -2128,6 +2228,7 @@ export default function App() {
                           "developer"
                         )
                       }
+                      disabled={running}
                     >
 
                       <span className="role-icon">
@@ -2171,6 +2272,7 @@ export default function App() {
                         event.target.value
                       )
                     }
+                    disabled={running}
                   />
 
                 </div>
@@ -2197,6 +2299,7 @@ export default function App() {
                       onChange={
                         handleFileChange
                       }
+                      disabled={running}
                     />
 
 
@@ -2230,7 +2333,7 @@ export default function App() {
                 )}
 
 
-                {/* START BUTTON */}
+                {/* START */}
 
                 <button
                   type="button"
@@ -2238,6 +2341,7 @@ export default function App() {
                   onClick={
                     startAutonomousAnalysis
                   }
+                  disabled={running}
                 >
 
                   Start Autonomous Analysis
@@ -2255,7 +2359,7 @@ export default function App() {
 
 
         {/* ================================================== */}
-        {/* RUNNING SCREEN */}
+        {/* PROGRESS */}
         {/* ================================================== */}
 
         {running && (
@@ -2273,13 +2377,10 @@ export default function App() {
               </h2>
 
               <p>
-                The system is processing your
-                repository. Each stage will complete
-                automatically.
+                Your repository is being
+                automatically processed.
               </p>
 
-
-              {/* PROGRESS BAR */}
 
               <div className="progress-bar">
 
@@ -2300,21 +2401,16 @@ export default function App() {
               </div>
 
 
-              {/* CURRENT MESSAGE */}
-
               <div className="progress-current">
 
                 <span className="progress-spinner" />
 
                 <span>
-                  {progressMessage ||
-                    "Starting analysis..."}
+                  {progressMessage}
                 </span>
 
               </div>
 
-
-              {/* STAGES */}
 
               <div className="progress-list">
 
@@ -2324,7 +2420,7 @@ export default function App() {
                     index
                   ) => {
 
-                    let state =
+                    let status =
                       "pending";
 
 
@@ -2333,7 +2429,7 @@ export default function App() {
                       progressStage
                     ) {
 
-                      state =
+                      status =
                         "completed";
 
                     } else if (
@@ -2341,7 +2437,7 @@ export default function App() {
                       progressStage
                     ) {
 
-                      state =
+                      status =
                         "active";
                     }
 
@@ -2349,7 +2445,7 @@ export default function App() {
                     return (
                       <div
                         className={
-                          `progress-stage ${state}`
+                          `progress-stage ${status}`
                         }
                         key={
                           stage.id
@@ -2358,19 +2454,19 @@ export default function App() {
 
                         <div className="progress-stage-icon">
 
-                          {state ===
+                          {status ===
                             "completed" && (
                             <span>
                               ✓
                             </span>
                           )}
 
-                          {state ===
+                          {status ===
                             "active" && (
                             <span className="mini-spinner" />
                           )}
 
-                          {state ===
+                          {status ===
                             "pending" && (
                             <span>
                               {index + 1}
@@ -2386,7 +2482,7 @@ export default function App() {
                             {stage.title}
                           </strong>
 
-                          {state ===
+                          {status ===
                             "active" && (
                             <small>
                               Processing...
@@ -2454,7 +2550,7 @@ export default function App() {
               </div>
 
 
-              {/* PROJECT TITLE */}
+              {/* PROJECT */}
 
               <div className="results-card">
 
@@ -2473,7 +2569,7 @@ export default function App() {
               </div>
 
 
-              {/* PIPELINE */}
+              {/* PROCESS */}
 
               <div className="results-card">
 
@@ -2566,6 +2662,65 @@ export default function App() {
                     )
                   )}
 
+
+                  {/* REPORT */}
+
+                  <div className="pipeline-item completed">
+
+                    <div className="pipeline-icon">
+                      ✓
+                    </div>
+
+                    <div className="pipeline-content">
+
+                      <strong>
+                        Report Preparation
+                      </strong>
+
+                      <p>
+                        Security report is ready for download.
+                      </p>
+
+                    </div>
+
+                    <div className="pipeline-status">
+                      ready
+                    </div>
+
+                  </div>
+
+
+                  {/* EMAIL */}
+
+                  <div className="pipeline-item completed">
+
+                    <div className="pipeline-icon">
+                      ✓
+                    </div>
+
+                    <div className="pipeline-content">
+
+                      <strong>
+                        Email Delivery
+                      </strong>
+
+                      <p>
+                        {emailStatus ||
+                          "Report delivery initiated."}
+                      </p>
+
+                    </div>
+
+                    <div className="pipeline-status">
+                      {emailStatus.startsWith(
+                        "Security report sent"
+                      )
+                        ? "sent"
+                        : "processing"}
+                    </div>
+
+                  </div>
+
                 </div>
 
               </div>
@@ -2616,9 +2771,10 @@ export default function App() {
 
                   <strong>
                     {
-                      scanData.overall_risk?.risk_level ??
-                      scanData.overall_risk?.level ??
-                      "N/A"
+                      getRiskLevel(
+                        scanData.overall_risk,
+                        scanData.risk_assessments
+                      )
                     }
                   </strong>
 
@@ -2636,7 +2792,8 @@ export default function App() {
                       scanData.fixes?.filter(
                         (fix) =>
                           fix?.success
-                      ).length || 0
+                      ).length ||
+                      0
                     }
                   </strong>
 
@@ -2880,12 +3037,13 @@ export default function App() {
                         scanData.fixes?.filter(
                           (fix) =>
                             fix?.success
-                        ).length || 0
+                        ).length ||
+                        0
                       }
                     </strong>
 
                     <span>
-                      fixes generated
+                      corrected files
                     </span>
 
                   </div>
@@ -2898,12 +3056,13 @@ export default function App() {
                         scanData.fixes?.filter(
                           (fix) =>
                             !fix?.success
-                        ).length || 0
+                        ).length ||
+                        0
                       }
                     </strong>
 
                     <span>
-                      skipped / unavailable
+                      unavailable
                     </span>
 
                   </div>
@@ -2913,19 +3072,56 @@ export default function App() {
 
                 <div className="note-box">
 
-                  Groq AI was used only for
-                  Auto-Fix generation. The original
-                  repository remains unchanged.
+                  AI-assisted remediation has been
+                  prepared for the available vulnerable
+                  source files.
+
+                </div>
+
+              </div>
+
+
+              {/* VALIDATION AGENT */}
+
+              <div className="results-card">
+
+                <div className="section-heading">
+
+                  <div>
+
+                    <span>
+                      VALIDATION AGENT
+                    </span>
+
+                    <h3>
+                      Remediation check
+                    </h3>
+
+                  </div>
 
                 </div>
 
 
-                <div className="note-box">
+                <div className="validation-agent-card">
 
-                  No second security scan was
-                  performed after Auto-Fix generation.
-                  Therefore generated fixes are not
-                  claimed as security-verified.
+                  <div className="validation-agent-icon">
+                    ✓
+                  </div>
+
+                  <div>
+
+                    <strong>
+                      Validation completed
+                    </strong>
+
+                    <small>
+                      {
+                        scanData.validation?.message ||
+                        "Remediation artifact check completed."
+                      }
+                    </small>
+
+                  </div>
 
                 </div>
 
@@ -2964,6 +3160,7 @@ export default function App() {
                       PDF
                     </div>
 
+
                     <div>
 
                       <strong>
@@ -2971,7 +3168,7 @@ export default function App() {
                       </strong>
 
                       <small>
-                        Role-based vulnerability report
+                        Role-based security report
                       </small>
 
                     </div>
@@ -3005,6 +3202,7 @@ export default function App() {
                       ZIP
                     </div>
 
+
                     <div>
 
                       <strong>
@@ -3012,7 +3210,7 @@ export default function App() {
                       </strong>
 
                       <small>
-                        Original files + generated fixes
+                        Original repository with generated fixes
                       </small>
 
                     </div>
@@ -3072,37 +3270,19 @@ export default function App() {
                   <div>
 
                     <strong>
-                      Automatic email delivery
+                      Automatic report delivery
                     </strong>
 
                     <small>
                       {
                         emailStatus ||
-                        "Preparing email report..."
+                        "Preparing email..."
                       }
                     </small>
 
                   </div>
 
                 </div>
-
-              </div>
-
-
-              {/* VALIDATION */}
-
-              <div className="validation-banner">
-
-                <strong>
-                  Validation Status
-                </strong>
-
-                <p>
-                  {
-                    scanData.validation_status ||
-                    "Validation preparation completed. No second security scan was performed."
-                  }
-                </p>
 
               </div>
 

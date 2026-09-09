@@ -35,9 +35,9 @@ app = FastAPI(
         "Software Repository Security Analysis"
     ),
     description=(
-        "Automated software repository security "
-        "analysis using Semgrep, risk assessment, "
-        "AI-assisted remediation and validation."
+        "Automated software repository security analysis "
+        "using Semgrep, risk assessment, AI-assisted "
+        "remediation and validation."
     ),
     version="4.0.0",
 )
@@ -104,12 +104,9 @@ app.add_middleware(
 
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024
 
-# Groq is used ONLY for Auto-Fix.
-# Maximum number of UNIQUE vulnerable files sent to Groq.
+# Maximum number of UNIQUE source files sent to Groq.
 MAX_AUTO_FIXES = 3
 
-# Prevent extremely large source files from being
-# sent to the Auto-Fix model.
 MAX_SOURCE_FILE_SIZE = 10 * 1024 * 1024
 
 
@@ -121,7 +118,7 @@ def normalize_role(
     role: str,
 ) -> str:
     """
-    Normalize and validate the user role.
+    Validate and normalize user role.
     """
 
     value = str(
@@ -167,7 +164,7 @@ def get_finding_line(
     finding: dict[str, Any],
 ) -> int | None:
     """
-    Safely get the finding line number.
+    Safely get finding line number.
     """
 
     start = finding.get(
@@ -220,11 +217,10 @@ def safe_finding_copy(
     finding: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Convert scanner output to JSON-safe data.
+    Convert finding into JSON-safe data.
     """
 
     try:
-
         return json.loads(
             json.dumps(
                 finding,
@@ -261,7 +257,7 @@ def build_stage(
     message: str = "",
 ) -> dict[str, str]:
     """
-    Build a frontend-friendly pipeline stage.
+    Build a frontend-friendly stage object.
     """
 
     return {
@@ -277,22 +273,15 @@ def resolve_repository_path(
     source_path: str,
 ) -> Path:
     """
-    Resolve a Semgrep path safely.
+    Resolve relative or absolute Semgrep path safely.
 
-    Semgrep may return:
+    Supports:
 
-        relative:
         project/app.py
 
-    or:
+    and:
 
-        absolute:
         /tmp/.../extracted/project/app.py
-
-    Both are supported.
-
-    The resolved file MUST remain inside the extracted
-    repository directory.
     """
 
     root = Path(
@@ -333,19 +322,7 @@ def normalize_repository_path(
     source_path: str,
 ) -> str:
     """
-    Convert an absolute Semgrep path into a repository-relative
-    path.
-
-    Example:
-
-        /tmp/abc/extracted/project/app.py
-
-    becomes:
-
-        project/app.py
-
-    This is important because the frontend needs the relative
-    path to replace the correct file inside the original ZIP.
+    Convert Semgrep absolute path into repository-relative path.
     """
 
     root = Path(
@@ -369,9 +346,7 @@ def read_complete_source_file(
     repository_path: str,
 ) -> str:
     """
-    Read the complete source file required by Auto-Fix.
-
-    The path supplied here MUST be repository-relative.
+    Read complete source file for Auto-Fix.
     """
 
     target = resolve_repository_path(
@@ -404,6 +379,136 @@ def read_complete_source_file(
         encoding="utf-8",
         errors="replace",
     )
+
+
+def group_findings_by_file(
+    findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Group Semgrep findings by repository file.
+
+    Example:
+
+        app.py
+          -> finding 1
+          -> finding 2
+          -> finding 3
+
+    The first finding becomes the main finding and the
+    remaining findings are attached through
+    `related_findings`.
+
+    This allows ONE Groq call per unique file.
+    """
+
+    groups: dict[str, list[dict[str, Any]]] = {}
+
+    path_order: list[str] = []
+
+
+    for finding in findings:
+
+        path = str(
+            finding.get(
+                "path",
+                "",
+            )
+        ).strip()
+
+        if not path:
+            continue
+
+        normalized_path = (
+            path.replace(
+                "\\",
+                "/",
+            )
+        )
+
+        key = normalized_path.lower()
+
+        if key not in groups:
+
+            groups[key] = []
+
+            path_order.append(
+                key
+            )
+
+        groups[key].append(
+            finding
+        )
+
+
+    grouped = []
+
+
+    for key in path_order:
+
+        file_findings = groups[key]
+
+        primary = safe_finding_copy(
+            file_findings[0]
+        )
+
+        primary[
+            "related_findings"
+        ] = [
+            safe_finding_copy(
+                item
+            )
+            for item in file_findings
+        ]
+
+        primary[
+            "finding_count_for_file"
+        ] = len(
+            file_findings
+        )
+
+        grouped.append(
+            primary
+        )
+
+
+    return grouped
+
+
+def clean_fix_result_for_response(
+    fix: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Keep Auto-Fix response JSON-safe.
+    """
+
+    return {
+        "success": bool(
+            fix.get(
+                "success",
+                False,
+            )
+        ),
+        "finding_index": fix.get(
+            "finding_index",
+            0,
+        ),
+        "original_path": fix.get(
+            "original_path",
+            "",
+        ),
+        "filename": fix.get(
+            "filename",
+            None,
+        ),
+        "fixed_code": fix.get(
+            "fixed_code",
+            None,
+        ),
+        "error": fix.get(
+            "error",
+            None,
+        ),
+    }
 
 
 # ============================================================
@@ -446,7 +551,7 @@ async def health():
 
 
 # ============================================================
-# PHASE 4 MASTER PIPELINE
+# MASTER AUTONOMOUS SCAN
 # ============================================================
 
 @app.post("/scan/start")
@@ -455,16 +560,15 @@ async def start_autonomous_scan(
     email: str = Form(...),
     file: UploadFile = File(...),
 ):
-    """
-    Final Phase 4 master pipeline.
 
-    FLOW:
+    """
+    FINAL AUTONOMOUS SECURITY PIPELINE
 
         Repository
              ↓
-        Safe Extraction
+        Extraction
              ↓
-        Semgrep Detection
+        Semgrep
              ↓
         Risk Assessment
              ↓
@@ -474,19 +578,18 @@ async def start_autonomous_scan(
              ↓
         Final Results
 
-    IMPORTANT:
+    Groq is used ONLY for Auto-Fix.
 
-    Groq is used ONLY by the Auto-Fix Agent.
+    Same source file with multiple Semgrep findings
+    receives ONE Groq Auto-Fix call.
 
-    Report generation does NOT use Groq.
+    Maximum UNIQUE files sent to Groq = 3.
 
-    Validation Agent does NOT perform another Semgrep scan.
-
-    Original uploaded ZIP is never modified.
+    No second Semgrep scan is performed.
     """
 
     # ========================================================
-    # INPUT VALIDATION
+    # VALIDATE INPUT
     # ========================================================
 
     try:
@@ -585,7 +688,7 @@ async def start_autonomous_scan(
     try:
 
         # ====================================================
-        # READ UPLOADED ZIP
+        # READ UPLOAD
         # ====================================================
 
         contents = await file.read()
@@ -650,9 +753,7 @@ async def start_autonomous_scan(
             "extract",
             "Repository Extraction",
             "running",
-            (
-                "Safely extracting repository contents."
-            ),
+            "Safely extracting repository contents.",
         )
 
 
@@ -665,9 +766,7 @@ async def start_autonomous_scan(
             "extract",
             "Repository Extraction",
             "completed",
-            (
-                "Repository extracted successfully."
-            ),
+            "Repository extracted successfully.",
         )
 
 
@@ -681,7 +780,7 @@ async def start_autonomous_scan(
             "running",
             (
                 "Semgrep is scanning the repository "
-                "for security vulnerabilities."
+                "for vulnerabilities."
             ),
         )
 
@@ -748,6 +847,13 @@ async def start_autonomous_scan(
                         "Path normalization warning:",
                         exc,
                     )
+
+                    # Ignore an invalid path instead of
+                    # exposing the temporary filesystem path.
+                    finding[
+                        "path"
+                    ] = ""
+
 
             findings.append(
                 finding
@@ -886,6 +992,17 @@ async def start_autonomous_scan(
 
 
         # ====================================================
+        # GROUP FINDINGS BY SOURCE FILE
+        # ====================================================
+
+        grouped_findings = (
+            group_findings_by_file(
+                findings
+            )
+        )
+
+
+        # ====================================================
         # GROQ AUTO-FIX
         # ====================================================
 
@@ -894,8 +1011,8 @@ async def start_autonomous_scan(
             "AI Auto-Fix",
             "running",
             (
-                "AI is generating corrected copies "
-                "for vulnerable source files."
+                "Preparing corrected copies for "
+                "vulnerable source files."
             ),
         )
 
@@ -903,68 +1020,7 @@ async def start_autonomous_scan(
         fixes = []
 
 
-        # ----------------------------------------------------
-        # DEDUPLICATE FINDINGS BY FILE
-        # ----------------------------------------------------
-
-        unique_findings = []
-
-        seen_paths = set()
-
-
-        for finding in findings:
-
-            repository_path = str(
-                finding.get(
-                    "path",
-                    "",
-                )
-            ).strip()
-
-
-            if not repository_path:
-                continue
-
-
-            path_key = (
-                repository_path
-                .replace(
-                    "\\",
-                    "/",
-                )
-                .lower()
-            )
-
-
-            if path_key in seen_paths:
-
-                continue
-
-
-            seen_paths.add(
-                path_key
-            )
-
-
-            unique_findings.append(
-                finding
-            )
-
-
-            # IMPORTANT:
-            # Maximum 3 UNIQUE source files.
-            if (
-                len(unique_findings)
-                >= MAX_AUTO_FIXES
-            ):
-                break
-
-
-        # ----------------------------------------------------
-        # GENERATE FIX
-        # ----------------------------------------------------
-
-        if not unique_findings:
+        if not grouped_findings:
 
             stages[4] = build_stage(
                 "fix",
@@ -972,18 +1028,26 @@ async def start_autonomous_scan(
                 "skipped",
                 (
                     "No vulnerable source files "
-                    "were available for Auto-Fix."
+                    "require remediation."
                 ),
             )
 
         else:
 
-            for index, finding in enumerate(
-                unique_findings
+            # Only first 3 UNIQUE source files are sent to
+            # Groq. Duplicate findings in the same file are
+            # combined into one Auto-Fix request.
+            files_to_fix = grouped_findings[
+                :MAX_AUTO_FIXES
+            ]
+
+
+            for index, grouped_finding in enumerate(
+                files_to_fix
             ):
 
                 repository_path = str(
-                    finding.get(
+                    grouped_finding.get(
                         "path",
                         "",
                     )
@@ -1029,7 +1093,7 @@ async def start_autonomous_scan(
 
 
                 # ============================================
-                # READ COMPLETE FILE
+                # READ COMPLETE SOURCE FILE
                 # ============================================
 
                 try:
@@ -1061,32 +1125,30 @@ async def start_autonomous_scan(
 
 
                 # ============================================
-                # CREATE CLEAN VULNERABILITY OBJECT
+                # PREPARE VULNERABILITY DATA
                 # ============================================
 
-                fix_vulnerability = (
+                vulnerability_for_ai = (
                     safe_finding_copy(
-                        finding
+                        grouped_finding
                     )
                 )
 
 
-                # Ensure AI receives the repository-relative
-                # path rather than a temporary absolute path.
-                fix_vulnerability[
+                vulnerability_for_ai[
                     "path"
                 ] = repository_path
 
 
                 # ============================================
-                # GROQ AUTO-FIX CALL
+                # ONE GROQ CALL FOR THIS FILE
                 # ============================================
 
                 try:
 
                     fixed_code = generate_fix(
                         vulnerability=(
-                            fix_vulnerability
+                            vulnerability_for_ai
                         ),
                         source_code=(
                             full_source_code
@@ -1138,42 +1200,76 @@ async def start_autonomous_scan(
 
 
                 fixes.append(
-                    fix_result
+                    clean_fix_result_for_response(
+                        fix_result
+                    )
                 )
 
 
-        # ----------------------------------------------------
-        # AUTO-FIX SUMMARY
-        # ----------------------------------------------------
+            # ------------------------------------------------
+            # MARK REMAINING UNIQUE FILES AS SKIPPED
+            # ------------------------------------------------
 
-        successful_fixes = sum(
-            1
-            for fix in fixes
-            if fix.get(
-                "success",
-                False,
+            if len(grouped_findings) > MAX_AUTO_FIXES:
+
+                for skipped_group in grouped_findings[
+                    MAX_AUTO_FIXES:
+                ]:
+
+                    skipped_path = str(
+                        skipped_group.get(
+                            "path",
+                            "",
+                        )
+                    ).strip()
+
+
+                    fixes.append(
+                        {
+                            "success": False,
+
+                            "finding_index": (
+                                -1
+                            ),
+
+                            "original_path": (
+                                skipped_path
+                            ),
+
+                            "filename": (
+                                Path(
+                                    skipped_path
+                                ).name
+                                if skipped_path
+                                else None
+                            ),
+
+                            "fixed_code": None,
+
+                            "error": (
+                                "Auto-Fix skipped because "
+                                f"the maximum of {MAX_AUTO_FIXES} "
+                                "unique files was reached."
+                            ),
+                        }
+                    )
+
+
+            successful_fixes = sum(
+                1
+                for fix in fixes
+                if fix.get(
+                    "success",
+                    False,
+                )
             )
-        )
 
 
-        failed_fixes = (
-            len(fixes)
-            - successful_fixes
-        )
-
-
-        if not findings:
-
-            stages[4] = build_stage(
-                "fix",
-                "AI Auto-Fix",
-                "skipped",
-                (
-                    "No vulnerabilities require AI remediation."
-                ),
+            unavailable_fixes = (
+                len(fixes)
+                - successful_fixes
             )
 
-        else:
 
             stages[4] = build_stage(
                 "fix",
@@ -1181,7 +1277,7 @@ async def start_autonomous_scan(
                 "completed",
                 (
                     f"{successful_fixes} unique file(s) "
-                    f"fixed; {failed_fixes} unavailable."
+                    f"fixed; {unavailable_fixes} unavailable."
                 ),
             )
 
@@ -1214,6 +1310,7 @@ async def start_autonomous_scan(
                 "Validation Agent error:",
                 exc,
             )
+
 
             validation_result = {
 
@@ -1257,9 +1354,8 @@ async def start_autonomous_scan(
 
 
         validation_status = (
-            "Validation Agent completed lightweight "
-            "remediation artifact checks. "
-            "No second security scan was performed."
+            "Validation Agent completed remediation "
+            "artifact checks."
         )
 
 
@@ -1300,7 +1396,7 @@ async def start_autonomous_scan(
 
             "overall_risk": overall_risk,
 
-            # Report generation does not use Groq.
+            # No AI report generation.
             "ai_analysis": "",
 
             "fixes": fixes,
@@ -1317,12 +1413,19 @@ async def start_autonomous_scan(
                 MAX_AUTO_FIXES
             ),
 
-            "auto_fix_unique_files_attempted": (
-                len(unique_findings)
+            "unique_vulnerable_files": (
+                len(grouped_findings)
+            ),
+
+            "auto_fix_files_attempted": min(
+                len(grouped_findings),
+                MAX_AUTO_FIXES,
             ),
 
             "auto_fix_successful": (
                 successful_fixes
+                if grouped_findings
+                else 0
             ),
 
             "groq_used_for_report": False,
@@ -1352,6 +1455,7 @@ async def start_autonomous_scan(
             exc,
         )
 
+
         raise HTTPException(
             status_code=500,
             detail=(
@@ -1364,7 +1468,7 @@ async def start_autonomous_scan(
     finally:
 
         # ====================================================
-        # CLEAN TEMPORARY DIRECTORY
+        # CLEAN TEMPORARY FILES
         # ====================================================
 
         if extract_dir:
@@ -1384,7 +1488,7 @@ async def start_autonomous_scan(
 
 
 # ============================================================
-# LEGACY UPLOAD ENDPOINT
+# LEGACY SCAN ENDPOINT
 # ============================================================
 
 @app.post("/scan/upload")
@@ -1453,37 +1557,36 @@ async def upload_and_scan(
         )
 
 
-        findings = run_semgrep_scan(
+        raw_findings = run_semgrep_scan(
             extract_dir
         )
 
 
         if not isinstance(
-            findings,
+            raw_findings,
             list,
         ):
-            findings = []
+            raw_findings = []
 
 
-        # Normalize legacy endpoint paths too.
-        normalized_findings = []
+        findings = []
 
 
-        for finding in findings:
+        for raw_finding in raw_findings:
 
             if not isinstance(
-                finding,
+                raw_finding,
                 dict,
             ):
                 continue
 
 
             current = safe_finding_copy(
-                finding
+                raw_finding
             )
 
 
-            path = str(
+            raw_path = str(
                 current.get(
                     "path",
                     "",
@@ -1491,7 +1594,7 @@ async def upload_and_scan(
             ).strip()
 
 
-            if path:
+            if raw_path:
 
                 try:
 
@@ -1499,20 +1602,19 @@ async def upload_and_scan(
                         "path"
                     ] = normalize_repository_path(
                         extract_dir,
-                        path,
+                        raw_path,
                     )
 
                 except Exception:
 
-                    pass
+                    current[
+                        "path"
+                    ] = ""
 
 
-            normalized_findings.append(
+            findings.append(
                 current
             )
-
-
-        findings = normalized_findings
 
 
         risk_assessments = assess_findings(
@@ -1587,41 +1689,31 @@ async def phase4_info():
 
         "success": True,
 
-        "phase": "Phase 4",
-
         "title": (
             "A Multi-Agent System for Automated "
             "Software Repository Security Analysis"
         ),
 
-        "features": [
-
+        "architecture": [
             "Repository Upload",
-
             "Safe ZIP Extraction",
-
             "Semgrep Security Detection",
-
             "Risk Assessment",
-
-            "Groq AI Auto-Fix",
-
+            "AI Auto-Fix",
             "Validation Agent",
-
             "Role-Based Reporting",
-
+            "Automatic Email Delivery",
             "Manual Security Report Download",
-
             "Manual Fixed Repository Download",
-
-            "Automatic Email Report",
         ],
 
         "groq_used_for_report": False,
 
         "groq_used_for_auto_fix": True,
 
-        "max_auto_fixes": MAX_AUTO_FIXES,
+        "max_unique_files_for_auto_fix": (
+            MAX_AUTO_FIXES
+        ),
 
         "second_scan_after_fix": False,
 
