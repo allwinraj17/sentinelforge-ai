@@ -1,57 +1,77 @@
-import os
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    SettingsConfigDict,
+)
 
 
 class Settings(BaseSettings):
     """
-    Application configuration.
+    SentinelForge AI application configuration.
 
-    Values can be supplied through environment variables.
-    Local development can use a .env file.
+    Secrets are loaded from environment variables.
+    Local development may use a .env file.
+
+    IMPORTANT:
+    Never put real API keys directly in source code.
     """
 
-    # ========================================================
-    # DATABASE
-    # ========================================================
-
-    database_url: str = "sqlite:///./sentinelforge.db"
-
-    # ========================================================
-    # CORS
-    # ========================================================
-
-    cors_origins: str = "http://localhost:5173"
-
-    # ========================================================
-    # ENVIRONMENT
-    # ========================================================
+    # ============================================================
+    # APPLICATION
+    # ============================================================
 
     environment: str = "development"
 
-    # ========================================================
+    # ============================================================
+    # DATABASE
+    # ============================================================
+
+    database_url: str = "sqlite:///./sentinelforge.db"
+
+    # ============================================================
+    # CORS
+    # ============================================================
+
+    cors_origins: str = (
+        "http://localhost:5173,"
+        "http://localhost:3000,"
+        "https://sentinelforge-ai.vercel.app"
+    )
+
+    # ============================================================
     # GROQ AI
-    # ========================================================
+    # ============================================================
 
     groq_api_key: str | None = None
 
-    groq_model: str = "openai/gpt-oss-120b"
+    groq_model: str = (
+        "llama-3.3-70b-versatile"
+    )
 
-    # ========================================================
-    # EMAIL / RESEND
-    # ========================================================
+    # ============================================================
+    # EMAIL
+    # ============================================================
+
+    # Optional backend email configuration.
+    #
+    # Phase 4 frontend email delivery uses EmailJS.
+    # These values are kept optional so the backend can run
+    # without requiring a mail provider.
 
     resend_api_key: str | None = None
 
-    email_from: str = "onboarding@resend.dev"
+    email_from: str = (
+        "onboarding@resend.dev"
+    )
 
-    # ========================================================
+    # ============================================================
     # SETTINGS CONFIGURATION
-    # ========================================================
+    # ============================================================
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        case_sensitive=False,
     )
 
 

@@ -1,396 +1,927 @@
 from html import escape
 
 
+# ============================================================
+# PHASE 4 - EMAIL REPORT AGENT
+# ============================================================
+
+def _safe(value) -> str:
+    """
+    Safely convert a value to HTML-safe text.
+    """
+    if value is None:
+        return ""
+
+    return escape(str(value))
+
+
+def _get_finding_value(finding: dict, key: str, default=""):
+    """
+    Safely read a value from a finding dictionary.
+    """
+    if not isinstance(finding, dict):
+        return default
+
+    value = finding.get(key, default)
+
+    return value if value is not None else default
+
+
 def generate_security_report_html(
     filename: str,
     findings: list,
     risk_assessments: list,
     overall_risk: dict,
+    role: str = "developer",
+    ai_analysis: str = "",
+    fixes: list | None = None,
 ) -> str:
     """
-    Generate a professional HTML security report.
+    Generate the HTML email report for SentinelForge AI.
+
+    The report is role-aware:
+
+    Student:
+        Simple explanation of the security problems,
+        impact, attack possibility, prevention and
+        what SentinelForge AI did.
+
+    Developer:
+        Technical vulnerability information including
+        CWE, severity, file, line, Semgrep details,
+        risk and remediation.
+
+    Important:
+        This function only generates the report.
+        It does not send email.
     """
 
-    overall_level = overall_risk.get(
-        "overall_level",
-        "UNKNOWN",
-    )
+    # ========================================================
+    # NORMALIZE INPUTS
+    # ========================================================
+
+    normalized_role = str(role).strip().lower()
+
+    if normalized_role not in {
+        "student",
+        "developer",
+    }:
+        normalized_role = "developer"
+
+    if not isinstance(findings, list):
+        findings = []
+
+    if not isinstance(risk_assessments, list):
+        risk_assessments = []
+
+    if not isinstance(overall_risk, dict):
+        overall_risk = {}
+
+    if not isinstance(fixes, list):
+        fixes = []
+
+    filename = _safe(filename)
+
+    # ========================================================
+    # OVERALL RISK INFORMATION
+    # ========================================================
 
     overall_score = overall_risk.get(
-        "overall_score",
-        0,
-    )
-
-    total_findings = overall_risk.get(
-        "total_findings",
-        len(findings),
-    )
-
-    critical = overall_risk.get(
-        "critical",
-        0,
-    )
-
-    high = overall_risk.get(
-        "high",
-        0,
-    )
-
-    medium = overall_risk.get(
-        "medium",
-        0,
-    )
-
-    low = overall_risk.get(
-        "low",
-        0,
-    )
-
-    # ========================================================
-    # FINDINGS HTML
-    # ========================================================
-
-    findings_html = ""
-
-    for index, finding in enumerate(findings, start=1):
-
-        extra = finding.get("extra", {})
-
-        message = extra.get(
-            "message",
-            "Security vulnerability detected.",
-        )
-
-        check_id = finding.get(
-            "check_id",
-            "Unknown",
-        )
-
-        path = finding.get(
-            "path",
-            "Unknown",
-        )
-
-        start = finding.get(
-            "start",
-            {},
-        )
-
-        line = start.get(
-            "line",
-            "Unknown",
-        )
-
-        severity = finding.get(
-            "severity",
-            "UNKNOWN",
-        )
-
-        findings_html += f"""
-        <div style="
-            margin-bottom:20px;
-            padding:20px;
-            border:1px solid #e5e7eb;
-            border-radius:10px;
-            background:#ffffff;
-        ">
-
-            <h3 style="
-                margin-top:0;
-                color:#111827;
-            ">
-                {index}. {escape(check_id)}
-            </h3>
-
-            <p>
-                <strong>Severity:</strong>
-                {escape(str(severity))}
-            </p>
-
-            <p>
-                <strong>File:</strong>
-                {escape(str(path))}
-            </p>
-
-            <p>
-                <strong>Line:</strong>
-                {escape(str(line))}
-            </p>
-
-            <p>
-                <strong>Description:</strong><br>
-                {escape(str(message))}
-            </p>
-
-        </div>
-        """
-
-    # ========================================================
-    # RISK ASSESSMENTS HTML
-    # ========================================================
-
-    risk_html = ""
-
-    for index, risk in enumerate(
-        risk_assessments,
-        start=1,
-    ):
-
-        vulnerability_type = risk.get(
-            "vulnerability_type",
-            "Unknown",
-        )
-
-        severity = risk.get(
-            "severity",
-            "Unknown",
-        )
-
-        score = risk.get(
-            "risk_score",
+        "score",
+        overall_risk.get(
+            "overall_score",
             0,
-        )
+        ),
+    )
 
-        impact = risk.get(
-            "impact",
-            "Not specified.",
-        )
+    overall_level = overall_risk.get(
+        "risk_level",
+        overall_risk.get(
+            "level",
+            "Secure",
+        ),
+    )
 
-        exploitability = risk.get(
-            "exploitability",
-            "Not specified.",
-        )
+    severity_counts = overall_risk.get(
+        "severity_counts",
+        {},
+    )
 
-        recommendation = risk.get(
-            "recommendation",
-            "No recommendation available.",
-        )
+    if not isinstance(
+        severity_counts,
+        dict,
+    ):
+        severity_counts = {}
 
-        risk_html += f"""
-        <div style="
-            margin-bottom:20px;
-            padding:20px;
-            border:1px solid #e5e7eb;
-            border-radius:10px;
-            background:#f9fafb;
-        ">
+    critical_count = severity_counts.get(
+        "CRITICAL",
+        0,
+    )
 
-            <h3 style="margin-top:0;">
-                {index}. {escape(str(vulnerability_type))}
-            </h3>
+    high_count = severity_counts.get(
+        "HIGH",
+        0,
+    )
 
-            <p>
-                <strong>Severity:</strong>
-                {escape(str(severity))}
-            </p>
+    medium_count = severity_counts.get(
+        "MEDIUM",
+        0,
+    )
 
-            <p>
-                <strong>Risk Score:</strong>
-                {escape(str(score))}/10
-            </p>
+    low_count = severity_counts.get(
+        "LOW",
+        0,
+    )
 
-            <p>
-                <strong>Exploitability:</strong>
-                {escape(str(exploitability))}
-            </p>
+    # ========================================================
+    # COMMON HTML
+    # ========================================================
 
-            <p>
-                <strong>Impact:</strong><br>
-                {escape(str(impact))}
-            </p>
+    html_parts = []
 
-            <p>
-                <strong>Recommendation:</strong><br>
-                {escape(str(recommendation))}
-            </p>
-
-        </div>
+    html_parts.append(
         """
-
-    # ========================================================
-    # COMPLETE REPORT
-    # ========================================================
-
-    html = f"""
 <!DOCTYPE html>
-
 <html>
-
 <head>
+    <meta charset="UTF-8">
 
-<meta charset="UTF-8">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #f4f7fb;
+            font-family: Arial, Helvetica, sans-serif;
+            color: #1f2937;
+        }
 
-<title>SentinelForge Security Report</title>
+        .container {
+            width: 100%;
+            padding: 30px 15px;
+            box-sizing: border-box;
+        }
 
+        .card {
+            max-width: 850px;
+            margin: 0 auto;
+            background: #ffffff;
+            border-radius: 14px;
+            overflow: hidden;
+            box-shadow: 0 6px 25px rgba(0, 0, 0, 0.08);
+        }
+
+        .header {
+            padding: 30px;
+            background: #111827;
+            color: #ffffff;
+        }
+
+        .header h1 {
+            margin: 0 0 8px 0;
+            font-size: 28px;
+        }
+
+        .header p {
+            margin: 0;
+            color: #d1d5db;
+            font-size: 14px;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .summary-grid {
+            display: table;
+            width: 100%;
+            border-spacing: 10px;
+            margin: 0 -10px 20px -10px;
+        }
+
+        .summary-item {
+            display: table-cell;
+            width: 25%;
+            background: #f9fafb;
+            border-radius: 10px;
+            padding: 16px;
+            vertical-align: top;
+        }
+
+        .summary-title {
+            color: #6b7280;
+            font-size: 12px;
+            margin-bottom: 6px;
+        }
+
+        .summary-value {
+            color: #111827;
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .section {
+            margin-top: 28px;
+        }
+
+        .section h2 {
+            margin: 0 0 14px 0;
+            color: #111827;
+            font-size: 20px;
+        }
+
+        .finding {
+            border: 1px solid #e5e7eb;
+            border-radius: 10px;
+            padding: 18px;
+            margin-bottom: 14px;
+            background: #ffffff;
+        }
+
+        .finding-title {
+            font-size: 17px;
+            font-weight: bold;
+            color: #111827;
+            margin-bottom: 10px;
+        }
+
+        .field {
+            margin: 7px 0;
+            font-size: 14px;
+            line-height: 1.55;
+        }
+
+        .label {
+            font-weight: bold;
+            color: #374151;
+        }
+
+        .code {
+            margin-top: 10px;
+            padding: 14px;
+            border-radius: 8px;
+            background: #111827;
+            color: #e5e7eb;
+            font-family: Consolas, Monaco, monospace;
+            font-size: 12px;
+            line-height: 1.55;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+        }
+
+        .analysis {
+            background: #f9fafb;
+            border-left: 4px solid #4f46e5;
+            padding: 16px;
+            border-radius: 8px;
+            white-space: pre-wrap;
+            line-height: 1.65;
+            font-size: 14px;
+        }
+
+        .fix {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 10px;
+            padding: 16px;
+            margin-top: 12px;
+        }
+
+        .note {
+            background: #fffbeb;
+            border: 1px solid #fde68a;
+            border-radius: 10px;
+            padding: 15px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        .footer {
+            margin-top: 25px;
+            padding-top: 20px;
+            border-top: 1px solid #e5e7eb;
+            color: #6b7280;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+    </style>
 </head>
 
-<body style="
-    margin:0;
-    padding:0;
-    background:#f3f4f6;
-    font-family:Arial,Helvetica,sans-serif;
-    color:#111827;
-">
+<body>
+<div class="container">
+<div class="card">
 
-<div style="
-    max-width:800px;
-    margin:30px auto;
-    background:#ffffff;
-    border-radius:14px;
-    overflow:hidden;
-">
+<div class="header">
+    <h1>SentinelForge AI</h1>
+    <p>Automated Repository Security Analysis Report</p>
+</div>
 
-    <!-- HEADER -->
+<div class="content">
+"""
+    )
 
-    <div style="
-        padding:30px;
-        background:#111827;
-        color:#ffffff;
-    ">
+    # ========================================================
+    # INTRO
+    # ========================================================
 
-        <h1 style="
-            margin:0;
-            font-size:28px;
-        ">
-            SentinelForge AI
-        </h1>
+    if normalized_role == "student":
+        intro_text = (
+            "Your repository was analyzed by SentinelForge AI. "
+            "This report explains the detected security issues "
+            "in a simple and educational manner."
+        )
+    else:
+        intro_text = (
+            "Your repository was analyzed by SentinelForge AI "
+            "using automated security scanning, risk assessment "
+            "and AI-assisted security analysis."
+        )
 
-        <p style="
-            margin:8px 0 0;
-            color:#d1d5db;
-        ">
-            Security Analysis Report
-        </p>
+    html_parts.append(
+        f"""
+<p style="font-size:15px; line-height:1.7;">
+    {intro_text}
+</p>
+"""
+    )
 
-    </div>
+    # ========================================================
+    # REPOSITORY SUMMARY
+    # ========================================================
 
+    html_parts.append(
+        f"""
+<div class="section">
+    <h2>Repository Summary</h2>
 
-    <!-- SUMMARY -->
+    <div class="summary-grid">
 
-    <div style="padding:30px;">
-
-        <h2>Scan Summary</h2>
-
-        <p>
-            <strong>Repository:</strong>
-            {escape(str(filename))}
-        </p>
-
-        <p>
-            <strong>Overall Risk:</strong>
-            {escape(str(overall_level))}
-        </p>
-
-        <p>
-            <strong>Risk Score:</strong>
-            {escape(str(overall_score))}/10
-        </p>
-
-        <p>
-            <strong>Total Findings:</strong>
-            {escape(str(total_findings))}
-        </p>
-
-
-        <!-- COUNTS -->
-
-        <table style="
-            width:100%;
-            border-collapse:collapse;
-            margin-top:20px;
-        ">
-
-            <tr>
-
-                <td style="
-                    padding:15px;
-                    border:1px solid #e5e7eb;
-                ">
-                    <strong>Critical</strong><br>
-                    {critical}
-                </td>
-
-                <td style="
-                    padding:15px;
-                    border:1px solid #e5e7eb;
-                ">
-                    <strong>High</strong><br>
-                    {high}
-                </td>
-
-                <td style="
-                    padding:15px;
-                    border:1px solid #e5e7eb;
-                ">
-                    <strong>Medium</strong><br>
-                    {medium}
-                </td>
-
-                <td style="
-                    padding:15px;
-                    border:1px solid #e5e7eb;
-                ">
-                    <strong>Low</strong><br>
-                    {low}
-                </td>
-
-            </tr>
-
-        </table>
-
-
-        <!-- SECURITY FINDINGS -->
-
-        <h2 style="
-            margin-top:35px;
-        ">
-            Security Findings
-        </h2>
-
-        {findings_html}
-
-
-        <!-- RISK ASSESSMENT -->
-
-        <h2 style="
-            margin-top:35px;
-        ">
-            Risk Assessment
-        </h2>
-
-        {risk_html}
-
-
-        <!-- FOOTER -->
-
-        <div style="
-            margin-top:30px;
-            padding-top:20px;
-            border-top:1px solid #e5e7eb;
-            color:#6b7280;
-            font-size:13px;
-        ">
-
-            <p>
-                This report was automatically generated by
-                SentinelForge AI.
-            </p>
-
-            <p>
-                The report provides security analysis and
-                recommendations. Review findings before
-                deploying code to production.
-            </p>
-
+        <div class="summary-item">
+            <div class="summary-title">Repository</div>
+            <div class="summary-value"
+                 style="font-size:15px;">
+                {filename}
+            </div>
         </div>
 
+        <div class="summary-item">
+            <div class="summary-title">Vulnerabilities</div>
+            <div class="summary-value">
+                {_safe(len(findings))}
+            </div>
+        </div>
+
+        <div class="summary-item">
+            <div class="summary-title">Risk Score</div>
+            <div class="summary-value">
+                {_safe(overall_score)}
+            </div>
+        </div>
+
+        <div class="summary-item">
+            <div class="summary-title">Risk Level</div>
+            <div class="summary-value"
+                 style="font-size:16px;">
+                {_safe(overall_level)}
+            </div>
+        </div>
+
+    </div>
+</div>
+"""
+    )
+
+    # ========================================================
+    # SEVERITY SUMMARY
+    # ========================================================
+
+    html_parts.append(
+        f"""
+<div class="section">
+    <h2>Severity Summary</h2>
+
+    <div class="summary-grid">
+
+        <div class="summary-item">
+            <div class="summary-title">Critical</div>
+            <div class="summary-value">
+                {_safe(critical_count)}
+            </div>
+        </div>
+
+        <div class="summary-item">
+            <div class="summary-title">High</div>
+            <div class="summary-value">
+                {_safe(high_count)}
+            </div>
+        </div>
+
+        <div class="summary-item">
+            <div class="summary-title">Medium</div>
+            <div class="summary-value">
+                {_safe(medium_count)}
+            </div>
+        </div>
+
+        <div class="summary-item">
+            <div class="summary-title">Low</div>
+            <div class="summary-value">
+                {_safe(low_count)}
+            </div>
+        </div>
+
+    </div>
+</div>
+"""
+    )
+
+    # ========================================================
+    # VULNERABILITY DETAILS
+    # ========================================================
+
+    html_parts.append(
+        """
+<div class="section">
+    <h2>Security Findings</h2>
+"""
+    )
+
+    if not findings:
+
+        html_parts.append(
+            """
+<div class="note">
+    No security vulnerabilities were detected during
+    the security scanning stage.
+</div>
+"""
+        )
+
+    else:
+
+        for index, finding in enumerate(
+            findings,
+            start=1,
+        ):
+
+            if not isinstance(
+                finding,
+                dict,
+            ):
+                continue
+
+            assessment = {}
+
+            if (
+                index - 1
+                < len(risk_assessments)
+            ):
+                candidate = risk_assessments[
+                    index - 1
+                ]
+
+                if isinstance(
+                    candidate,
+                    dict,
+                ):
+                    assessment = candidate
+
+            # ------------------------------------------------
+            # BASIC INFORMATION
+            # ------------------------------------------------
+
+            check_id = _get_finding_value(
+                finding,
+                "check_id",
+                "Unknown",
+            )
+
+            path = _get_finding_value(
+                finding,
+                "path",
+                "Unknown",
+            )
+
+            start = finding.get(
+                "start",
+                {},
+            )
+
+            if not isinstance(
+                start,
+                dict,
+            ):
+                start = {}
+
+            line = start.get(
+                "line",
+                _get_finding_value(
+                    finding,
+                    "line",
+                    "Unknown",
+                ),
+            )
+
+            extra = finding.get(
+                "extra",
+                {},
+            )
+
+            if not isinstance(
+                extra,
+                dict,
+            ):
+                extra = {}
+
+            message = extra.get(
+                "message",
+                "Security issue detected.",
+            )
+
+            severity = (
+                assessment.get(
+                    "severity",
+                    extra.get(
+                        "severity",
+                        "Unknown",
+                    ),
+                )
+            )
+
+            vulnerability_type = assessment.get(
+                "vulnerability_type",
+                extra.get(
+                    "vulnerability_class",
+                    "Security vulnerability",
+                ),
+            )
+
+            cwe = assessment.get(
+                "cwe",
+                "",
+            )
+
+            risk_score = assessment.get(
+                "risk_score",
+                "",
+            )
+
+            risk_level = assessment.get(
+                "risk_level",
+                "",
+            )
+
+            impact = assessment.get(
+                "impact",
+                "",
+            )
+
+            exploitability = assessment.get(
+                "exploitability",
+                "",
+            )
+
+            recommendation = assessment.get(
+                "recommendation",
+                "",
+            )
+
+            source_code = finding.get(
+                "source_code",
+                "",
+            )
+
+            # ------------------------------------------------
+            # STUDENT REPORT
+            # ------------------------------------------------
+
+            if normalized_role == "student":
+
+                html_parts.append(
+                    f"""
+<div class="finding">
+
+    <div class="finding-title">
+        Vulnerability {index}:
+        {_safe(vulnerability_type)}
+    </div>
+
+    <div class="field">
+        <span class="label">Where:</span>
+        {_safe(path)}
+        at line
+        {_safe(line)}
+    </div>
+
+    <div class="field">
+        <span class="label">What happened:</span>
+        {_safe(message)}
+    </div>
+
+    <div class="field">
+        <span class="label">Why it matters:</span>
+        {_safe(impact)}
+    </div>
+
+    <div class="field">
+        <span class="label">Possible attack path:</span>
+        {_safe(exploitability)}
+    </div>
+
+    <div class="field">
+        <span class="label">How to prevent it:</span>
+        {_safe(recommendation)}
+    </div>
+
+    <div class="field">
+        <span class="label">Semgrep rule:</span>
+        {_safe(check_id)}
+    </div>
+
+"""
+                )
+
+                if source_code:
+                    html_parts.append(
+                        f"""
+    <div class="field">
+        <span class="label">
+            Relevant source context:
+        </span>
+    </div>
+
+    <div class="code">
+{_safe(source_code)}
+    </div>
+"""
+                    )
+
+                html_parts.append(
+                    """
+</div>
+"""
+                )
+
+            # ------------------------------------------------
+            # DEVELOPER REPORT
+            # ------------------------------------------------
+
+            else:
+
+                html_parts.append(
+                    f"""
+<div class="finding">
+
+    <div class="finding-title">
+        Finding {index}:
+        {_safe(vulnerability_type)}
+    </div>
+
+    <div class="field">
+        <span class="label">
+            Semgrep Rule:
+        </span>
+        {_safe(check_id)}
+    </div>
+
+    <div class="field">
+        <span class="label">
+            Message:
+        </span>
+        {_safe(message)}
+    </div>
+
+    <div class="field">
+        <span class="label">
+            File:
+        </span>
+        {_safe(path)}
+    </div>
+
+    <div class="field">
+        <span class="label">
+            Line:
+        </span>
+        {_safe(line)}
+    </div>
+
+    <div class="field">
+        <span class="label">
+            Severity:
+        </span>
+        {_safe(severity)}
+    </div>
+
+    <div class="field">
+        <span class="label">
+            CWE:
+        </span>
+        {_safe(cwe)}
+    </div>
+
+    <div class="field">
+        <span class="label">
+            Risk Score:
+        </span>
+        {_safe(risk_score)}
+    </div>
+
+    <div class="field">
+        <span class="label">
+            Risk Level:
+        </span>
+        {_safe(risk_level)}
+    </div>
+
+    <div class="field">
+        <span class="label">
+            Impact:
+        </span>
+        {_safe(impact)}
+    </div>
+
+    <div class="field">
+        <span class="label">
+            Exploitability:
+        </span>
+        {_safe(exploitability)}
+    </div>
+
+    <div class="field">
+        <span class="label">
+            Recommended Remediation:
+        </span>
+        {_safe(recommendation)}
+    </div>
+
+"""
+                )
+
+                if source_code:
+                    html_parts.append(
+                        f"""
+    <div class="field">
+        <span class="label">
+            Source Context:
+        </span>
+    </div>
+
+    <div class="code">
+{_safe(source_code)}
+    </div>
+"""
+                    )
+
+                html_parts.append(
+                    """
+</div>
+"""
+                )
+
+    html_parts.append(
+        """
+</div>
+"""
+    )
+
+    # ========================================================
+    # AI ANALYSIS
+    # ========================================================
+
+    if ai_analysis:
+
+        html_parts.append(
+            f"""
+<div class="section">
+    <h2>
+        AI Security Analysis
+    </h2>
+
+    <div class="analysis">
+{_safe(ai_analysis)}
+    </div>
+</div>
+"""
+        )
+
+    # ========================================================
+    # AUTO-FIX SUMMARY
+    # ========================================================
+
+    html_parts.append(
+        """
+<div class="section">
+    <h2>AI Auto-Fix</h2>
+"""
+    )
+
+    successful_fixes = 0
+
+    for fix in fixes:
+
+        if not isinstance(
+            fix,
+            dict,
+        ):
+            continue
+
+        success = bool(
+            fix.get(
+                "success",
+                False,
+            )
+        )
+
+        if success:
+            successful_fixes += 1
+
+    if successful_fixes:
+
+        html_parts.append(
+            f"""
+<div class="fix">
+
+    <div class="field">
+        <span class="label">
+            Auto-Fix Results:
+        </span>
+        {_safe(successful_fixes)}
+        security fix(s) were generated.
+    </div>
+
+    <div class="field">
+        SentinelForge AI generated corrected copies
+        of affected source files. The original uploaded
+        repository remains unchanged.
+    </div>
+
+    <div class="field">
+        <strong>
+            Important:
+        </strong>
+        The generated fixes are not described as
+        security-verified because Phase 4 does not
+        perform a second security scan.
     </div>
 
 </div>
+"""
+        )
+
+    else:
+
+        html_parts.append(
+            """
+<div class="note">
+    No AI-generated fix was included in this report.
+</div>
+"""
+        )
+
+    html_parts.append(
+        """
+</div>
+"""
+    )
+
+    # ========================================================
+    # VALIDATION NOTICE
+    # ========================================================
+
+    html_parts.append(
+        """
+<div class="section">
+    <h2>Validation Status</h2>
+
+    <div class="note">
+        SentinelForge AI completed its security analysis,
+        risk assessment and AI remediation preparation.
+        Phase 4 does not perform a second security scan
+        after auto-fix generation, so the generated fixes
+        are not claimed as security-verified.
+    </div>
+</div>
+"""
+    )
+
+    # ========================================================
+    # FOOTER
+    # ========================================================
+
+    html_parts.append(
+        """
+<div class="footer">
+    <strong>SentinelForge AI</strong><br>
+    Autonomous AI-powered repository security analysis.<br>
+    This report was generated automatically.
+</div>
+
+</div>
+</div>
+</div>
 
 </body>
-
 </html>
 """
+    )
 
-    return html
+    return "".join(html_parts)

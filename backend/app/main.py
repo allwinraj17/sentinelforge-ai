@@ -1,199 +1,403 @@
+from __future__ import annotations
+
 import io
 import json
+import zipfile
 from pathlib import Path
+from typing import Any
 
-from fastapi import (
-    FastAPI,
-    UploadFile,
-    File,
-    HTTPException,
-    Form,
-)
-
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, EmailStr
-
-# ============================================================
-# EMAIL AGENT
-# ============================================================
-from app.agents.email_agent import (
-    generate_security_report_html,
-)
-
-from app.services.email_service import (
-    send_security_report,
-)
-
-# ============================================================
-# AUTO-FIX AGENT
-# ============================================================
-from app.agents.auto_fix_agent import (
-    generate_fix,
-)
-
-from app.services.code_context import (
-    get_code_context,
-)
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-from app.config import settings
-
-# ============================================================
-# DATABASE
-# ============================================================
-from app.database import (
-    engine,
-    Base,
-)
 
 from app import models
-
-# ============================================================
-# SCANNER
-# ============================================================
+from app.agents.auto_fix_agent import generate_fix
+from app.ai_service import analyze_security_findings
+from app.config import settings
+from app.database import Base, engine
+from app.risk_engine import assess_findings, calculate_overall_risk
 from app.scanner import (
+    cleanup_temp,
     extract_zip_to_temp,
     run_semgrep_scan,
-    cleanup_temp,
 )
+from app.services.code_context import get_code_context
+
 
 # ============================================================
-# AI ANALYSIS
+# APPLICATION
 # ============================================================
-from app.schemas import (
-    AIAnalyzeRequest,
-)
 
-from app.ai_service import (
-    analyze_with_groq,
-)
-
-# ============================================================
-# RISK ENGINE
-# ============================================================
-from app.risk_engine import (
-    assess_findings,
-    calculate_overall_risk,
-)
-
-# ============================================================
-# FASTAPI APPLICATION
-# ============================================================
 app = FastAPI(
     title="SentinelForge AI",
-    description="Multi-Agent Software Code Security Analysis Platform",
-    version="1.0.0",
+    description=(
+        "Autonomous AI-powered repository security "
+        "analysis and remediation platform."
+    ),
+    version="4.0.0",
 )
 
+
 # ============================================================
-# CORS CONFIGURATION
+# DATABASE INITIALIZATION
 # ============================================================
-allowed_origins = [
+
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as exc:
+    print(
+        f"Database initialization warning: {exc}"
+    )
+
+
+# ============================================================
+# CORS
+# ============================================================
+
+default_origins = [
     "https://sentinelforge-ai.vercel.app",
     "http://localhost:5173",
     "http://localhost:3000",
 ]
 
+configured_origins = getattr(
+    settings,
+    "cors_origins",
+    None,
+)
+
+if isinstance(
+    configured_origins,
+    list,
+):
+    allowed_origins = list(
+        dict.fromkeys(
+            default_origins + configured_origins
+        )
+    )
+else:
+    allowed_origins = default_origins
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"^https://sentinelforge(?:-[a-zA-Z0-9]+)*\.vercel\.app$",
-    allow_credentials=False,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-print("============================================================")
-print("SentinelForge AI - CORS Configuration")
-print("============================================================")
-
-for origin in allowed_origins:
-    print(f"Allowed Origin: {origin}")
-
-print("============================================================")
 
 # ============================================================
-# DATABASE
+# CONSTANTS
 # ============================================================
-Base.metadata.create_all(
-    bind=engine
-)
+
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def _normalize_role(role: str) -> str:
+    """
+    Normalize the user role.
+    """
+    value = str(
+        role or ""
+    ).strip().lower()
+
+    if value not in {
+        "student",
+        "developer",
+    }:
+        raise ValueError(
+            "Role must be either 'student' or 'developer'."
+        )
+
+    return value
+
+
+def _validate_email(email: str) -> str:
+    """
+    Basic backend validation for email.
+    Frontend performs user-friendly validation.
+    """
+    value = str(
+        email or ""
+    ).strip()
+
+    if not value:
+        raise ValueError(
+            "Email address is required."
+        )
+
+    if "@" not in value:
+        raise ValueError(
+            "Invalid email address."
+        )
+
+    return value
+
+
+def _get_line_from_finding(
+    finding: dict[str, Any],
+) -> int | None:
+    """
+    Safely extract the vulnerability line number.
+    """
+    start = finding.get(
+        "start",
+        {},
+    )
+
+    if isinstance(
+        start,
+        dict,
+    ):
+        line = start.get(
+            "line"
+        )
+
+        if isinstance(
+            line,
+            int,
+        ):
+            return line
+
+        try:
+            return int(line)
+        except (
+            TypeError,
+            ValueError,
+        ):
+            pass
+
+    line = finding.get(
+        "line"
+    )
+
+    if isinstance(
+        line,
+        int,
+    ):
+        return line
+
+    try:
+        return int(line)
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return None
+
+
+def _safe_finding_copy(
+    finding: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Convert scanner output into a JSON-safe dictionary.
+
+    Existing scanner data is preserved.
+    """
+    try:
+        return json.loads(
+            json.dumps(
+                finding,
+                default=str,
+            )
+        )
+    except Exception:
+        return {
+            "check_id": finding.get(
+                "check_id",
+                "unknown",
+            ),
+            "path": finding.get(
+                "path",
+                "unknown",
+            ),
+            "extra": finding.get(
+                "extra",
+                {},
+            ),
+        }
+
+
+def _build_stage(
+    stage_id: str,
+    title: str,
+    status: str,
+    message: str,
+) -> dict[str, str]:
+    """
+    Create a pipeline stage object.
+    """
+    return {
+        "id": stage_id,
+        "title": title,
+        "status": status,
+        "message": message,
+    }
+
 
 # ============================================================
 # ROOT
 # ============================================================
+
 @app.get("/")
-async def read_root():
+async def root():
     return {
-        "message": "SentinelForge AI backend is running",
-        "environment": settings.environment,
-        "cors": "enabled",
+        "success": True,
+        "service": "SentinelForge AI",
+        "version": "4.0.0",
+        "message": "SentinelForge AI backend is running.",
     }
 
 
 # ============================================================
-# HEALTH CHECK
+# HEALTH
 # ============================================================
+
 @app.get("/health")
-async def health_check():
+async def health():
     return {
         "status": "ok",
         "service": "sentinelforge-ai-backend",
-        "environment": settings.environment,
+        "environment": getattr(
+            settings,
+            "environment",
+            "development",
+        ),
+        "version": "4.0.0",
     }
 
 
 # ============================================================
-# PHASE 1 + PHASE 2 + PHASE 3
-# UPLOAD + SECURITY SCAN
+# PHASE 4 MASTER PIPELINE
 # ============================================================
-@app.post("/scan/upload")
-async def upload_and_scan(
+
+@app.post("/scan/start")
+async def start_autonomous_scan(
+    role: str = Form(...),
+    email: str = Form(...),
     file: UploadFile = File(...),
 ):
     """
-    Upload ZIP repository.
+    SentinelForge AI Phase 4 autonomous security pipeline.
 
-    Phase 1:
+    Pipeline:
+
+        Repository received
+              ↓
+        ZIP validation/extraction
+              ↓
         Semgrep security scan
-
-    Phase 2:
+              ↓
         Risk assessment
-
-    Phase 3:
-        Attach source code context
+              ↓
+        Groq AI analysis
+              ↓
+        AI Auto-Fix
+              ↓
+        Validation preparation
+              ↓
+        Return complete results
 
     IMPORTANT:
-        The uploaded repository is never modified.
+        Phase 4 does NOT run a second Semgrep scan after
+        Auto-Fix generation.
+
+    The original uploaded repository is never modified.
     """
 
     # ========================================================
-    # VALIDATE FILE
+    # INITIAL VALIDATION
     # ========================================================
+
+    try:
+        normalized_role = _normalize_role(
+            role
+        )
+
+        normalized_email = _validate_email(
+            email
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=str(exc),
+        ) from exc
 
     if not file.filename:
         raise HTTPException(
             status_code=400,
-            detail="No filename was provided.",
+            detail="Repository ZIP file is required.",
         )
 
-    filename = file.filename.strip()
+    original_filename = Path(
+        file.filename
+    ).name
 
-    if not filename.lower().endswith(".zip"):
+    if not original_filename.lower().endswith(
+        ".zip"
+    ):
         raise HTTPException(
             status_code=400,
-            detail="Only .zip files are supported.",
+            detail="Only ZIP repository files are supported.",
         )
+
+    stages: list[dict[str, str]] = [
+        _build_stage(
+            "repository",
+            "Repository Received",
+            "completed",
+            "Repository ZIP received successfully.",
+        ),
+        _build_stage(
+            "extract",
+            "Repository Extraction",
+            "pending",
+            "",
+        ),
+        _build_stage(
+            "semgrep",
+            "Security Detection",
+            "pending",
+            "",
+        ),
+        _build_stage(
+            "risk",
+            "Risk Assessment",
+            "pending",
+            "",
+        ),
+        _build_stage(
+            "ai",
+            "AI Security Analysis",
+            "pending",
+            "",
+        ),
+        _build_stage(
+            "fix",
+            "AI Auto-Fix",
+            "pending",
+            "",
+        ),
+        _build_stage(
+            "validation",
+            "Validation Preparation",
+            "pending",
+            "",
+        ),
+    ]
 
     extract_dir = None
 
     try:
-
         # ====================================================
-        # READ UPLOADED FILE
+        # READ UPLOAD
         # ====================================================
 
         contents = await file.read()
@@ -201,126 +405,568 @@ async def upload_and_scan(
         if not contents:
             raise HTTPException(
                 status_code=400,
-                detail="The uploaded ZIP file is empty.",
+                detail="Uploaded ZIP file is empty.",
             )
 
-        # ====================================================
-        # EXTRACT ZIP
-        # ====================================================
-
-        try:
-
-            extract_dir = extract_zip_to_temp(
-                contents
-            )
-
-        except ValueError as e:
-
+        if len(contents) > MAX_UPLOAD_SIZE:
             raise HTTPException(
-                status_code=400,
-                detail=str(e),
-            )
-
-        except Exception as e:
-
-            raise HTTPException(
-                status_code=400,
+                status_code=413,
                 detail=(
-                    "Unable to extract ZIP file: "
-                    f"{str(e)}"
+                    "Repository ZIP exceeds the "
+                    "50 MB upload limit."
                 ),
             )
 
         # ====================================================
-        # PHASE 1
-        # SEMGREP SECURITY SCAN
+        # BASIC ZIP VALIDATION
         # ====================================================
 
         try:
+            with zipfile.ZipFile(
+                io.BytesIO(contents)
+            ) as archive:
 
-            findings = run_semgrep_scan(
-                extract_dir
-            )
+                if archive.testzip() is not None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Uploaded ZIP archive is corrupted.",
+                    )
 
-        except Exception as e:
-
+        except zipfile.BadZipFile as exc:
             raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Security scan failed: "
-                    f"{str(e)}"
-                ),
+                status_code=400,
+                detail="Uploaded file is not a valid ZIP archive.",
+            ) from exc
+
+        # ====================================================
+        # STAGE 2 - EXTRACTION
+        # ====================================================
+
+        stages[1] = _build_stage(
+            "extract",
+            "Repository Extraction",
+            "running",
+            "Safely extracting repository contents.",
+        )
+
+        extract_dir = extract_zip_to_temp(
+            contents
+        )
+
+        stages[1] = _build_stage(
+            "extract",
+            "Repository Extraction",
+            "completed",
+            "Repository extracted successfully.",
+        )
+
+        # ====================================================
+        # STAGE 3 - SEMGREP
+        # ====================================================
+
+        stages[2] = _build_stage(
+            "semgrep",
+            "Security Detection",
+            "running",
+            "Semgrep is scanning the repository for security issues.",
+        )
+
+        findings = run_semgrep_scan(
+            extract_dir
+        )
+
+        if not isinstance(
+            findings,
+            list,
+        ):
+            findings = []
+
+        safe_findings: list[
+            dict[str, Any]
+        ] = []
+
+        # Add source context to every finding.
+        for finding in findings:
+
+            if not isinstance(
+                finding,
+                dict,
+            ):
+                continue
+
+            current_finding = _safe_finding_copy(
+                finding
             )
 
+            path = current_finding.get(
+                "path",
+                "",
+            )
+
+            line = _get_line_from_finding(
+                current_finding
+            )
+
+            source_code = ""
+
+            if path and line:
+                try:
+                    source_code = get_code_context(
+                        extract_dir,
+                        str(path),
+                        line,
+                    )
+                except Exception as exc:
+                    print(
+                        "Source context warning:",
+                        exc,
+                    )
+
+            current_finding[
+                "source_code"
+            ] = source_code
+
+            safe_findings.append(
+                current_finding
+            )
+
+        findings = safe_findings
+
+        stages[2] = _build_stage(
+            "semgrep",
+            "Security Detection",
+            "completed",
+            (
+                f"{len(findings)} "
+                f"security finding(s) detected."
+            ),
+        )
+
         # ====================================================
-        # PHASE 2
-        # RISK ASSESSMENT
+        # STAGE 4 - RISK ASSESSMENT
         # ====================================================
+
+        stages[3] = _build_stage(
+            "risk",
+            "Risk Assessment",
+            "running",
+            "Calculating vulnerability severity and risk.",
+        )
 
         try:
-
             risk_assessments = assess_findings(
                 findings
             )
-
-            overall_risk = calculate_overall_risk(
-                risk_assessments
-            )
-
-        except Exception as e:
-
+        except Exception as exc:
             raise HTTPException(
                 status_code=500,
                 detail=(
                     "Risk assessment failed: "
-                    f"{str(e)}"
+                    f"{exc}"
+                ),
+            ) from exc
+
+        try:
+            overall_risk = calculate_overall_risk(
+                risk_assessments
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Overall risk calculation failed: "
+                    f"{exc}"
+                ),
+            ) from exc
+
+        if not isinstance(
+            risk_assessments,
+            list,
+        ):
+            risk_assessments = []
+
+        if not isinstance(
+            overall_risk,
+            dict,
+        ):
+            overall_risk = {}
+
+        stages[3] = _build_stage(
+            "risk",
+            "Risk Assessment",
+            "completed",
+            "Risk assessment completed.",
+        )
+
+        # ====================================================
+        # STAGE 5 - GROQ AI ANALYSIS
+        # ====================================================
+
+        stages[4] = _build_stage(
+            "ai",
+            "AI Security Analysis",
+            "running",
+            "Groq AI is analyzing the detected vulnerabilities.",
+        )
+
+        ai_analysis = ""
+
+        try:
+            ai_analysis = analyze_security_findings(
+                findings=findings,
+                role=normalized_role,
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "AI security analysis failed: "
+                    f"{exc}"
+                ),
+            ) from exc
+
+        if not ai_analysis:
+            ai_analysis = (
+                "No AI analysis was generated."
+            )
+
+        stages[4] = _build_stage(
+            "ai",
+            "AI Security Analysis",
+            "completed",
+            "Groq AI security analysis completed.",
+        )
+
+        # ====================================================
+        # STAGE 6 - AI AUTO-FIX
+        # ====================================================
+
+        stages[5] = _build_stage(
+            "fix",
+            "AI Auto-Fix",
+            "running",
+            "Generating corrected copies for detected vulnerabilities.",
+        )
+
+        fixes: list[dict[str, Any]] = []
+
+        if not findings:
+
+            stages[5] = _build_stage(
+                "fix",
+                "AI Auto-Fix",
+                "skipped",
+                "No vulnerabilities require an AI-generated fix.",
+            )
+
+        else:
+
+            for index, finding in enumerate(
+                findings
+            ):
+
+                path = finding.get(
+                    "path",
+                )
+
+                source_code = finding.get(
+                    "source_code",
+                    "",
+                )
+
+                fix_result: dict[str, Any] = {
+                    "success": False,
+                    "finding_index": index,
+                    "original_path": path,
+                    "filename": (
+                        Path(str(path)).name
+                        if path
+                        else None
+                    ),
+                    "fixed_code": None,
+                    "error": None,
+                }
+
+                if not source_code:
+
+                    fix_result[
+                        "error"
+                    ] = (
+                        "Source context unavailable "
+                        "for this finding."
+                    )
+
+                    fixes.append(
+                        fix_result
+                    )
+
+                    continue
+
+                try:
+
+                    fixed_code = generate_fix(
+                        vulnerability=finding,
+                        source_code=source_code,
+                    )
+
+                    if not isinstance(
+                        fixed_code,
+                        str,
+                    ):
+                        raise ValueError(
+                            "AI Auto-Fix returned an invalid response."
+                        )
+
+                    fixed_code = fixed_code.strip()
+
+                    if not fixed_code:
+                        raise ValueError(
+                            "AI Auto-Fix returned empty corrected code."
+                        )
+
+                    fix_result[
+                        "success"
+                    ] = True
+
+                    fix_result[
+                        "fixed_code"
+                    ] = fixed_code
+
+                except Exception as exc:
+
+                    fix_result[
+                        "error"
+                    ] = str(exc)
+
+                fixes.append(
+                    fix_result
+                )
+
+            successful_fixes = sum(
+                1
+                for fix in fixes
+                if fix.get(
+                    "success"
+                )
+            )
+
+            failed_fixes = (
+                len(fixes)
+                - successful_fixes
+            )
+
+            stages[5] = _build_stage(
+                "fix",
+                "AI Auto-Fix",
+                "completed",
+                (
+                    f"{successful_fixes} fix(es) generated"
+                    f" and {failed_fixes} fix(es) failed."
                 ),
             )
 
         # ====================================================
-        # PHASE 3
-        # ATTACH SOURCE CODE CONTEXT
+        # STAGE 7 - VALIDATION PREPARATION
         # ====================================================
+
+        stages[6] = _build_stage(
+            "validation",
+            "Validation Preparation",
+            "running",
+            "Preparing corrected repository output.",
+        )
+
+        validation_status = (
+            "Validation preparation completed. "
+            "No second security scan was performed."
+        )
+
+        stages[6] = _build_stage(
+            "validation",
+            "Validation Preparation",
+            "completed",
+            validation_status,
+        )
+
+        # ====================================================
+        # FINAL RESPONSE
+        # ====================================================
+
+        return {
+            "success": True,
+            "filename": original_filename,
+            "role": normalized_role,
+            "email": normalized_email,
+            "findings_count": len(findings),
+            "findings": findings,
+            "risk_assessments": risk_assessments,
+            "overall_risk": overall_risk,
+            "ai_analysis": ai_analysis,
+            "fixes": fixes,
+            "validation_status": validation_status,
+            "pipeline_status": "completed",
+            "stages": stages,
+            "message": (
+                "Autonomous security analysis completed."
+            ),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception as exc:
+        print(
+            "Autonomous scan error:",
+            exc,
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Autonomous security analysis failed: "
+                f"{exc}"
+            ),
+        ) from exc
+
+    finally:
+
+        # ====================================================
+        # CLEAN TEMPORARY REPOSITORY
+        # ====================================================
+
+        if extract_dir:
+
+            try:
+                cleanup_temp(
+                    extract_dir
+                )
+            except Exception as exc:
+                print(
+                    "Cleanup warning:",
+                    exc,
+                )
+
+
+# ============================================================
+# LEGACY / INDIVIDUAL SCAN ENDPOINT
+# ============================================================
+
+@app.post("/scan/upload")
+async def upload_and_scan(
+    file: UploadFile = File(...),
+):
+    """
+    Backward-compatible repository scanning endpoint.
+
+    Phase 4 frontend should use /scan/start instead.
+    """
+
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Repository ZIP file is required.",
+        )
+
+    filename = Path(
+        file.filename
+    ).name
+
+    if not filename.lower().endswith(
+        ".zip"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Only ZIP repository files are supported.",
+        )
+
+    extract_dir = None
+
+    try:
+
+        contents = await file.read()
+
+        if not contents:
+            raise HTTPException(
+                status_code=400,
+                detail="Uploaded ZIP file is empty.",
+            )
+
+        if len(contents) > MAX_UPLOAD_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    "Repository ZIP exceeds the "
+                    "50 MB upload limit."
+                ),
+            )
+
+        extract_dir = extract_zip_to_temp(
+            contents
+        )
+
+        findings = run_semgrep_scan(
+            extract_dir
+        )
+
+        if not isinstance(
+            findings,
+            list,
+        ):
+            findings = []
+
+        safe_findings = []
 
         for finding in findings:
 
-            try:
+            if not isinstance(
+                finding,
+                dict,
+            ):
+                continue
 
-                file_path = finding.get(
-                    "path"
-                )
+            current_finding = _safe_finding_copy(
+                finding
+            )
 
-                line_number = (
-                    finding
-                    .get("start", {})
-                    .get("line")
-                )
+            path = current_finding.get(
+                "path",
+                "",
+            )
 
-                if file_path and line_number:
+            line = _get_line_from_finding(
+                current_finding
+            )
 
-                    finding["source_code"] = (
-                        get_code_context(
-                            extract_dir,
-                            file_path,
-                            line_number,
-                        )
+            source_code = ""
+
+            if path and line:
+
+                try:
+                    source_code = get_code_context(
+                        extract_dir,
+                        str(path),
+                        line,
                     )
+                except Exception:
+                    source_code = ""
 
-                else:
+            current_finding[
+                "source_code"
+            ] = source_code
 
-                    finding["source_code"] = ""
+            safe_findings.append(
+                current_finding
+            )
 
-            except Exception as e:
+        findings = safe_findings
 
-                finding["source_code"] = ""
+        risk_assessments = assess_findings(
+            findings
+        )
 
-                finding[
-                    "source_context_error"
-                ] = str(e)
-
-        # ====================================================
-        # RETURN RESULTS
-        # ====================================================
+        overall_risk = calculate_overall_risk(
+            risk_assessments
+        )
 
         return {
             "success": True,
@@ -331,54 +977,64 @@ async def upload_and_scan(
             "overall_risk": overall_risk,
         }
 
-    finally:
+    except HTTPException:
+        raise
 
-        # ====================================================
-        # CLEAN TEMP FILES
-        # ====================================================
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Repository scan failed: "
+                f"{exc}"
+            ),
+        ) from exc
+
+    finally:
 
         if extract_dir:
 
             try:
-
                 cleanup_temp(
                     extract_dir
                 )
-
             except Exception:
                 pass
 
 
 # ============================================================
-# AI ANALYSIS
+# LEGACY AI ANALYSIS ENDPOINT
 # ============================================================
+
 @app.post("/scan/analyze")
-async def analyze_findings(
-    request: AIAnalyzeRequest,
+async def analyze_scan(
+    payload: dict,
 ):
     """
-    Analyze security findings using Groq.
+    Backward-compatible AI analysis endpoint.
+
+    Phase 4 frontend should use /scan/start instead.
     """
 
-    # ========================================================
-    # VALIDATE FINDINGS
-    # ========================================================
+    findings = payload.get(
+        "findings",
+        [],
+    )
 
-    if not request.findings:
-
-        raise HTTPException(
-            status_code=400,
-            detail="No findings to analyze.",
-        )
-
-    # ========================================================
-    # CALL GROQ
-    # ========================================================
+    role = payload.get(
+        "role",
+        "developer",
+    )
 
     try:
 
-        analysis = await analyze_with_groq(
-            request.findings
+        normalized_role = _normalize_role(
+            role
+        )
+
+        analysis = analyze_security_findings(
+            findings=findings,
+            role=normalized_role,
         )
 
         return {
@@ -386,336 +1042,36 @@ async def analyze_findings(
             "analysis": analysis,
         }
 
-    except Exception as e:
+    except Exception as exc:
 
         raise HTTPException(
             status_code=500,
             detail=(
                 "AI analysis failed: "
-                f"{str(e)}"
+                f"{exc}"
             ),
-        )
+        ) from exc
 
 
 # ============================================================
-# PHASE 3
-# AUTO-FIX AGENT
+# HEALTH / VERSION INFO
 # ============================================================
-@app.post("/scan/auto-fix")
-async def generate_auto_fix(
-    vulnerability: str = Form(...),
-    source_code: str = Form(...),
-):
-    """
-    Generate a secure fixed version of a vulnerable source file.
 
-    IMPORTANT:
-    - The original repository is NEVER modified.
-    - Groq-powered Auto-Fix Agent generates the corrected code.
-    - The backend creates the corrected code in memory.
-    - The corrected code is returned as JSON.
-    - App.jsx creates the downloadable file.
-    """
-
-    # ========================================================
-    # PARSE VULNERABILITY DATA
-    # ========================================================
-
-    try:
-
-        vulnerability_data = json.loads(
-            vulnerability
-        )
-
-    except json.JSONDecodeError:
-
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid vulnerability data.",
-        )
-
-    # ========================================================
-    # VALIDATE SOURCE CODE
-    # ========================================================
-
-    if not source_code.strip():
-
-        raise HTTPException(
-            status_code=400,
-            detail="Source code is required.",
-        )
-
-    # ========================================================
-    # CALL GROQ AUTO-FIX AGENT
-    # ========================================================
-
-    try:
-
-        fix_response = generate_fix(
-            vulnerability_data,
-            source_code,
-        )
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Auto-Fix Agent failed: "
-                f"{str(e)}"
-            ),
-        )
-
-    # ========================================================
-    # VALIDATE AI RESPONSE
-    # ========================================================
-
-    if not fix_response:
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Auto-Fix Agent returned "
-                "an empty response."
-            ),
-        )
-
-    fixed_code = str(
-        fix_response
-    ).strip()
-
-    # ========================================================
-    # SUPPORT FIXED_CODE FORMAT
-    # ========================================================
-
-    if "FIXED_CODE:" in fixed_code:
-
-        fixed_code = fixed_code.split(
-            "FIXED_CODE:",
-            1
-        )[1].strip()
-
-        if "EXPLANATION:" in fixed_code:
-
-            fixed_code = fixed_code.split(
-                "EXPLANATION:",
-                1
-            )[0].strip()
-
-    # ========================================================
-    # REMOVE MARKDOWN CODE FENCES
-    # ========================================================
-
-    if fixed_code.startswith("```"):
-
-        lines = fixed_code.splitlines()
-
-        # Remove first fence
-        if lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-
-        # Remove last fence
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-
-        fixed_code = "\n".join(
-            lines
-        ).strip()
-
-    # ========================================================
-    # CHECK IF AI FAILED
-    # ========================================================
-
-    invalid_values = [
-        "",
-        "NOT_AVAILABLE",
-        "NOT AVAILABLE",
-        "UNABLE_TO_FIX",
-        "UNABLE TO FIX",
-    ]
-
-    if fixed_code.strip().upper() in invalid_values:
-
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "Auto-Fix Agent could not "
-                "safely generate a fixed file."
-            ),
-        )
-
-    # ========================================================
-    # GET ORIGINAL FILE PATH
-    # ========================================================
-
-    original_path = vulnerability_data.get(
-        "path",
-        "fixed_code.txt",
-    )
-
-    original_path = str(
-        original_path
-    )
-
-    # ========================================================
-    # CREATE SAFE OUTPUT FILENAME
-    # ========================================================
-
-    original_name = Path(
-        original_path
-    ).name
-
-    original_stem = Path(
-        original_name
-    ).stem
-
-    original_suffix = Path(
-        original_name
-    ).suffix
-
-    if not original_suffix:
-        original_suffix = ".txt"
-
-    fixed_filename = (
-        f"{original_stem}_fixed"
-        f"{original_suffix}"
-    )
-
-    # ========================================================
-    # RETURN JSON RESPONSE
-    # ========================================================
-    #
-    # IMPORTANT:
-    # App.jsx expects JSON and reads:
-    #
-    # data.fixed_code
-    #
-    # Therefore DO NOT return StreamingResponse here.
-    #
-    # ========================================================
-
+@app.get("/phase4")
+async def phase4_info():
     return {
         "success": True,
-        "fixed_code": fixed_code,
-        "filename": fixed_filename,
-        "original_filename": original_name,
-        "repository_modified": False,
-        "message": "Secure fixed code generated successfully.",
+        "phase": "Phase 4",
+        "architecture": "Autonomous Security Pipeline",
+        "features": [
+            "Repository Upload",
+            "Safe ZIP Extraction",
+            "Semgrep Detection",
+            "Risk Assessment",
+            "Groq AI Analysis",
+            "AI Auto-Fix",
+            "Validation Preparation",
+            "Role-Based Reporting",
+        ],
+        "second_scan_after_fix": False,
     }
-
-
-# ============================================================
-# EMAIL REPORT REQUEST
-# ============================================================
-class EmailReportRequest(BaseModel):
-
-    email: EmailStr
-    filename: str
-    findings: list
-    risk_assessments: list
-    overall_risk: dict
-
-
-# ============================================================
-# PHASE 3
-# EMAIL SECURITY REPORT AGENT
-# ============================================================
-@app.post("/scan/email-report")
-async def email_security_report(
-    request: EmailReportRequest,
-):
-    """
-    Generate a professional security report
-    and send it to the user's email using Resend.
-    """
-
-    # ========================================================
-    # CHECK RESEND API KEY
-    # ========================================================
-
-    if not settings.resend_api_key:
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "RESEND_API_KEY is not configured."
-            ),
-        )
-
-    # ========================================================
-    # CHECK FINDINGS
-    # ========================================================
-
-    if request.findings is None:
-
-        raise HTTPException(
-            status_code=400,
-            detail="Findings are required.",
-        )
-
-    try:
-
-        # ====================================================
-        # EMAIL AGENT
-        # ====================================================
-
-        html_report = (
-            generate_security_report_html(
-                request.filename,
-                request.findings,
-                request.risk_assessments,
-                request.overall_risk,
-            )
-        )
-
-        # ====================================================
-        # EMAIL SUBJECT
-        # ====================================================
-
-        subject = (
-            "SentinelForge AI Security Report - "
-            f"{request.filename}"
-        )
-
-        # ====================================================
-        # SEND USING RESEND
-        # ====================================================
-
-        result = send_security_report(
-            str(request.email),
-            subject,
-            html_report,
-        )
-
-        # ====================================================
-        # SUCCESS
-        # ====================================================
-
-        return {
-            "success": True,
-            "message": (
-                "Security report sent successfully."
-            ),
-            "email": str(
-                request.email
-            ),
-            "filename": request.filename,
-            "email_id": (
-                result.get("id")
-                if isinstance(
-                    result,
-                    dict,
-                )
-                else None
-            ),
-        }
-
-    except Exception as e:
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Email Agent failed: "
-                f"{str(e)}"
-            ),
-        )

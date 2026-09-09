@@ -1,6 +1,7 @@
 """
-SentinelForge AI Services Package.
+SentinelForge AI Services
 
-Contains reusable services for report generation
-and other backend operations.
+Service modules used by the SentinelForge AI backend.
 """
+
+__all__ = []

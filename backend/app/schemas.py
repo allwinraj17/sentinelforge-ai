@@ -1,33 +1,121 @@
-from pydantic import BaseModel, EmailStr
-from datetime import datetime
 from typing import Any
 
-
-class UserCreate(BaseModel):
-    email: EmailStr
-    password: str
+from pydantic import BaseModel, EmailStr, Field
 
 
-class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
+# ============================================================
+# PHASE 4 - AUTONOMOUS SCAN REQUEST
+# ============================================================
+
+class AutonomousScanRequest(BaseModel):
+    """
+    Request data for the Phase 4 autonomous security workflow.
+
+    The repository ZIP itself is received separately through
+    FastAPI UploadFile. This model contains only the user-supplied
+    metadata required by the autonomous agent.
+    """
+
+    role: str = Field(
+        ...,
+        description="User role: student or developer.",
+    )
+
+    email: EmailStr = Field(
+        ...,
+        description="Email address for the security report.",
+    )
 
 
-class UserOut(BaseModel):
-    id: int
+# ============================================================
+# PHASE 4 - AI ANALYSIS RESULT
+# ============================================================
+
+class AIAnalysisResult(BaseModel):
+    """
+    Structured representation of an AI analysis result.
+    """
+
+    success: bool = True
+
+    analysis: str = ""
+
+
+# ============================================================
+# PHASE 4 - AUTO-FIX RESULT
+# ============================================================
+
+class AutoFixResult(BaseModel):
+    """
+    Result returned by the Auto-Fix Agent for one finding.
+    """
+
+    success: bool = True
+
+    finding_index: int
+
+    original_path: str | None = None
+
+    filename: str | None = None
+
+    fixed_code: str | None = None
+
+    error: str | None = None
+
+
+# ============================================================
+# PHASE 4 - PIPELINE STAGE RESULT
+# ============================================================
+
+class PipelineStageResult(BaseModel):
+    """
+    Represents the state of one autonomous pipeline stage.
+    """
+
+    id: str
+
+    title: str
+
+    status: str
+
+    message: str = ""
+
+
+# ============================================================
+# PHASE 4 - AUTONOMOUS SCAN RESPONSE
+# ============================================================
+
+class AutonomousScanResponse(BaseModel):
+    """
+    Complete response returned by the Phase 4 autonomous
+    backend pipeline.
+    """
+
+    success: bool
+
+    filename: str
+
+    role: str
+
     email: str
-    created_at: datetime
 
-    class Config:
-        from_attributes = True
+    findings_count: int
 
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-
-
-class AIAnalyzeRequest(BaseModel):
-    api_key: str
-    provider: str = "openai"
     findings: list[dict[str, Any]]
+
+    risk_assessments: list[dict[str, Any]]
+
+    overall_risk: dict[str, Any]
+
+    ai_analysis: str = ""
+
+    fixes: list[AutoFixResult] = []
+
+    validation_status: str = (
+        "Validation preparation completed. "
+        "No second security scan was performed."
+    )
+
+    pipeline_status: str = "completed"
+
+    stages: list[PipelineStageResult] = []
