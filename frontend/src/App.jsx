@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import emailjs from "@emailjs/browser";
 import { jsPDF } from "jspdf";
 import JSZip from "jszip";
@@ -24,51 +24,49 @@ const EMAILJS_PUBLIC_KEY =
 
 
 // ============================================================
-// DEFAULT PIPELINE
+// PROJECT TITLE
 // ============================================================
 
-const DEFAULT_STAGES = [
+const PROJECT_TITLE =
+  "A Multi-Agent System for Automated Software Repository Security Analysis";
+
+
+// ============================================================
+// PIPELINE STAGES
+// ============================================================
+
+const PIPELINE_STAGES = [
   {
     id: "repository",
     title: "Repository Received",
-    status: "pending",
-    message: "",
   },
   {
     id: "extract",
     title: "Repository Extraction",
-    status: "pending",
-    message: "",
   },
   {
     id: "semgrep",
     title: "Security Detection",
-    status: "pending",
-    message: "",
   },
   {
     id: "risk",
     title: "Risk Assessment",
-    status: "pending",
-    message: "",
-  },
-  {
-    id: "ai",
-    title: "AI Security Analysis",
-    status: "pending",
-    message: "",
   },
   {
     id: "fix",
     title: "AI Auto-Fix",
-    status: "pending",
-    message: "",
   },
   {
     id: "validation",
     title: "Validation Preparation",
-    status: "pending",
-    message: "",
+  },
+  {
+    id: "report",
+    title: "Report Preparation",
+  },
+  {
+    id: "email",
+    title: "Email Delivery",
   },
 ];
 
@@ -85,7 +83,10 @@ function normalizePath(path = "") {
 }
 
 
-function getSeverity(finding, assessment) {
+function getSeverity(
+  finding,
+  assessment
+) {
   return (
     assessment?.severity ||
     finding?.extra?.severity ||
@@ -94,7 +95,10 @@ function getSeverity(finding, assessment) {
 }
 
 
-function getVulnerabilityType(finding, assessment) {
+function getVulnerabilityType(
+  finding,
+  assessment
+) {
   return (
     assessment?.vulnerability_type ||
     finding?.extra?.metadata?.vulnerability_class ||
@@ -120,21 +124,26 @@ function getMessage(finding) {
 }
 
 
-function getCwe(finding, assessment) {
-  const cwe =
+function getCwe(
+  finding,
+  assessment
+) {
+  let cwe =
     assessment?.cwe ||
     finding?.extra?.metadata?.cwe ||
     "";
 
   if (Array.isArray(cwe)) {
-    return cwe.join(", ");
+    cwe = cwe.join(", ");
   }
 
   return cwe || "Not specified";
 }
 
 
-function getRiskScore(assessment) {
+function getRiskScore(
+  assessment
+) {
   return (
     assessment?.risk_score ??
     assessment?.score ??
@@ -143,7 +152,9 @@ function getRiskScore(assessment) {
 }
 
 
-function getRiskLevel(assessment) {
+function getRiskLevel(
+  assessment
+) {
   return (
     assessment?.risk_level ||
     assessment?.level ||
@@ -152,10 +163,15 @@ function getRiskLevel(assessment) {
 }
 
 
-function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
+function downloadBlob(
+  blob,
+  filename
+) {
+  const url =
+    URL.createObjectURL(blob);
 
-  const link = document.createElement("a");
+  const link =
+    document.createElement("a");
 
   link.href = url;
   link.download = filename;
@@ -187,37 +203,52 @@ function escapeHtml(value) {
 // ============================================================
 
 export default function App() {
-  // ----------------------------------------------------------
-  // INPUT
-  // ----------------------------------------------------------
-
-  const [role, setRole] = useState("student");
-  const [email, setEmail] = useState("");
-  const [selectedFile, setSelectedFile] = useState(null);
 
   // ----------------------------------------------------------
-  // STATE
+  // INPUT STATE
   // ----------------------------------------------------------
 
-  const [running, setRunning] = useState(false);
-  const [completed, setCompleted] = useState(false);
+  const [role, setRole] =
+    useState("student");
 
-  const [error, setError] = useState("");
-
-  const [scanData, setScanData] = useState(null);
-
-  const [stages, setStages] = useState(
-    DEFAULT_STAGES
-  );
-
-  const [emailStatus, setEmailStatus] =
+  const [email, setEmail] =
     useState("");
 
-  const [reportStatus, setReportStatus] =
+  const [selectedFile, setSelectedFile] =
+    useState(null);
+
+
+  // ----------------------------------------------------------
+  // ANALYSIS STATE
+  // ----------------------------------------------------------
+
+  const [running, setRunning] =
+    useState(false);
+
+  const [completed, setCompleted] =
+    useState(false);
+
+  const [error, setError] =
     useState("");
 
-  const [zipStatus, setZipStatus] =
+  const [scanData, setScanData] =
+    useState(null);
+
+
+  // ----------------------------------------------------------
+  // UI PROGRESS STATE
+  // ----------------------------------------------------------
+
+  const [progressStage, setProgressStage] =
+    useState(-1);
+
+  const [progressMessage, setProgressMessage] =
     useState("");
+
+
+  // ----------------------------------------------------------
+  // DELIVERY STATE
+  // ----------------------------------------------------------
 
   const [pdfDownloaded, setPdfDownloaded] =
     useState(false);
@@ -225,163 +256,157 @@ export default function App() {
   const [zipDownloaded, setZipDownloaded] =
     useState(false);
 
+  const [emailStatus, setEmailStatus] =
+    useState("");
 
-  // ----------------------------------------------------------
-  // DERIVED DATA
-  // ----------------------------------------------------------
+  const [pdfStatus, setPdfStatus] =
+    useState("");
 
-  const findings = scanData?.findings || [];
-
-  const riskAssessments =
-    scanData?.risk_assessments || [];
-
-  const overallRisk =
-    scanData?.overall_risk || {};
-
-  const aiAnalysis =
-    scanData?.ai_analysis || "";
-
-  const fixes =
-    scanData?.fixes || [];
-
-
-  const successfulFixCount = useMemo(() => {
-    return fixes.filter(
-      (item) => item?.success
-    ).length;
-  }, [fixes]);
-
-
-  const failedFixCount = useMemo(() => {
-    return fixes.filter(
-      (item) => !item?.success
-    ).length;
-  }, [fixes]);
-
-
-  const severityCounts = useMemo(() => {
-    const counts = {
-      CRITICAL: 0,
-      HIGH: 0,
-      MEDIUM: 0,
-      LOW: 0,
-      INFO: 0,
-    };
-
-    findings.forEach((finding, index) => {
-      const assessment =
-        riskAssessments[index] || {};
-
-      const severity = String(
-        getSeverity(
-          finding,
-          assessment
-        )
-      ).toUpperCase();
-
-      if (
-        Object.prototype.hasOwnProperty.call(
-          counts,
-          severity
-        )
-      ) {
-        counts[severity] += 1;
-      }
-    });
-
-    return counts;
-  }, [
-    findings,
-    riskAssessments,
-  ]);
+  const [zipStatus, setZipStatus] =
+    useState("");
 
 
   // ==========================================================
-  // FILE SELECT
+  // INPUT CHANGE
   // ==========================================================
 
   function handleFileChange(event) {
+
     const file =
-      event.target.files?.[0] || null;
+      event.target.files?.[0] ||
+      null;
 
     setSelectedFile(file);
 
     setError("");
+
     setCompleted(false);
 
     setScanData(null);
 
-    setStages(DEFAULT_STAGES);
+    setProgressStage(-1);
 
-    setEmailStatus("");
-    setReportStatus("");
-    setZipStatus("");
+    setProgressMessage("");
 
     setPdfDownloaded(false);
+
     setZipDownloaded(false);
+
+    setEmailStatus("");
+
+    setPdfStatus("");
+
+    setZipStatus("");
   }
 
 
   // ==========================================================
-  // START AUTONOMOUS ANALYSIS
+  // PROGRESS HELPER
+  // ==========================================================
+
+  function updateProgress(
+    stageIndex,
+    message
+  ) {
+
+    setProgressStage(
+      stageIndex
+    );
+
+    setProgressMessage(
+      message
+    );
+  }
+
+
+  // ==========================================================
+  // START ANALYSIS
   // ==========================================================
 
   async function startAutonomousAnalysis() {
+
     setError("");
 
     setCompleted(false);
 
     setScanData(null);
 
-    setEmailStatus("");
-    setReportStatus("");
-    setZipStatus("");
-
     setPdfDownloaded(false);
+
     setZipDownloaded(false);
 
+    setEmailStatus("");
+
+    setPdfStatus("");
+
+    setZipStatus("");
+
+
     // --------------------------------------------------------
-    // VALIDATE INPUT
+    // VALIDATE ROLE
     // --------------------------------------------------------
 
     if (!role) {
+
       setError(
         "Please select your role."
       );
+
       return;
     }
 
+
+    // --------------------------------------------------------
+    // VALIDATE EMAIL
+    // --------------------------------------------------------
+
     if (!email.trim()) {
+
       setError(
         "Please enter your email address."
       );
+
       return;
     }
 
+
     if (!email.includes("@")) {
+
       setError(
         "Please enter a valid email address."
       );
+
       return;
     }
 
+
+    // --------------------------------------------------------
+    // VALIDATE FILE
+    // --------------------------------------------------------
+
     if (!selectedFile) {
+
       setError(
         "Please upload a repository ZIP file."
       );
+
       return;
     }
+
 
     if (
       !selectedFile.name
         .toLowerCase()
         .endsWith(".zip")
     ) {
+
       setError(
         "Only ZIP repository files are supported."
       );
+
       return;
     }
+
 
     // --------------------------------------------------------
     // START
@@ -389,31 +414,20 @@ export default function App() {
 
     setRunning(true);
 
-    setStages(
-      DEFAULT_STAGES.map((stage, index) => {
-        if (index === 0) {
-          return {
-            ...stage,
-            status: "running",
-            message:
-              "Preparing repository submission...",
-          };
-        }
-
-        return {
-          ...stage,
-          status: "pending",
-          message: "",
-        };
-      })
+    updateProgress(
+      0,
+      "Repository received. Starting autonomous security analysis..."
     );
 
-    try {
-      // ------------------------------------------------------
-      // BUILD FORM DATA
-      // ------------------------------------------------------
 
-      const formData = new FormData();
+    try {
+
+      // ======================================================
+      // FORM DATA
+      // ======================================================
+
+      const formData =
+        new FormData();
 
       formData.append(
         "role",
@@ -430,159 +444,171 @@ export default function App() {
         selectedFile
       );
 
-      // ------------------------------------------------------
-      // SEND TO MASTER ENDPOINT
-      // ------------------------------------------------------
 
-      const response = await fetch(
-        `${API_URL}/scan/start`,
-        {
-          method: "POST",
-          body: formData,
+      // ======================================================
+      // FRONTEND PROGRESS SIMULATION
+      // ======================================================
+
+      const progressTimers = [];
+
+      progressTimers.push(
+        setTimeout(() => {
+          updateProgress(
+            1,
+            "Safely extracting repository files..."
+          );
+        }, 1200)
+      );
+
+      progressTimers.push(
+        setTimeout(() => {
+          updateProgress(
+            2,
+            "Semgrep is scanning the repository for security vulnerabilities..."
+          );
+        }, 3000)
+      );
+
+      progressTimers.push(
+        setTimeout(() => {
+          updateProgress(
+            3,
+            "Assessing vulnerability severity and overall risk..."
+          );
+        }, 5500)
+      );
+
+      progressTimers.push(
+        setTimeout(() => {
+          updateProgress(
+            4,
+            "AI Auto-Fix is preparing secure corrected copies..."
+          );
+        }, 8000)
+      );
+
+
+      // ======================================================
+      // MASTER BACKEND REQUEST
+      // ======================================================
+
+      const response =
+        await fetch(
+          `${API_URL}/scan/start`,
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
+
+
+      // ======================================================
+      // CLEAR TIMERS
+      // ======================================================
+
+      progressTimers.forEach(
+        (timer) => {
+          clearTimeout(timer);
         }
       );
+
+
+      // ======================================================
+      // READ RESPONSE
+      // ======================================================
 
       let data = null;
 
       try {
-        data = await response.json();
+
+        data =
+          await response.json();
+
       } catch {
+
         throw new Error(
           `Backend returned an invalid response (${response.status}).`
         );
       }
 
+
       if (!response.ok) {
+
         throw new Error(
           data?.detail ||
-            "Autonomous security analysis failed."
+          "Autonomous analysis failed."
         );
       }
+
 
       if (!data?.success) {
+
         throw new Error(
           data?.message ||
-            "Autonomous analysis did not complete successfully."
+          "Autonomous analysis failed."
         );
       }
 
-      // ------------------------------------------------------
-      // STORE RESULTS
-      // ------------------------------------------------------
+
+      // ======================================================
+      // REAL RESULTS
+      // ======================================================
+
+      updateProgress(
+        5,
+        "Preparing report and final remediation results..."
+      );
+
 
       setScanData(data);
 
-      // ------------------------------------------------------
-      // USE BACKEND PIPELINE STATUS
-      // ------------------------------------------------------
 
-      if (
-        Array.isArray(data.stages) &&
-        data.stages.length > 0
-      ) {
-        setStages(data.stages);
-      } else {
-        setStages(
-          DEFAULT_STAGES.map(
-            (stage) => ({
-              ...stage,
-              status: "completed",
-            })
-          )
-        );
-      }
+      // ======================================================
+      // COMPLETE
+      // ======================================================
 
-      setCompleted(true);
+      setTimeout(() => {
 
-      // ------------------------------------------------------
-      // AUTO ACTIONS
-      // ------------------------------------------------------
-
-      // Generate and download PDF.
-      try {
-        await generatePDFReport(
-          data
+        updateProgress(
+          7,
+          "Analysis completed. Your results are ready."
         );
 
-        setPdfDownloaded(true);
-        setReportStatus(
-          "Security report PDF generated and downloaded."
-        );
-      } catch (pdfError) {
-        console.error(
-          "PDF generation error:",
-          pdfError
-        );
+        setCompleted(true);
 
-        setReportStatus(
-          `PDF generation failed: ${pdfError.message}`
-        );
-      }
-
-      // Generate and download fixed repository ZIP.
-      try {
-        await generateFixedRepositoryZip(
-          selectedFile,
-          data
-        );
-      } catch (zipError) {
-        console.error(
-          "Fixed ZIP error:",
-          zipError
-        );
-
-        setZipStatus(
-          `Fixed repository ZIP failed: ${zipError.message}`
-        );
-      }
-
-      // Send email.
-      try {
-        await sendEmailReport(
-          data
-        );
-      } catch (emailError) {
-        console.error(
-          "Email error:",
-          emailError
-        );
-
-        setEmailStatus(
-          `Email delivery failed: ${emailError.message}`
-        );
-      }
+      }, 700);
 
     } catch (requestError) {
+
       console.error(
         "Autonomous analysis error:",
         requestError
       );
 
+
       setError(
-        requestError.message ||
-          "Something went wrong."
+        requestError?.message ||
+        "Something went wrong during analysis."
       );
 
-      setStages(
-        DEFAULT_STAGES.map(
-          (stage) => ({
-            ...stage,
-            status: "pending",
-          })
-        )
-      );
+
+      setProgressMessage("");
 
     } finally {
+
       setRunning(false);
     }
   }
 
 
   // ==========================================================
-  // PDF GENERATION
+  // BUILD PDF
   // ==========================================================
 
-  async function generatePDFReport(data) {
+  function buildSecurityReportPDF(
+    data
+  ) {
+
     const reportRole =
       data?.role || role;
 
@@ -595,25 +621,18 @@ export default function App() {
     const reportRisk =
       data?.overall_risk || {};
 
-    const reportAI =
-      data?.ai_analysis || "";
-
-    const reportFixes =
-      data?.fixes || [];
-
     const repositoryName =
       data?.filename ||
       selectedFile?.name ||
       "repository.zip";
 
 
-    const doc = new jsPDF({
-      unit: "mm",
-      format: "a4",
-    });
+    const doc =
+      new jsPDF({
+        unit: "mm",
+        format: "a4",
+      });
 
-
-    let y = 18;
 
     const pageWidth =
       doc.internal.pageSize.getWidth();
@@ -622,14 +641,20 @@ export default function App() {
       doc.internal.pageSize.getHeight();
 
 
+    let y = 18;
+
+
     function addPageIfNeeded(
-      requiredHeight = 12
+      height = 12
     ) {
+
       if (
-        y + requiredHeight >
+        y + height >
         pageHeight - 16
       ) {
+
         doc.addPage();
+
         y = 18;
       }
     }
@@ -639,6 +664,7 @@ export default function App() {
       text,
       options = {}
     ) {
+
       const fontSize =
         options.fontSize || 10;
 
@@ -653,14 +679,19 @@ export default function App() {
         options.lineHeight ||
         5;
 
+
       doc.setFontSize(
         fontSize
       );
 
+
       doc.setFont(
         "helvetica",
-        bold ? "bold" : "normal"
+        bold
+          ? "bold"
+          : "normal"
       );
+
 
       const lines =
         doc.splitTextToSize(
@@ -668,11 +699,13 @@ export default function App() {
           maxWidth
         );
 
+
       addPageIfNeeded(
         lines.length *
           lineHeight +
-          2
+          3
       );
+
 
       doc.text(
         lines,
@@ -680,47 +713,56 @@ export default function App() {
         y
       );
 
+
       y +=
         lines.length *
         lineHeight;
-
-      return lines;
     }
 
 
-    // --------------------------------------------------------
-    // HEADER
-    // --------------------------------------------------------
-
-    doc.setFontSize(22);
+    // ========================================================
+    // TITLE
+    // ========================================================
 
     doc.setFont(
       "helvetica",
       "bold"
     );
 
+    doc.setFontSize(18);
+
+    const titleLines =
+      doc.splitTextToSize(
+        PROJECT_TITLE,
+        pageWidth - 30
+      );
+
     doc.text(
-      "SentinelForge AI",
+      titleLines,
       15,
       y
     );
 
-    y += 8;
+    y +=
+      titleLines.length *
+      7;
 
-    doc.setFontSize(12);
 
     doc.setFont(
       "helvetica",
       "normal"
     );
 
+    doc.setFontSize(10);
+
     doc.text(
-      "Autonomous Repository Security Analysis Report",
+      "Automated Software Repository Security Analysis Report",
       15,
       y
     );
 
-    y += 10;
+    y += 8;
+
 
     doc.line(
       15,
@@ -729,12 +771,12 @@ export default function App() {
       y
     );
 
-    y += 10;
+    y += 9;
 
 
-    // --------------------------------------------------------
-    // REPORT INFORMATION
-    // --------------------------------------------------------
+    // ========================================================
+    // GENERAL DETAILS
+    // ========================================================
 
     writeText(
       `Repository: ${repositoryName}`,
@@ -753,7 +795,10 @@ export default function App() {
     );
 
     writeText(
-      `Email: ${data?.email || email}`
+      `Email: ${
+        data?.email ||
+        email
+      }`
     );
 
     writeText(
@@ -781,388 +826,388 @@ export default function App() {
     y += 5;
 
 
-    // --------------------------------------------------------
+    // ========================================================
     // STUDENT REPORT
-    // --------------------------------------------------------
+    // ========================================================
 
     if (
       reportRole === "student"
     ) {
+
       writeText(
-        "Security Learning Summary",
+        "Security Explanation",
         {
-          fontSize: 15,
+          fontSize: 14,
           bold: true,
         }
       );
 
-      writeText(
-        "This section explains the security issues in a simple and educational manner."
-      );
-
-      y += 4;
 
       if (
         reportFindings.length === 0
       ) {
+
         writeText(
           "No security vulnerabilities were detected during the automated security scan."
         );
-      }
+
+      } else {
+
+        reportFindings.forEach(
+          (
+            finding,
+            index
+          ) => {
+
+            const assessment =
+              reportAssessments[
+                index
+              ] || {};
 
 
-      reportFindings.forEach(
-        (finding, index) => {
-          const assessment =
-            reportAssessments[
-              index
-            ] || {};
-
-          const vulnerability =
-            getVulnerabilityType(
-              finding,
-              assessment
-            );
-
-          const path =
-            finding?.path ||
-            "Unknown";
-
-          const line =
-            getLine(finding);
-
-          const message =
-            getMessage(finding);
-
-          const impact =
-            assessment?.impact ||
-            "Potential impact depends on how the vulnerable functionality is used.";
-
-          const exploitability =
-            assessment?.exploitability ||
-            "An attacker may be able to abuse the vulnerable code depending on application exposure and input control.";
-
-          const recommendation =
-            assessment?.recommendation ||
-            "Apply secure coding practices and validate untrusted input.";
-
-          writeText(
-            `Vulnerability ${index + 1}: ${vulnerability}`,
-            {
-              fontSize: 13,
-              bold: true,
-            }
-          );
-
-          writeText(
-            `Where: ${path} at line ${line}`
-          );
-
-          writeText(
-            `What was detected: ${message}`
-          );
-
-          writeText(
-            `Possible attack path: ${exploitability}`
-          );
-
-          writeText(
-            `Impact if not fixed: ${impact}`
-          );
-
-          writeText(
-            `Prevention / Fix: ${recommendation}`
-          );
-
-          writeText(
-            "What SentinelForge AI did: The repository was scanned, the risk was assessed, and an AI-generated remediation copy was prepared when sufficient source context was available."
-          );
-
-          y += 5;
-        }
-      );
-    }
-
-
-    // --------------------------------------------------------
-    // DEVELOPER REPORT
-    // --------------------------------------------------------
-
-    else {
-      writeText(
-        "Technical Security Findings",
-        {
-          fontSize: 15,
-          bold: true,
-        }
-      );
-
-      y += 4;
-
-      if (
-        reportFindings.length === 0
-      ) {
-        writeText(
-          "No security vulnerabilities were detected during the automated security scan."
-        );
-      }
-
-
-      reportFindings.forEach(
-        (finding, index) => {
-          const assessment =
-            reportAssessments[
-              index
-            ] || {};
-
-          const vulnerability =
-            getVulnerabilityType(
-              finding,
-              assessment
-            );
-
-          const checkId =
-            finding?.check_id ||
-            "Unknown";
-
-          const path =
-            finding?.path ||
-            "Unknown";
-
-          const line =
-            getLine(finding);
-
-          const severity =
-            getSeverity(
-              finding,
-              assessment
-            );
-
-          const cwe =
-            getCwe(
-              finding,
-              assessment
-            );
-
-          const riskScore =
-            getRiskScore(
-              assessment
-            );
-
-          const riskLevel =
-            getRiskLevel(
-              assessment
-            );
-
-          const message =
-            getMessage(finding);
-
-          const impact =
-            assessment?.impact ||
-            "Not specified";
-
-          const exploitability =
-            assessment?.exploitability ||
-            "Not specified";
-
-          const recommendation =
-            assessment?.recommendation ||
-            "Not specified";
-
-
-          writeText(
-            `Finding ${index + 1}: ${vulnerability}`,
-            {
-              fontSize: 13,
-              bold: true,
-            }
-          );
-
-          writeText(
-            `Semgrep Rule: ${checkId}`
-          );
-
-          writeText(
-            `File: ${path}`
-          );
-
-          writeText(
-            `Line: ${line}`
-          );
-
-          writeText(
-            `Severity: ${severity}`
-          );
-
-          writeText(
-            `CWE: ${cwe}`
-          );
-
-          writeText(
-            `Risk Score: ${riskScore}`
-          );
-
-          writeText(
-            `Risk Level: ${riskLevel}`
-          );
-
-          writeText(
-            `Semgrep Message: ${message}`
-          );
-
-          writeText(
-            `Impact: ${impact}`
-          );
-
-          writeText(
-            `Exploitability: ${exploitability}`
-          );
-
-          writeText(
-            `Recommended Remediation: ${recommendation}`
-          );
-
-          if (
-            finding?.source_code
-          ) {
             writeText(
-              "Source Context:",
+              `Vulnerability ${
+                index + 1
+              }: ${
+                getVulnerabilityType(
+                  finding,
+                  assessment
+                )
+              }`,
               {
+                fontSize: 12,
                 bold: true,
               }
             );
 
+
             writeText(
-              finding.source_code,
+              `Where: ${
+                finding?.path ||
+                "Unknown"
+              } at line ${
+                getLine(
+                  finding
+                )
+              }`
+            );
+
+
+            writeText(
+              `What was detected: ${
+                getMessage(
+                  finding
+                )
+              }`
+            );
+
+
+            writeText(
+              `Possible attack path: ${
+                assessment?.exploitability ||
+                "The vulnerability may be exploitable depending on application exposure and input handling."
+              }`
+            );
+
+
+            writeText(
+              `Impact: ${
+                assessment?.impact ||
+                "Potential security impact depends on how the affected component is used."
+              }`
+            );
+
+
+            writeText(
+              `Prevention / Fix: ${
+                assessment?.recommendation ||
+                "Use secure coding practices and validate untrusted input."
+              }`
+            );
+
+
+            writeText(
+              "What the system did: The repository was scanned, findings were risk-assessed, and AI-generated corrected copies were prepared where possible."
+            );
+
+
+            y += 4;
+          }
+        );
+      }
+
+    } else {
+
+      // ======================================================
+      // DEVELOPER REPORT
+      // ======================================================
+
+      writeText(
+        "Technical Security Findings",
+        {
+          fontSize: 14,
+          bold: true,
+        }
+      );
+
+
+      if (
+        reportFindings.length === 0
+      ) {
+
+        writeText(
+          "No security vulnerabilities were detected during the automated security scan."
+        );
+
+      } else {
+
+        reportFindings.forEach(
+          (
+            finding,
+            index
+          ) => {
+
+            const assessment =
+              reportAssessments[
+                index
+              ] || {};
+
+
+            writeText(
+              `Finding ${
+                index + 1
+              }: ${
+                getVulnerabilityType(
+                  finding,
+                  assessment
+                )
+              }`,
               {
-                fontSize: 8,
-                lineHeight: 4,
+                fontSize: 12,
+                bold: true,
               }
             );
+
+
+            writeText(
+              `Semgrep Rule: ${
+                finding?.check_id ||
+                "Unknown"
+              }`
+            );
+
+
+            writeText(
+              `File: ${
+                finding?.path ||
+                "Unknown"
+              }`
+            );
+
+
+            writeText(
+              `Line: ${
+                getLine(
+                  finding
+                )
+              }`
+            );
+
+
+            writeText(
+              `Severity: ${
+                getSeverity(
+                  finding,
+                  assessment
+                )
+              }`
+            );
+
+
+            writeText(
+              `CWE: ${
+                getCwe(
+                  finding,
+                  assessment
+                )
+              }`
+            );
+
+
+            writeText(
+              `Risk Score: ${
+                getRiskScore(
+                  assessment
+                )
+              }`
+            );
+
+
+            writeText(
+              `Risk Level: ${
+                getRiskLevel(
+                  assessment
+                )
+              }`
+            );
+
+
+            writeText(
+              `Semgrep Message: ${
+                getMessage(
+                  finding
+                )
+              }`
+            );
+
+
+            writeText(
+              `Impact: ${
+                assessment?.impact ||
+                "Not specified"
+              }`
+            );
+
+
+            writeText(
+              `Exploitability: ${
+                assessment?.exploitability ||
+                "Not specified"
+              }`
+            );
+
+
+            writeText(
+              `Recommended Remediation: ${
+                assessment?.recommendation ||
+                "Not specified"
+              }`
+            );
+
+
+            if (
+              finding?.source_code
+            ) {
+
+              writeText(
+                "Source Context:",
+                {
+                  bold: true,
+                }
+              );
+
+
+              writeText(
+                finding.source_code,
+                {
+                  fontSize: 8,
+                  lineHeight: 4,
+                }
+              );
+            }
+
+
+            y += 4;
           }
-
-          y += 5;
-        }
-      );
-    }
-
-
-    // --------------------------------------------------------
-    // AI ANALYSIS
-    // --------------------------------------------------------
-
-    writeText(
-      "AI Security Analysis",
-      {
-        fontSize: 15,
-        bold: true,
+        );
       }
-    );
-
-    if (reportAI) {
-      writeText(
-        reportAI,
-        {
-          fontSize: 9,
-          lineHeight: 4.5,
-        }
-      );
-    } else {
-      writeText(
-        "No AI analysis was returned."
-      );
     }
 
-    y += 4;
 
-
-    // --------------------------------------------------------
-    // AUTO-FIX
-    // --------------------------------------------------------
+    // ========================================================
+    // AUTO-FIX SUMMARY
+    // ========================================================
 
     writeText(
       "AI Auto-Fix Summary",
       {
-        fontSize: 15,
+        fontSize: 14,
         bold: true,
       }
     );
+
+
+    const reportFixes =
+      data?.fixes || [];
+
+
+    const successfulFixes =
+      reportFixes.filter(
+        (fix) =>
+          fix?.success
+      ).length;
+
+
+    const skippedFixes =
+      reportFixes.filter(
+        (fix) =>
+          !fix?.success
+      ).length;
+
 
     writeText(
       `Successful fixes generated: ${
-        reportFixes.filter(
-          (item) => item?.success
-        ).length
+        successfulFixes
       }`
     );
 
+
     writeText(
-      `Fixes that could not be generated: ${
-        reportFixes.filter(
-          (item) => !item?.success
-        ).length
+      `Skipped / failed fixes: ${
+        skippedFixes
       }`
     );
 
-    writeText(
-      "The original uploaded repository was not modified. SentinelForge AI generated corrected copies for findings where sufficient source context was available."
-    );
 
     writeText(
-      "Important: Phase 4 does not perform a second security scan after auto-fix generation. Therefore the generated fixes are not claimed as security-verified."
+      "The original uploaded repository was not modified. Corrected source files are prepared as a new repository ZIP."
     );
 
 
-    // --------------------------------------------------------
-    // SEVERITY SUMMARY
-    // --------------------------------------------------------
+    writeText(
+      "Validation note: Phase 4 does not perform a second security scan after AI Auto-Fix, so generated fixes are not claimed as security-verified."
+    );
+
+
+    // ========================================================
+    // FINAL STATUS
+    // ========================================================
 
     writeText(
-      "Severity Summary",
+      "System Status",
       {
-        fontSize: 15,
+        fontSize: 14,
         bold: true,
       }
     );
 
-    writeText(
-      `Critical: ${
-        severityCounts.CRITICAL
-      }`
-    );
 
     writeText(
-      `High: ${
-        severityCounts.HIGH
-      }`
-    );
-
-    writeText(
-      `Medium: ${
-        severityCounts.MEDIUM
-      }`
-    );
-
-    writeText(
-      `Low: ${
-        severityCounts.LOW
-      }`
-    );
-
-    writeText(
-      `Info: ${
-        severityCounts.INFO
-      }`
+      "Automated repository scanning and risk assessment completed."
     );
 
 
-    // --------------------------------------------------------
+    writeText(
+      "AI was used for vulnerability remediation only."
+    );
+
+
+    writeText(
+      "Report generation does not use the Groq API."
+    );
+
+
+    // ========================================================
     // FOOTER
-    // --------------------------------------------------------
+    // ========================================================
 
-    addPageIfNeeded(10);
+    addPageIfNeeded(
+      15
+    );
 
-    y += 8;
+
+    y += 5;
+
 
     doc.line(
       15,
@@ -1171,400 +1216,535 @@ export default function App() {
       y
     );
 
-    y += 7;
+
+    y += 6;
+
 
     writeText(
-      "Generated by SentinelForge AI.",
+      "Generated by the automated repository security analysis system.",
       {
         fontSize: 8,
       }
     );
 
-    writeText(
-      "Autonomous analysis completed without a post-fix second security scan.",
-      {
-        fontSize: 8,
-      }
-    );
 
-
-    // --------------------------------------------------------
-    // DOWNLOAD
-    // --------------------------------------------------------
-
-    const safeName =
-      String(repositoryName)
-        .replace(/\.zip$/i, "")
-        .replace(/[^\w.-]+/g, "_");
-
-    doc.save(
-      `SentinelForge_${safeName}_Security_Report.pdf`
-    );
+    return doc;
   }
 
 
   // ==========================================================
-  // FIXED REPOSITORY ZIP
+  // MANUAL PDF DOWNLOAD
   // ==========================================================
 
-  async function generateFixedRepositoryZip(
-    originalFile,
+  function downloadSecurityReport() {
+
+    if (!scanData) {
+      return;
+    }
+
+
+    try {
+
+      setPdfStatus(
+        "Generating security report..."
+      );
+
+
+      const doc =
+        buildSecurityReportPDF(
+          scanData
+        );
+
+
+      const repositoryName =
+        scanData?.filename ||
+        selectedFile?.name ||
+        "repository.zip";
+
+
+      const safeName =
+        String(repositoryName)
+          .replace(
+            /\.zip$/i,
+            ""
+          )
+          .replace(
+            /[^\w.-]+/g,
+            "_"
+          );
+
+
+      doc.save(
+        `Security_Report_${safeName}.pdf`
+      );
+
+
+      setPdfDownloaded(
+        true
+      );
+
+
+      setPdfStatus(
+        "Security report downloaded successfully."
+      );
+
+    } catch (pdfError) {
+
+      console.error(
+        "PDF error:",
+        pdfError
+      );
+
+
+      setPdfStatus(
+        `PDF download failed: ${
+          pdfError?.message ||
+          "Unknown error"
+        }`
+      );
+    }
+  }
+
+
+  // ==========================================================
+  // MANUAL FIXED ZIP DOWNLOAD
+  // ==========================================================
+
+  async function downloadFixedRepository() {
+
+    if (!selectedFile) {
+
+      setZipStatus(
+        "Original repository ZIP is unavailable."
+      );
+
+      return;
+    }
+
+
+    if (!scanData) {
+
+      setZipStatus(
+        "Analysis results are unavailable."
+      );
+
+      return;
+    }
+
+
+    try {
+
+      setZipStatus(
+        "Preparing fixed repository..."
+      );
+
+
+      // ------------------------------------------------------
+      // LOAD ORIGINAL ZIP
+      // ------------------------------------------------------
+
+      const originalBuffer =
+        await selectedFile.arrayBuffer();
+
+
+      const zip =
+        await JSZip.loadAsync(
+          originalBuffer
+        );
+
+
+      const fixes =
+        scanData?.fixes || [];
+
+
+      let replacedCount = 0;
+
+      let skippedCount = 0;
+
+
+      // ------------------------------------------------------
+      // APPLY FIXES
+      // ------------------------------------------------------
+
+      for (
+        const fix of fixes
+      ) {
+
+        if (
+          !fix?.success ||
+          !fix?.fixed_code ||
+          !fix?.original_path
+        ) {
+
+          skippedCount += 1;
+
+          continue;
+        }
+
+
+        const targetPath =
+          normalizePath(
+            fix.original_path
+          );
+
+
+        if (!targetPath) {
+
+          skippedCount += 1;
+
+          continue;
+        }
+
+
+        // ----------------------------------------------------
+        // EXACT MATCH
+        // ----------------------------------------------------
+
+        if (
+          zip.file(
+            targetPath
+          )
+        ) {
+
+          zip.file(
+            targetPath,
+            fix.fixed_code
+          );
+
+          replacedCount += 1;
+
+          continue;
+        }
+
+
+        // ----------------------------------------------------
+        // ./ VARIANT
+        // ----------------------------------------------------
+
+        const dotPath =
+          `./${targetPath}`;
+
+
+        if (
+          zip.file(
+            dotPath
+          )
+        ) {
+
+          zip.file(
+            dotPath,
+            fix.fixed_code
+          );
+
+          replacedCount += 1;
+
+          continue;
+        }
+
+
+        // ----------------------------------------------------
+        // NORMALIZED SEARCH
+        // ----------------------------------------------------
+
+        let matchedPath =
+          null;
+
+
+        zip.forEach(
+          (
+            relativePath
+          ) => {
+
+            if (
+              matchedPath ||
+              relativePath.endsWith("/")
+            ) {
+              return;
+            }
+
+
+            if (
+              normalizePath(
+                relativePath
+              ) ===
+              targetPath
+            ) {
+
+              matchedPath =
+                relativePath;
+            }
+          }
+        );
+
+
+        if (matchedPath) {
+
+          zip.file(
+            matchedPath,
+            fix.fixed_code
+          );
+
+          replacedCount += 1;
+
+        } else {
+
+          skippedCount += 1;
+        }
+      }
+
+
+      // ------------------------------------------------------
+      // ADD MANIFEST
+      // ------------------------------------------------------
+
+      const manifest = {
+
+        project_title:
+          PROJECT_TITLE,
+
+        repository:
+          scanData?.filename ||
+          selectedFile.name,
+
+        auto_fix_generated:
+          fixes.length,
+
+        files_replaced:
+          replacedCount,
+
+        files_not_replaced:
+          skippedCount,
+
+        original_repository_modified:
+          false,
+
+        second_security_scan:
+          false,
+
+        validation_status:
+          scanData?.validation_status ||
+          "Validation preparation completed.",
+      };
+
+
+      zip.file(
+        "security-analysis-manifest.json",
+        JSON.stringify(
+          manifest,
+          null,
+          2
+        )
+      );
+
+
+      // ------------------------------------------------------
+      // BUILD ZIP
+      // ------------------------------------------------------
+
+      setZipStatus(
+        "Creating fixed repository ZIP..."
+      );
+
+
+      const outputBlob =
+        await zip.generateAsync({
+          type: "blob",
+          compression: "DEFLATE",
+          compressionOptions: {
+            level: 6,
+          },
+        });
+
+
+      // ------------------------------------------------------
+      // DOWNLOAD
+      // ------------------------------------------------------
+
+      const repositoryName =
+        scanData?.filename ||
+        selectedFile.name;
+
+
+      const safeName =
+        String(repositoryName)
+          .replace(
+            /\.zip$/i,
+            ""
+          )
+          .replace(
+            /[^\w.-]+/g,
+            "_"
+          );
+
+
+      downloadBlob(
+        outputBlob,
+        `Fixed_Repository_${safeName}.zip`
+      );
+
+
+      setZipDownloaded(
+        true
+      );
+
+
+      setZipStatus(
+        `Fixed repository downloaded. ${replacedCount} file(s) replaced.`
+      );
+
+    } catch (zipError) {
+
+      console.error(
+        "ZIP generation error:",
+        zipError
+      );
+
+
+      setZipStatus(
+        `Fixed repository download failed: ${
+          zipError?.message ||
+          "Unknown error"
+        }`
+      );
+    }
+  }
+
+
+  // ==========================================================
+  // AUTOMATIC EMAIL
+  // ==========================================================
+
+  async function sendAutomaticEmail(
     data
   ) {
-    if (!originalFile) {
-      throw new Error(
-        "Original repository file is unavailable."
-      );
-    }
-
-    const repositoryFixes =
-      data?.fixes || [];
-
-    setZipStatus(
-      "Preparing fixed repository ZIP..."
-    );
-
-    // --------------------------------------------------------
-    // LOAD ORIGINAL ZIP
-    // --------------------------------------------------------
-
-    const originalBuffer =
-      await originalFile.arrayBuffer();
-
-    const zip =
-      await JSZip.loadAsync(
-        originalBuffer
-      );
-
-    // --------------------------------------------------------
-    // APPLY FIXED FILES
-    // --------------------------------------------------------
-
-    let replacedCount = 0;
-    let skippedCount = 0;
-
-    for (
-      const fix of repositoryFixes
-    ) {
-      if (
-        !fix?.success ||
-        !fix?.fixed_code ||
-        !fix?.original_path
-      ) {
-        skippedCount += 1;
-        continue;
-      }
-
-      const targetPath =
-        normalizePath(
-          fix.original_path
-        );
-
-      if (!targetPath) {
-        skippedCount += 1;
-        continue;
-      }
-
-      const exactEntry =
-        zip.file(targetPath);
-
-      if (exactEntry) {
-        zip.file(
-          targetPath,
-          fix.fixed_code
-        );
-
-        replacedCount += 1;
-        continue;
-      }
-
-      // ------------------------------------------------------
-      // TRY "./" VARIANT
-      // ------------------------------------------------------
-
-      const dotEntry =
-        zip.file(
-          `./${targetPath}`
-        );
-
-      if (dotEntry) {
-        zip.file(
-          `./${targetPath}`,
-          fix.fixed_code
-        );
-
-        replacedCount += 1;
-        continue;
-      }
-
-      // ------------------------------------------------------
-      // TRY NORMALIZED ENTRY SEARCH
-      // ------------------------------------------------------
-
-      let matchedEntry = null;
-
-      zip.forEach(
-        (relativePath) => {
-          if (
-            matchedEntry ||
-            relativePath.endsWith("/")
-          ) {
-            return;
-          }
-
-          const normalizedEntry =
-            normalizePath(
-              relativePath
-            );
-
-          if (
-            normalizedEntry ===
-            targetPath
-          ) {
-            matchedEntry =
-              relativePath;
-          }
-        }
-      );
-
-      if (matchedEntry) {
-        zip.file(
-          matchedEntry,
-          fix.fixed_code
-        );
-
-        replacedCount += 1;
-      } else {
-        skippedCount += 1;
-      }
-    }
-
-
-    // --------------------------------------------------------
-    // ADD PHASE 4 MANIFEST
-    // --------------------------------------------------------
-
-    const manifest = {
-      tool: "SentinelForge AI",
-      phase: "Phase 4",
-      repository:
-        data?.filename ||
-        originalFile.name,
-      original_repository_preserved: true,
-      second_security_scan_performed: false,
-      validation_status:
-        data?.validation_status ||
-        "Validation preparation completed.",
-      fixes_generated:
-        repositoryFixes.length,
-      fixes_applied:
-        replacedCount,
-      fixes_not_applied:
-        skippedCount,
-    };
-
-    zip.file(
-      "sentinelforge-phase4-report.json",
-      JSON.stringify(
-        manifest,
-        null,
-        2
-      )
-    );
-
-
-    // --------------------------------------------------------
-    // GENERATE ZIP
-    // --------------------------------------------------------
-
-    setZipStatus(
-      "Creating fixed repository ZIP..."
-    );
-
-    const outputBlob =
-      await zip.generateAsync({
-        type: "blob",
-        compression: "DEFLATE",
-        compressionOptions: {
-          level: 6,
-        },
-      });
-
-
-    // --------------------------------------------------------
-    // DOWNLOAD
-    // --------------------------------------------------------
-
-    const safeName =
-      String(
-        data?.filename ||
-          originalFile.name
-      )
-        .replace(/\.zip$/i, "")
-        .replace(/[^\w.-]+/g, "_");
-
-    downloadBlob(
-      outputBlob,
-      `SentinelForge_${safeName}_Fixed_Repository.zip`
-    );
-
-    setZipDownloaded(true);
-
-    setZipStatus(
-      `Fixed repository ZIP downloaded. ${replacedCount} file(s) replaced.`
-    );
-  }
-
-
-  // ==========================================================
-  // EMAIL REPORT
-  // ==========================================================
-
-  async function sendEmailReport(data) {
-    setEmailStatus(
-      "Preparing email security report..."
-    );
-
-    // --------------------------------------------------------
-    // CHECK EMAILJS CONFIGURATION
-    // --------------------------------------------------------
 
     if (
       !EMAILJS_SERVICE_ID ||
       !EMAILJS_TEMPLATE_ID ||
       !EMAILJS_PUBLIC_KEY
     ) {
+
       throw new Error(
         "EmailJS environment variables are not configured."
       );
     }
 
-    // --------------------------------------------------------
-    // BUILD EMAIL HTML
-    // --------------------------------------------------------
 
     const reportFindings =
       data?.findings || [];
 
+
     const reportAssessments =
       data?.risk_assessments || [];
 
-    const reportRisk =
-      data?.overall_risk || {};
-
-    const reportAI =
-      data?.ai_analysis || "";
 
     const reportFixes =
       data?.fixes || [];
 
 
-    let findingsHtml = "";
+    const reportRisk =
+      data?.overall_risk || {};
+
+
+    let findingsHtml =
+      "";
+
 
     if (
       reportFindings.length === 0
     ) {
+
       findingsHtml =
         "<p>No security vulnerabilities were detected.</p>";
+
     } else {
+
       findingsHtml =
         reportFindings
           .map(
-            (finding, index) => {
+            (
+              finding,
+              index
+            ) => {
+
               const assessment =
                 reportAssessments[
                   index
                 ] || {};
 
-              const vulnerability =
-                getVulnerabilityType(
-                  finding,
-                  assessment
-                );
-
-              const severity =
-                getSeverity(
-                  finding,
-                  assessment
-                );
-
-              const path =
-                finding?.path ||
-                "Unknown";
-
-              const line =
-                getLine(finding);
-
-              const cwe =
-                getCwe(
-                  finding,
-                  assessment
-                );
-
-              const riskScore =
-                getRiskScore(
-                  assessment
-                );
-
-              const recommendation =
-                assessment?.recommendation ||
-                "Not specified";
 
               return `
                 <div style="
                   border:1px solid #e5e7eb;
                   border-radius:10px;
-                  padding:16px;
-                  margin-bottom:14px;
+                  padding:15px;
+                  margin-bottom:12px;
                   font-family:Arial,sans-serif;
                 ">
+
                   <h3 style="margin-top:0;">
                     ${escapeHtml(
-                      vulnerability
+                      getVulnerabilityType(
+                        finding,
+                        assessment
+                      )
                     )}
                   </h3>
 
                   <p>
                     <strong>Severity:</strong>
                     ${escapeHtml(
-                      severity
+                      getSeverity(
+                        finding,
+                        assessment
+                      )
                     )}
                   </p>
 
                   <p>
                     <strong>File:</strong>
                     ${escapeHtml(
-                      path
+                      finding?.path ||
+                      "Unknown"
                     )}
                   </p>
 
                   <p>
                     <strong>Line:</strong>
                     ${escapeHtml(
-                      line
+                      getLine(
+                        finding
+                      )
                     )}
                   </p>
 
                   <p>
                     <strong>CWE:</strong>
                     ${escapeHtml(
-                      cwe
+                      getCwe(
+                        finding,
+                        assessment
+                      )
                     )}
                   </p>
 
                   <p>
-                    <strong>Risk Score:</strong>
+                    <strong>Risk:</strong>
                     ${escapeHtml(
-                      riskScore
+                      getRiskScore(
+                        assessment
+                      )
                     )}
                   </p>
 
                   <p>
                     <strong>Recommendation:</strong>
                     ${escapeHtml(
-                      recommendation
+                      assessment?.recommendation ||
+                      "Not specified"
                     )}
                   </p>
+
                 </div>
               `;
             }
@@ -1575,7 +1755,8 @@ export default function App() {
 
     const successfulFixes =
       reportFixes.filter(
-        (fix) => fix?.success
+        (fix) =>
+          fix?.success
       ).length;
 
 
@@ -1586,6 +1767,7 @@ export default function App() {
 
 
     const templateParams = {
+
       to_email:
         data?.email ||
         email,
@@ -1615,6 +1797,9 @@ export default function App() {
         selectedFile?.name ||
         "repository.zip",
 
+      project_title:
+        PROJECT_TITLE,
+
       findings_count:
         reportFindings.length,
 
@@ -1634,29 +1819,17 @@ export default function App() {
       findings_html:
         findingsHtml,
 
-      ai_analysis:
-        reportAI,
-
       validation_status:
         data?.validation_status ||
         "Validation preparation completed. No second security scan was performed.",
 
       subject:
-        `SentinelForge AI Security Report - ${
+        `Repository Security Report - ${
           data?.filename ||
           "Repository"
         }`,
     };
 
-
-    setEmailStatus(
-      "Sending security report..."
-    );
-
-
-    // --------------------------------------------------------
-    // SEND THROUGH EMAILJS
-    // --------------------------------------------------------
 
     await emailjs.send(
       EMAILJS_SERVICE_ID,
@@ -1669,10 +1842,77 @@ export default function App() {
     );
 
 
-    setEmailStatus(
-      `Security report sent successfully to ${
-        data?.email || email
-      }.`
+    return true;
+  }
+
+
+  // ==========================================================
+  // RUN AUTOMATIC EMAIL AFTER COMPLETION
+  // ==========================================================
+
+  async function triggerAutomaticEmail(
+    data
+  ) {
+
+    try {
+
+      setEmailStatus(
+        "Sending security report to your email..."
+      );
+
+
+      await sendAutomaticEmail(
+        data
+      );
+
+
+      setEmailStatus(
+        `Security report sent successfully to ${
+          data?.email ||
+          email
+        }.`
+      );
+
+    } catch (emailError) {
+
+      console.error(
+        "Email delivery error:",
+        emailError
+      );
+
+
+      setEmailStatus(
+        `Email delivery failed: ${
+          emailError?.message ||
+          "Unknown error"
+        }`
+      );
+    }
+  }
+
+
+  // ==========================================================
+  // EMAIL AFTER COMPLETION
+  // ==========================================================
+
+  async function handleCompletionEmail() {
+
+    if (!scanData) {
+      return;
+    }
+
+
+    if (
+      emailStatus.startsWith(
+        "Security report sent"
+      )
+    ) {
+      return;
+    }
+
+
+    await triggerAutomaticEmail(
+      scanData
     );
   }
 
@@ -1682,36 +1922,59 @@ export default function App() {
   // ==========================================================
 
   function resetAnalysis() {
+
     setRole("student");
+
     setEmail("");
+
     setSelectedFile(null);
 
     setRunning(false);
+
     setCompleted(false);
 
     setError("");
 
     setScanData(null);
 
-    setStages(
-      DEFAULT_STAGES
-    );
+    setProgressStage(-1);
 
-    setEmailStatus("");
-    setReportStatus("");
-    setZipStatus("");
+    setProgressMessage("");
 
     setPdfDownloaded(false);
+
     setZipDownloaded(false);
+
+    setEmailStatus("");
+
+    setPdfStatus("");
+
+    setZipStatus("");
+
 
     const input =
       document.getElementById(
         "repository-upload"
       );
 
+
     if (input) {
       input.value = "";
     }
+  }
+
+
+  // ==========================================================
+  // AUTO EMAIL TRIGGER
+  // ==========================================================
+
+  if (
+    completed &&
+    scanData &&
+    !emailStatus
+  ) {
+
+    void handleCompletionEmail();
   }
 
 
@@ -1729,23 +1992,23 @@ export default function App() {
       <header className="app-header">
 
         <div className="brand-block">
+
           <div className="brand-mark">
-            SF
+            AI
           </div>
 
-          <div>
+          <div className="brand-text">
+
             <h1>
-              SentinelForge AI
+              Security Analysis
             </h1>
 
             <p>
-              Autonomous Repository Security
+              Automated repository security platform
             </p>
-          </div>
-        </div>
 
-        <div className="phase-badge">
-          PHASE 4
+          </div>
+
         </div>
 
       </header>
@@ -1757,316 +2020,386 @@ export default function App() {
 
       <main className="main-container">
 
-        {!completed && (
-          <>
-            {/* ============================================ */}
-            {/* HERO */}
-            {/* ============================================ */}
 
-            <section className="hero-section">
+        {/* ================================================== */}
+        {/* INPUT SCREEN */}
+        {/* ================================================== */}
 
-              <div className="hero-content">
+        {!running &&
+          !completed && (
+            <>
 
-                <span className="hero-label">
-                  AUTONOMOUS SECURITY
-                </span>
+              <section className="hero-section">
 
-                <h2>
-                  Secure your repository
-                  <br />
-                  with one click.
-                </h2>
+                <div className="hero-content">
 
-                <p>
-                  Upload your repository and let
-                  SentinelForge AI automatically
-                  detect vulnerabilities, assess risk,
-                  analyze the code, generate fixes,
-                  prepare the final report and deliver
-                  the results.
-                </p>
-
-              </div>
-
-            </section>
-
-
-            {/* ============================================ */}
-            {/* INPUT CARD */}
-            {/* ============================================ */}
-
-            <section className="input-card">
-
-              <div className="section-heading">
-                <div>
-                  <span>
-                    STEP 1
+                  <span className="hero-label">
+                    SOFTWARE SECURITY
                   </span>
 
-                  <h3>
-                    Tell us about you
-                  </h3>
-                </div>
-              </div>
+                  <h2>
+                    {PROJECT_TITLE}
+                  </h2>
 
-
-              {/* ROLE */}
-
-              <div className="input-group">
-
-                <label>
-                  Role
-                </label>
-
-                <div className="role-grid">
-
-                  <button
-                    type="button"
-                    className={
-                      role === "student"
-                        ? "role-option active"
-                        : "role-option"
-                    }
-                    onClick={() =>
-                      setRole(
-                        "student"
-                      )
-                    }
-                    disabled={running}
-                  >
-                    <span className="role-icon">
-                      🎓
-                    </span>
-
-                    <span>
-                      <strong>
-                        Student
-                      </strong>
-
-                      <small>
-                        Educational security report
-                      </small>
-                    </span>
-                  </button>
-
-
-                  <button
-                    type="button"
-                    className={
-                      role === "developer"
-                        ? "role-option active"
-                        : "role-option"
-                    }
-                    onClick={() =>
-                      setRole(
-                        "developer"
-                      )
-                    }
-                    disabled={running}
-                  >
-                    <span className="role-icon">
-                      💻
-                    </span>
-
-                    <span>
-                      <strong>
-                        Developer
-                      </strong>
-
-                      <small>
-                        Technical security report
-                      </small>
-                    </span>
-                  </button>
+                  <p>
+                    Upload your repository and let
+                    the system automatically detect
+                    vulnerabilities, assess risk and
+                    prepare AI-assisted security fixes.
+                  </p>
 
                 </div>
 
-              </div>
+              </section>
 
 
-              {/* EMAIL */}
+              <section className="input-card">
 
-              <div className="input-group">
+                <div className="section-heading">
 
-                <label htmlFor="email">
-                  Email address
-                </label>
+                  <div>
 
-                <input
-                  id="email"
-                  type="email"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(event) =>
-                    setEmail(
-                      event.target.value
-                    )
+                    <span>
+                      START ANALYSIS
+                    </span>
+
+                    <h3>
+                      Repository Security Analysis
+                    </h3>
+
+                  </div>
+
+                </div>
+
+
+                {/* ROLE */}
+
+                <div className="input-group">
+
+                  <label>
+                    Select your role
+                  </label>
+
+
+                  <div className="role-grid">
+
+                    <button
+                      type="button"
+                      className={
+                        role === "student"
+                          ? "role-option active"
+                          : "role-option"
+                      }
+                      onClick={() =>
+                        setRole(
+                          "student"
+                        )
+                      }
+                    >
+
+                      <span className="role-icon">
+                        🎓
+                      </span>
+
+                      <span>
+
+                        <strong>
+                          Student
+                        </strong>
+
+                        <small>
+                          Educational security report
+                        </small>
+
+                      </span>
+
+                    </button>
+
+
+                    <button
+                      type="button"
+                      className={
+                        role === "developer"
+                          ? "role-option active"
+                          : "role-option"
+                      }
+                      onClick={() =>
+                        setRole(
+                          "developer"
+                        )
+                      }
+                    >
+
+                      <span className="role-icon">
+                        💻
+                      </span>
+
+                      <span>
+
+                        <strong>
+                          Developer
+                        </strong>
+
+                        <small>
+                          Technical security report
+                        </small>
+
+                      </span>
+
+                    </button>
+
+                  </div>
+
+                </div>
+
+
+                {/* EMAIL */}
+
+                <div className="input-group">
+
+                  <label htmlFor="email">
+                    Email address
+                  </label>
+
+                  <input
+                    id="email"
+                    type="email"
+                    placeholder="you@example.com"
+                    value={email}
+                    onChange={(event) =>
+                      setEmail(
+                        event.target.value
+                      )
+                    }
+                  />
+
+                </div>
+
+
+                {/* ZIP */}
+
+                <div className="input-group">
+
+                  <label>
+                    Repository ZIP
+                  </label>
+
+
+                  <label
+                    htmlFor="repository-upload"
+                    className="upload-box"
+                  >
+
+                    <input
+                      id="repository-upload"
+                      type="file"
+                      accept=".zip,application/zip"
+                      onChange={
+                        handleFileChange
+                      }
+                    />
+
+
+                    <span className="upload-icon">
+                      ↑
+                    </span>
+
+
+                    <strong>
+                      {selectedFile
+                        ? selectedFile.name
+                        : "Choose repository ZIP"}
+                    </strong>
+
+
+                    <small>
+                      Maximum 50 MB
+                    </small>
+
+                  </label>
+
+                </div>
+
+
+                {/* ERROR */}
+
+                {error && (
+                  <div className="error-box">
+                    {error}
+                  </div>
+                )}
+
+
+                {/* START BUTTON */}
+
+                <button
+                  type="button"
+                  className="start-button"
+                  onClick={
+                    startAutonomousAnalysis
                   }
-                  disabled={running}
+                >
+
+                  Start Autonomous Analysis
+
+                  <span>
+                    →
+                  </span>
+
+                </button>
+
+              </section>
+
+            </>
+          )}
+
+
+        {/* ================================================== */}
+        {/* RUNNING SCREEN */}
+        {/* ================================================== */}
+
+        {running && (
+
+          <section className="progress-page">
+
+            <div className="progress-card">
+
+              <span className="hero-label">
+                AUTONOMOUS ANALYSIS
+              </span>
+
+              <h2>
+                Securing your repository...
+              </h2>
+
+              <p>
+                The system is processing your
+                repository. Each stage will complete
+                automatically.
+              </p>
+
+
+              {/* PROGRESS BAR */}
+
+              <div className="progress-bar">
+
+                <div
+                  className="progress-fill"
+                  style={{
+                    width: `${
+                      Math.max(
+                        8,
+                        ((progressStage + 1) /
+                          PIPELINE_STAGES.length) *
+                          100
+                      )
+                    }%`,
+                  }}
                 />
 
               </div>
 
 
-              {/* FILE */}
+              {/* CURRENT MESSAGE */}
 
-              <div className="input-group">
+              <div className="progress-current">
 
-                <label>
-                  Repository ZIP
-                </label>
+                <span className="progress-spinner" />
 
-                <label
-                  htmlFor="repository-upload"
-                  className={
-                    running
-                      ? "upload-box disabled"
-                      : "upload-box"
-                  }
-                >
+                <span>
+                  {progressMessage ||
+                    "Starting analysis..."}
+                </span>
 
-                  <input
-                    id="repository-upload"
-                    type="file"
-                    accept=".zip,application/zip"
-                    onChange={
-                      handleFileChange
+              </div>
+
+
+              {/* STAGES */}
+
+              <div className="progress-list">
+
+                {PIPELINE_STAGES.map(
+                  (
+                    stage,
+                    index
+                  ) => {
+
+                    let state =
+                      "pending";
+
+
+                    if (
+                      index <
+                      progressStage
+                    ) {
+
+                      state =
+                        "completed";
+
+                    } else if (
+                      index ===
+                      progressStage
+                    ) {
+
+                      state =
+                        "active";
                     }
-                    disabled={running}
-                  />
-
-                  <span className="upload-icon">
-                    ↑
-                  </span>
-
-                  <strong>
-                    {selectedFile
-                      ? selectedFile.name
-                      : "Choose repository ZIP"}
-                  </strong>
-
-                  <small>
-                    Maximum 50 MB
-                  </small>
-
-                </label>
-
-              </div>
 
 
-              {/* ERROR */}
+                    return (
+                      <div
+                        className={
+                          `progress-stage ${state}`
+                        }
+                        key={
+                          stage.id
+                        }
+                      >
 
-              {error && (
-                <div className="error-box">
-                  {error}
-                </div>
-              )}
+                        <div className="progress-stage-icon">
+
+                          {state ===
+                            "completed" && (
+                            <span>
+                              ✓
+                            </span>
+                          )}
+
+                          {state ===
+                            "active" && (
+                            <span className="mini-spinner" />
+                          )}
+
+                          {state ===
+                            "pending" && (
+                            <span>
+                              {index + 1}
+                            </span>
+                          )}
+
+                        </div>
 
 
-              {/* START */}
+                        <div>
 
-              <button
-                type="button"
-                className="start-button"
-                onClick={
-                  startAutonomousAnalysis
-                }
-                disabled={running}
-              >
+                          <strong>
+                            {stage.title}
+                          </strong>
 
-                {running ? (
-                  <>
-                    <span className="spinner" />
-                    Autonomous Analysis Running...
-                  </>
-                ) : (
-                  <>
-                    Start Autonomous Analysis
-                    <span>
-                      →
-                    </span>
-                  </>
+                          {state ===
+                            "active" && (
+                            <small>
+                              Processing...
+                            </small>
+                          )}
+
+                        </div>
+
+                      </div>
+                    );
+                  }
                 )}
 
-              </button>
-
-            </section>
-
-
-            {/* ============================================ */}
-            {/* PIPELINE PREVIEW */}
-            {/* ============================================ */}
-
-            <section className="pipeline-card">
-
-              <div className="section-heading">
-                <div>
-                  <span>
-                    AUTONOMOUS PIPELINE
-                  </span>
-
-                  <h3>
-                    One request. Full security workflow.
-                  </h3>
-                </div>
-              </div>
-
-
-              <div className="pipeline-preview">
-
-                {DEFAULT_STAGES.map(
-                  (stage, index) => (
-                    <div
-                      className="preview-stage"
-                      key={stage.id}
-                    >
-
-                      <div className="preview-number">
-                        {index + 1}
-                      </div>
-
-                      <div>
-                        <strong>
-                          {stage.title}
-                        </strong>
-                      </div>
-
-                    </div>
-                  )
-                )}
-
-              </div>
-
-            </section>
-          </>
-        )}
-
-
-        {/* ================================================== */}
-        {/* RUNNING */}
-        {/* ================================================== */}
-
-        {running && (
-          <section className="results-section">
-
-            <div className="processing-card">
-
-              <div className="processing-icon">
-                <span className="spinner large" />
-              </div>
-
-              <h2>
-                SentinelForge AI is working
-              </h2>
-
-              <p>
-                Your repository is being processed
-                autonomously. Please keep this page open.
-              </p>
-
-              <div className="processing-note">
-                Detection → Risk → AI Analysis →
-                Auto-Fix → Validation Preparation
               </div>
 
             </div>
@@ -2079,72 +2412,105 @@ export default function App() {
         {/* RESULTS */}
         {/* ================================================== */}
 
-        {completed && scanData && (
-          <section className="results-section">
+        {completed &&
+          scanData && (
 
-            {/* ============================================ */}
-            {/* SUCCESS HEADER */}
-            {/* ============================================ */}
-
-            <div className="results-header">
-
-              <div>
-                <span className="hero-label">
-                  ANALYSIS COMPLETED
-                </span>
-
-                <h2>
-                  Your repository security
-                  analysis is ready.
-                </h2>
-
-                <p>
-                  {scanData.filename}
-                </p>
-              </div>
-
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={resetAnalysis}
-              >
-                New Analysis
-              </button>
-
-            </div>
+            <section className="results-section">
 
 
-            {/* ============================================ */}
-            {/* PIPELINE */}
-            {/* ============================================ */}
+              {/* RESULT HEADER */}
 
-            <div className="results-card">
+              <div className="results-header">
 
-              <div className="section-heading">
                 <div>
-                  <span>
-                    PIPELINE
+
+                  <span className="hero-label">
+                    ANALYSIS COMPLETED
                   </span>
 
-                  <h3>
-                    Autonomous execution
-                  </h3>
+                  <h2>
+                    Security results are ready.
+                  </h2>
+
+                  <p>
+                    {
+                      scanData.filename
+                    }
+                  </p>
+
                 </div>
+
+
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={
+                    resetAnalysis
+                  }
+                >
+                  New Analysis
+                </button>
+
               </div>
 
 
-              <div className="pipeline-list">
+              {/* PROJECT TITLE */}
 
-                {stages.map(
-                  (stage, index) => {
+              <div className="results-card">
 
-                    const status =
-                      stage.status ||
-                      "pending";
+                <div className="project-title-box">
 
-                    return (
+                  <span>
+                    PROJECT
+                  </span>
+
+                  <strong>
+                    {PROJECT_TITLE}
+                  </strong>
+
+                </div>
+
+              </div>
+
+
+              {/* PIPELINE */}
+
+              <div className="results-card">
+
+                <div className="section-heading">
+
+                  <div>
+
+                    <span>
+                      PROCESS
+                    </span>
+
+                    <h3>
+                      Completed workflow
+                    </h3>
+
+                  </div>
+
+                </div>
+
+
+                <div className="pipeline-list">
+
+                  {(
+                    scanData?.stages ||
+                    []
+                  ).map(
+                    (
+                      stage,
+                      index
+                    ) => (
+
                       <div
-                        className={`pipeline-item ${status}`}
+                        className={
+                          `pipeline-item ${
+                            stage.status
+                          }`
+                        }
                         key={
                           stage.id ||
                           index
@@ -2153,26 +2519,21 @@ export default function App() {
 
                         <div className="pipeline-icon">
 
-                          {status ===
+                          {stage.status ===
                             "completed" && (
                             <span>
                               ✓
                             </span>
                           )}
 
-                          {status ===
-                            "running" && (
-                            <span className="spinner" />
-                          )}
-
-                          {status ===
+                          {stage.status ===
                             "skipped" && (
                             <span>
                               –
                             </span>
                           )}
 
-                          {status ===
+                          {stage.status ===
                             "pending" && (
                             <span>
                               {index + 1}
@@ -2180,6 +2541,7 @@ export default function App() {
                           )}
 
                         </div>
+
 
                         <div className="pipeline-content">
 
@@ -2195,519 +2557,557 @@ export default function App() {
 
                         </div>
 
+
                         <div className="pipeline-status">
-                          {status}
+                          {stage.status}
                         </div>
 
                       </div>
-                    );
-                  }
+                    )
+                  )}
+
+                </div>
+
+              </div>
+
+
+              {/* STATS */}
+
+              <div className="stats-grid">
+
+                <div className="stat-card">
+
+                  <span>
+                    FINDINGS
+                  </span>
+
+                  <strong>
+                    {
+                      scanData.findings?.length ||
+                      0
+                    }
+                  </strong>
+
+                </div>
+
+
+                <div className="stat-card">
+
+                  <span>
+                    RISK SCORE
+                  </span>
+
+                  <strong>
+                    {
+                      scanData.overall_risk?.score ??
+                      scanData.overall_risk?.overall_score ??
+                      "N/A"
+                    }
+                  </strong>
+
+                </div>
+
+
+                <div className="stat-card">
+
+                  <span>
+                    RISK LEVEL
+                  </span>
+
+                  <strong>
+                    {
+                      scanData.overall_risk?.risk_level ??
+                      scanData.overall_risk?.level ??
+                      "N/A"
+                    }
+                  </strong>
+
+                </div>
+
+
+                <div className="stat-card">
+
+                  <span>
+                    AI FIXES
+                  </span>
+
+                  <strong>
+                    {
+                      scanData.fixes?.filter(
+                        (fix) =>
+                          fix?.success
+                      ).length || 0
+                    }
+                  </strong>
+
+                </div>
+
+              </div>
+
+
+              {/* FINDINGS */}
+
+              <div className="results-card">
+
+                <div className="section-heading">
+
+                  <div>
+
+                    <span>
+                      SECURITY FINDINGS
+                    </span>
+
+                    <h3>
+                      Vulnerabilities detected
+                    </h3>
+
+                  </div>
+
+                </div>
+
+
+                {scanData.findings?.length ===
+                0 ? (
+
+                  <div className="secure-box">
+                    ✓ No security vulnerabilities
+                    were detected.
+                  </div>
+
+                ) : (
+
+                  <div className="finding-list">
+
+                    {scanData.findings.map(
+                      (
+                        finding,
+                        index
+                      ) => {
+
+                        const assessment =
+                          scanData.risk_assessments?.[
+                            index
+                          ] || {};
+
+
+                        return (
+                          <article
+                            className="finding-card"
+                            key={
+                              index
+                            }
+                          >
+
+                            <div className="finding-header">
+
+                              <div>
+
+                                <span className="finding-number">
+                                  FINDING {
+                                    index + 1
+                                  }
+                                </span>
+
+                                <h4>
+                                  {
+                                    getVulnerabilityType(
+                                      finding,
+                                      assessment
+                                    )
+                                  }
+                                </h4>
+
+                              </div>
+
+
+                              <span className="severity-badge">
+                                {
+                                  getSeverity(
+                                    finding,
+                                    assessment
+                                  )
+                                }
+                              </span>
+
+                            </div>
+
+
+                            <div className="finding-meta">
+
+                              <div>
+
+                                <span>
+                                  File
+                                </span>
+
+                                <strong>
+                                  {
+                                    finding?.path ||
+                                    "Unknown"
+                                  }
+                                </strong>
+
+                              </div>
+
+
+                              <div>
+
+                                <span>
+                                  Line
+                                </span>
+
+                                <strong>
+                                  {
+                                    getLine(
+                                      finding
+                                    )
+                                  }
+                                </strong>
+
+                              </div>
+
+
+                              <div>
+
+                                <span>
+                                  CWE
+                                </span>
+
+                                <strong>
+                                  {
+                                    getCwe(
+                                      finding,
+                                      assessment
+                                    )
+                                  }
+                                </strong>
+
+                              </div>
+
+
+                              <div>
+
+                                <span>
+                                  Risk
+                                </span>
+
+                                <strong>
+                                  {
+                                    getRiskScore(
+                                      assessment
+                                    )
+                                  }
+                                </strong>
+
+                              </div>
+
+                            </div>
+
+
+                            <div className="finding-message">
+
+                              <span>
+                                Semgrep Message
+                              </span>
+
+                              <p>
+                                {
+                                  getMessage(
+                                    finding
+                                  )
+                                }
+                              </p>
+
+                            </div>
+
+
+                            {finding?.source_code && (
+
+                              <details className="source-details">
+
+                                <summary>
+                                  View source context
+                                </summary>
+
+                                <pre>
+                                  {
+                                    finding.source_code
+                                  }
+                                </pre>
+
+                              </details>
+
+                            )}
+
+                          </article>
+                        );
+                      }
+                    )}
+
+                  </div>
                 )}
 
               </div>
 
-            </div>
+
+              {/* AUTO-FIX */}
+
+              <div className="results-card">
+
+                <div className="section-heading">
+
+                  <div>
+
+                    <span>
+                      AI AUTO-FIX
+                    </span>
+
+                    <h3>
+                      Remediation results
+                    </h3>
+
+                  </div>
+
+                </div>
 
 
-            {/* ============================================ */}
-            {/* OVERVIEW */}
-            {/* ============================================ */}
+                <div className="fix-summary">
 
-            <div className="stats-grid">
+                  <div>
 
-              <div className="stat-card">
-                <span>
-                  FINDINGS
-                </span>
+                    <strong>
+                      {
+                        scanData.fixes?.filter(
+                          (fix) =>
+                            fix?.success
+                        ).length || 0
+                      }
+                    </strong>
 
-                <strong>
-                  {findings.length}
-                </strong>
+                    <span>
+                      fixes generated
+                    </span>
+
+                  </div>
+
+
+                  <div>
+
+                    <strong>
+                      {
+                        scanData.fixes?.filter(
+                          (fix) =>
+                            !fix?.success
+                        ).length || 0
+                      }
+                    </strong>
+
+                    <span>
+                      skipped / unavailable
+                    </span>
+
+                  </div>
+
+                </div>
+
+
+                <div className="note-box">
+
+                  Groq AI was used only for
+                  Auto-Fix generation. The original
+                  repository remains unchanged.
+
+                </div>
+
+
+                <div className="note-box">
+
+                  No second security scan was
+                  performed after Auto-Fix generation.
+                  Therefore generated fixes are not
+                  claimed as security-verified.
+
+                </div>
+
               </div>
 
-              <div className="stat-card">
-                <span>
-                  RISK SCORE
-                </span>
+
+              {/* DOWNLOADS */}
+
+              <div className="results-card">
+
+                <div className="section-heading">
+
+                  <div>
+
+                    <span>
+                      DOWNLOADS
+                    </span>
+
+                    <h3>
+                      Get your generated files
+                    </h3>
+
+                  </div>
+
+                </div>
+
+
+                <div className="download-grid">
+
+
+                  {/* PDF */}
+
+                  <div className="download-card">
+
+                    <div className="download-icon">
+                      PDF
+                    </div>
+
+                    <div>
+
+                      <strong>
+                        Security Report
+                      </strong>
+
+                      <small>
+                        Role-based vulnerability report
+                      </small>
+
+                    </div>
+
+
+                    <button
+                      type="button"
+                      className="download-button"
+                      onClick={
+                        downloadSecurityReport
+                      }
+                    >
+                      Download Report
+                    </button>
+
+
+                    {pdfStatus && (
+                      <p className="delivery-status">
+                        {pdfStatus}
+                      </p>
+                    )}
+
+                  </div>
+
+
+                  {/* ZIP */}
+
+                  <div className="download-card">
+
+                    <div className="download-icon">
+                      ZIP
+                    </div>
+
+                    <div>
+
+                      <strong>
+                        Fixed Repository
+                      </strong>
+
+                      <small>
+                        Original files + generated fixes
+                      </small>
+
+                    </div>
+
+
+                    <button
+                      type="button"
+                      className="download-button"
+                      onClick={
+                        downloadFixedRepository
+                      }
+                    >
+                      Download Fixed ZIP
+                    </button>
+
+
+                    {zipStatus && (
+                      <p className="delivery-status">
+                        {zipStatus}
+                      </p>
+                    )}
+
+                  </div>
+
+                </div>
+
+              </div>
+
+
+              {/* EMAIL */}
+
+              <div className="results-card">
+
+                <div className="section-heading">
+
+                  <div>
+
+                    <span>
+                      EMAIL
+                    </span>
+
+                    <h3>
+                      Report delivery
+                    </h3>
+
+                  </div>
+
+                </div>
+
+
+                <div className="email-status-card">
+
+                  <div className="email-status-icon">
+                    ✉
+                  </div>
+
+                  <div>
+
+                    <strong>
+                      Automatic email delivery
+                    </strong>
+
+                    <small>
+                      {
+                        emailStatus ||
+                        "Preparing email report..."
+                      }
+                    </small>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+
+              {/* VALIDATION */}
+
+              <div className="validation-banner">
 
                 <strong>
+                  Validation Status
+                </strong>
+
+                <p>
                   {
-                    overallRisk.score ??
-                    overallRisk.overall_score ??
-                    "N/A"
+                    scanData.validation_status ||
+                    "Validation preparation completed. No second security scan was performed."
                   }
-                </strong>
-              </div>
-
-              <div className="stat-card">
-                <span>
-                  RISK LEVEL
-                </span>
-
-                <strong>
-                  {
-                    overallRisk.risk_level ??
-                    overallRisk.level ??
-                    "N/A"
-                  }
-                </strong>
-              </div>
-
-              <div className="stat-card">
-                <span>
-                  FIXES GENERATED
-                </span>
-
-                <strong>
-                  {successfulFixCount}
-                </strong>
-              </div>
-
-            </div>
-
-
-            {/* ============================================ */}
-            {/* SEVERITY */}
-            {/* ============================================ */}
-
-            <div className="results-card">
-
-              <div className="section-heading">
-                <div>
-                  <span>
-                    SEVERITY
-                  </span>
-
-                  <h3>
-                    Finding distribution
-                  </h3>
-                </div>
-              </div>
-
-              <div className="severity-grid">
-
-                <div>
-                  <strong>
-                    {severityCounts.CRITICAL}
-                  </strong>
-                  <span>
-                    Critical
-                  </span>
-                </div>
-
-                <div>
-                  <strong>
-                    {severityCounts.HIGH}
-                  </strong>
-                  <span>
-                    High
-                  </span>
-                </div>
-
-                <div>
-                  <strong>
-                    {severityCounts.MEDIUM}
-                  </strong>
-                  <span>
-                    Medium
-                  </span>
-                </div>
-
-                <div>
-                  <strong>
-                    {severityCounts.LOW}
-                  </strong>
-                  <span>
-                    Low
-                  </span>
-                </div>
-
-                <div>
-                  <strong>
-                    {severityCounts.INFO}
-                  </strong>
-                  <span>
-                    Info
-                  </span>
-                </div>
+                </p>
 
               </div>
 
-            </div>
-
-
-            {/* ============================================ */}
-            {/* AI ANALYSIS */}
-            {/* ============================================ */}
-
-            <div className="results-card">
-
-              <div className="section-heading">
-                <div>
-                  <span>
-                    GROQ AI
-                  </span>
-
-                  <h3>
-                    Security analysis
-                  </h3>
-                </div>
-              </div>
-
-              <div className="analysis-box">
-                {aiAnalysis ||
-                  "No AI analysis returned."}
-              </div>
-
-            </div>
-
-
-            {/* ============================================ */}
-            {/* FINDINGS */}
-            {/* ============================================ */}
-
-            <div className="results-card">
-
-              <div className="section-heading">
-                <div>
-                  <span>
-                    SECURITY FINDINGS
-                  </span>
-
-                  <h3>
-                    Detected vulnerabilities
-                  </h3>
-                </div>
-              </div>
-
-
-              {findings.length === 0 ? (
-                <div className="secure-box">
-                  ✓ No security vulnerabilities
-                  were detected.
-                </div>
-              ) : (
-                <div className="finding-list">
-
-                  {findings.map(
-                    (finding, index) => {
-                      const assessment =
-                        riskAssessments[
-                          index
-                        ] || {};
-
-                      const vulnerability =
-                        getVulnerabilityType(
-                          finding,
-                          assessment
-                        );
-
-                      const severity =
-                        getSeverity(
-                          finding,
-                          assessment
-                        );
-
-                      return (
-                        <article
-                          className="finding-card"
-                          key={index}
-                        >
-
-                          <div className="finding-header">
-
-                            <div>
-                              <span className="finding-number">
-                                FINDING {index + 1}
-                              </span>
-
-                              <h4>
-                                {vulnerability}
-                              </h4>
-                            </div>
-
-                            <span className="severity-badge">
-                              {severity}
-                            </span>
-
-                          </div>
-
-
-                          <div className="finding-meta">
-
-                            <div>
-                              <span>
-                                File
-                              </span>
-
-                              <strong>
-                                {finding?.path ||
-                                  "Unknown"}
-                              </strong>
-                            </div>
-
-                            <div>
-                              <span>
-                                Line
-                              </span>
-
-                              <strong>
-                                {getLine(
-                                  finding
-                                )}
-                              </strong>
-                            </div>
-
-                            <div>
-                              <span>
-                                CWE
-                              </span>
-
-                              <strong>
-                                {getCwe(
-                                  finding,
-                                  assessment
-                                )}
-                              </strong>
-                            </div>
-
-                            <div>
-                              <span>
-                                Risk
-                              </span>
-
-                              <strong>
-                                {getRiskScore(
-                                  assessment
-                                )}
-                              </strong>
-                            </div>
-
-                          </div>
-
-
-                          <div className="finding-message">
-
-                            <span>
-                              Semgrep Message
-                            </span>
-
-                            <p>
-                              {getMessage(
-                                finding
-                              )}
-                            </p>
-
-                          </div>
-
-
-                          {finding?.source_code && (
-                            <details className="source-details">
-
-                              <summary>
-                                View source context
-                              </summary>
-
-                              <pre>
-                                {finding.source_code}
-                              </pre>
-
-                            </details>
-                          )}
-
-                        </article>
-                      );
-                    }
-                  )}
-
-                </div>
-              )}
-
-            </div>
-
-
-            {/* ============================================ */}
-            {/* FIX SUMMARY */}
-            {/* ============================================ */}
-
-            <div className="results-card">
-
-              <div className="section-heading">
-                <div>
-                  <span>
-                    AI AUTO-FIX
-                  </span>
-
-                  <h3>
-                    Remediation preparation
-                  </h3>
-                </div>
-              </div>
-
-
-              <div className="fix-summary">
-
-                <div>
-                  <strong>
-                    {successfulFixCount}
-                  </strong>
-
-                  <span>
-                    fixes generated
-                  </span>
-                </div>
-
-                <div>
-                  <strong>
-                    {failedFixCount}
-                  </strong>
-
-                  <span>
-                    fixes unavailable
-                  </span>
-                </div>
-
-              </div>
-
-
-              <div className="note-box">
-                The original uploaded repository
-                was not modified. Generated fixes
-                are placed into a new repository ZIP.
-                Phase 4 does not perform a second
-                security scan, so the fixes are not
-                claimed as security-verified.
-              </div>
-
-            </div>
-
-
-            {/* ============================================ */}
-            {/* DELIVERY */}
-            {/* ============================================ */}
-
-            <div className="results-card">
-
-              <div className="section-heading">
-                <div>
-                  <span>
-                    DELIVERY
-                  </span>
-
-                  <h3>
-                    Your generated outputs
-                  </h3>
-                </div>
-              </div>
-
-
-              <div className="delivery-grid">
-
-                <div
-                  className={
-                    pdfDownloaded
-                      ? "delivery-item done"
-                      : "delivery-item"
-                  }
-                >
-                  <span>
-                    {pdfDownloaded
-                      ? "✓"
-                      : "•"}
-                  </span>
-
-                  <div>
-                    <strong>
-                      Security Report PDF
-                    </strong>
-
-                    <small>
-                      {reportStatus ||
-                        "Generated after analysis"}
-                    </small>
-                  </div>
-                </div>
-
-
-                <div
-                  className={
-                    zipDownloaded
-                      ? "delivery-item done"
-                      : "delivery-item"
-                  }
-                >
-                  <span>
-                    {zipDownloaded
-                      ? "✓"
-                      : "•"}
-                  </span>
-
-                  <div>
-                    <strong>
-                      Fixed Repository ZIP
-                    </strong>
-
-                    <small>
-                      {zipStatus ||
-                        "Generated after auto-fix"}
-                    </small>
-                  </div>
-                </div>
-
-
-                <div
-                  className={
-                    emailStatus.startsWith(
-                      "Security report sent"
-                    )
-                      ? "delivery-item done"
-                      : "delivery-item"
-                  }
-                >
-                  <span>
-                    {emailStatus.startsWith(
-                      "Security report sent"
-                    )
-                      ? "✓"
-                      : "•"}
-                  </span>
-
-                  <div>
-                    <strong>
-                      Email Report
-                    </strong>
-
-                    <small>
-                      {emailStatus ||
-                        "Sent to your email"}
-                    </small>
-                  </div>
-                </div>
-
-              </div>
-
-            </div>
-
-
-            {/* ============================================ */}
-            {/* VALIDATION NOTICE */}
-            {/* ============================================ */}
-
-            <div className="validation-banner">
-
-              <strong>
-                Validation status
-              </strong>
-
-              <p>
-                {scanData.validation_status ||
-                  "Validation preparation completed. No second security scan was performed."}
-              </p>
-
-            </div>
-
-          </section>
-        )}
+            </section>
+          )}
 
       </main>
 
@@ -2719,11 +3119,11 @@ export default function App() {
       <footer className="app-footer">
 
         <span>
-          SentinelForge AI
+          {PROJECT_TITLE}
         </span>
 
         <span>
-          Autonomous Security Platform
+          Automated Security Analysis
         </span>
 
       </footer>

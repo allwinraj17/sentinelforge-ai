@@ -1,5 +1,4 @@
 /* ============================================================
-   SENTINELFORGE AI - PHASE 4
    GLOBAL STYLES
    ============================================================ */
 
@@ -14,7 +13,7 @@
     sans-serif;
 
   color: #111827;
-  background: #f5f7fb;
+  background: #f6f8fc;
 
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -32,17 +31,25 @@
   box-sizing: border-box;
 }
 
-html {
+html,
+body,
+#root {
+  width: 100%;
   min-width: 320px;
   min-height: 100%;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
-  min-width: 320px;
   min-height: 100vh;
 
-  background: #f5f7fb;
+  background: #f6f8fc;
+
+  color: #111827;
 }
 
 button,
@@ -64,12 +71,15 @@ svg {
 
 
 /* ============================================================
-   ROOT
+   TEXT
    ============================================================ */
 
-#root {
-  width: 100%;
-  min-height: 100vh;
+h1,
+h2,
+h3,
+h4,
+p {
+  overflow-wrap: anywhere;
 }
 
 
@@ -111,7 +121,7 @@ svg {
    ============================================================ */
 
 :focus-visible {
-  outline: 3px solid rgba(99, 102, 241, 0.25);
+  outline: 3px solid rgba(99, 102, 241, 0.24);
   outline-offset: 2px;
 }
 
@@ -123,5 +133,24 @@ svg {
 @media (max-width: 620px) {
   html {
     font-size: 15px;
+  }
+}
+
+
+/* ============================================================
+   REDUCED MOTION
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

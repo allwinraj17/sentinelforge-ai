@@ -9,6 +9,9 @@ from typing import Any
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.agents.auto_fix_agent import generate_fix
+from app.config import settings
+from app.database import Base, engine
 from app.risk_engine import (
     assess_findings,
     calculate_overall_risk,
@@ -18,11 +21,6 @@ from app.scanner import (
     extract_zip_to_temp,
     run_semgrep_scan,
 )
-from app.services.code_context import get_code_context
-from app.ai_service import analyze_security_findings
-from app.agents.auto_fix_agent import generate_fix
-from app.config import settings
-from app.database import Base, engine
 
 
 # ============================================================
@@ -30,21 +28,24 @@ from app.database import Base, engine
 # ============================================================
 
 app = FastAPI(
-    title="SentinelForge AI",
+    title="A Multi-Agent System for Automated Software Repository Security Analysis",
     description=(
-        "Autonomous AI-powered repository security "
-        "analysis and remediation platform."
+        "Autonomous software repository security analysis "
+        "using Semgrep, risk assessment and AI-assisted "
+        "vulnerability remediation."
     ),
     version="4.0.0",
 )
 
 
 # ============================================================
-# DATABASE INITIALIZATION
+# DATABASE
 # ============================================================
 
 try:
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(
+        bind=engine
+    )
 except Exception as exc:
     print(
         f"Database initialization warning: {exc}"
@@ -83,7 +84,13 @@ else:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"https://sentinelforge.*\.vercel\.app",
+
+    # Supports Vercel preview URLs such as:
+    # https://sentinelforge-njrf0j0l9-aaa-ac6c.vercel.app
+    allow_origin_regex=(
+        r"https://sentinelforge.*\.vercel\.app"
+    ),
+
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -91,19 +98,30 @@ app.add_middleware(
 
 
 # ============================================================
-# CONSTANTS
+# LIMITS
 # ============================================================
 
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024
+
+# Groq is used ONLY for Auto-Fix.
+# Limiting the number of AI fixes keeps the workflow
+# faster and reduces token consumption.
+MAX_AUTO_FIXES = 3
+
+# Prevent very large source files from being passed
+# to the Auto-Fix model.
+MAX_SOURCE_FILE_SIZE = 10 * 1024 * 1024
 
 
 # ============================================================
 # HELPERS
 # ============================================================
 
-def _normalize_role(role: str) -> str:
+def normalize_role(
+    role: str,
+) -> str:
     """
-    Normalize the user role.
+    Normalize and validate user role.
     """
 
     value = str(
@@ -121,9 +139,11 @@ def _normalize_role(role: str) -> str:
     return value
 
 
-def _validate_email(email: str) -> str:
+def validate_email(
+    email: str,
+) -> str:
     """
-    Basic backend validation for email.
+    Validate email input.
     """
 
     value = str(
@@ -143,11 +163,11 @@ def _validate_email(email: str) -> str:
     return value
 
 
-def _get_line_from_finding(
+def get_finding_line(
     finding: dict[str, Any],
 ) -> int | None:
     """
-    Safely extract vulnerability line number.
+    Safely extract a finding line number.
     """
 
     start = finding.get(
@@ -196,11 +216,11 @@ def _get_line_from_finding(
         return None
 
 
-def _safe_finding_copy(
+def safe_finding_copy(
     finding: dict[str, Any],
 ) -> dict[str, Any]:
     """
-    Convert scanner output into a JSON-safe dictionary.
+    Convert scanner output into JSON-safe data.
     """
 
     try:
@@ -210,6 +230,7 @@ def _safe_finding_copy(
                 default=str,
             )
         )
+
     except Exception:
 
         return {
@@ -221,6 +242,10 @@ def _safe_finding_copy(
                 "path",
                 "unknown",
             ),
+            "start": finding.get(
+                "start",
+                {},
+            ),
             "extra": finding.get(
                 "extra",
                 {},
@@ -228,14 +253,14 @@ def _safe_finding_copy(
         }
 
 
-def _build_stage(
+def build_stage(
     stage_id: str,
     title: str,
     status: str,
-    message: str,
+    message: str = "",
 ) -> dict[str, str]:
     """
-    Create a pipeline stage object.
+    Build a frontend-friendly pipeline stage.
     """
 
     return {
@@ -244,6 +269,67 @@ def _build_stage(
         "status": status,
         "message": message,
     }
+
+
+def read_complete_source_file(
+    extract_dir: str | Path,
+    relative_path: str,
+) -> str:
+    """
+    Read the complete file from the extracted repository.
+
+    Auto-Fix receives the complete source file so that the
+    AI can return a complete corrected replacement file.
+    """
+
+    root = Path(
+        extract_dir
+    ).resolve()
+
+    relative = Path(
+        str(relative_path)
+    )
+
+    if relative.is_absolute():
+        raise ValueError(
+            "Absolute source paths are not allowed."
+        )
+
+    target = (
+        root / relative
+    ).resolve()
+
+    try:
+        target.relative_to(
+            root
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Source path is outside the repository."
+        ) from exc
+
+    if not target.exists():
+        raise FileNotFoundError(
+            f"Source file not found: {relative_path}"
+        )
+
+    if not target.is_file():
+        raise ValueError(
+            f"Source path is not a file: {relative_path}"
+        )
+
+    if (
+        target.stat().st_size
+        > MAX_SOURCE_FILE_SIZE
+    ):
+        raise ValueError(
+            "Source file is too large for AI Auto-Fix."
+        )
+
+    return target.read_text(
+        encoding="utf-8",
+        errors="replace",
+    )
 
 
 # ============================================================
@@ -255,9 +341,14 @@ async def root():
 
     return {
         "success": True,
-        "service": "SentinelForge AI",
+        "service": (
+            "A Multi-Agent System for Automated "
+            "Software Repository Security Analysis"
+        ),
         "version": "4.0.0",
-        "message": "SentinelForge AI backend is running.",
+        "message": (
+            "Security analysis backend is running."
+        ),
     }
 
 
@@ -291,31 +382,29 @@ async def start_autonomous_scan(
     file: UploadFile = File(...),
 ):
     """
-    SentinelForge AI Phase 4 autonomous security pipeline.
+    Phase 4 master security pipeline.
 
-    Pipeline:
+    FINAL FLOW:
 
-        Repository received
-              ↓
-        ZIP validation/extraction
-              ↓
-        Semgrep security scan
-              ↓
-        Risk assessment
-              ↓
-        Groq AI analysis
-              ↓
-        AI Auto-Fix
-              ↓
-        Validation preparation
-              ↓
-        Return complete results
+        Repository
+            ↓
+        Safe Extraction
+            ↓
+        Semgrep Detection
+            ↓
+        Risk Assessment
+            ↓
+        Groq AI Auto-Fix
+            ↓
+        Validation Preparation
+            ↓
+        Return Results
 
-    Important:
-        Phase 4 does NOT run a second Semgrep scan
-        after Auto-Fix generation.
+    Groq is NOT used for report generation.
 
-    Original uploaded repository is never modified.
+    No second Semgrep scan is performed.
+
+    Original repository is never modified.
     """
 
     # ========================================================
@@ -324,11 +413,11 @@ async def start_autonomous_scan(
 
     try:
 
-        normalized_role = _normalize_role(
+        normalized_role = normalize_role(
             role
         )
 
-        normalized_email = _validate_email(
+        normalized_email = validate_email(
             email
         )
 
@@ -344,7 +433,9 @@ async def start_autonomous_scan(
 
         raise HTTPException(
             status_code=400,
-            detail="Repository ZIP file is required.",
+            detail=(
+                "Repository ZIP file is required."
+            ),
         )
 
 
@@ -359,63 +450,53 @@ async def start_autonomous_scan(
 
         raise HTTPException(
             status_code=400,
-            detail="Only ZIP repository files are supported.",
+            detail=(
+                "Only ZIP repository files are supported."
+            ),
         )
 
 
     # ========================================================
-    # INITIAL PIPELINE
+    # INITIAL STAGES
     # ========================================================
 
-    stages: list[dict[str, str]] = [
+    stages = [
 
-        _build_stage(
+        build_stage(
             "repository",
             "Repository Received",
             "completed",
             "Repository ZIP received successfully.",
         ),
 
-        _build_stage(
+        build_stage(
             "extract",
             "Repository Extraction",
             "pending",
-            "",
         ),
 
-        _build_stage(
+        build_stage(
             "semgrep",
             "Security Detection",
             "pending",
-            "",
         ),
 
-        _build_stage(
+        build_stage(
             "risk",
             "Risk Assessment",
             "pending",
-            "",
         ),
 
-        _build_stage(
-            "ai",
-            "AI Security Analysis",
-            "pending",
-            "",
-        ),
-
-        _build_stage(
+        build_stage(
             "fix",
             "AI Auto-Fix",
             "pending",
-            "",
         ),
 
-        _build_stage(
+        build_stage(
             "validation",
             "Validation Preparation",
             "pending",
-            "",
         ),
     ]
 
@@ -436,7 +517,9 @@ async def start_autonomous_scan(
 
             raise HTTPException(
                 status_code=400,
-                detail="Uploaded ZIP file is empty.",
+                detail=(
+                    "Uploaded ZIP file is empty."
+                ),
             )
 
 
@@ -465,26 +548,33 @@ async def start_autonomous_scan(
 
                     raise HTTPException(
                         status_code=400,
-                        detail="Uploaded ZIP archive is corrupted.",
+                        detail=(
+                            "Uploaded ZIP archive "
+                            "is corrupted."
+                        ),
                     )
 
         except zipfile.BadZipFile as exc:
 
             raise HTTPException(
                 status_code=400,
-                detail="Uploaded file is not a valid ZIP archive.",
+                detail=(
+                    "Uploaded file is not a valid ZIP archive."
+                ),
             ) from exc
 
 
         # ====================================================
-        # EXTRACTION
+        # STAGE 1 - EXTRACTION
         # ====================================================
 
-        stages[1] = _build_stage(
+        stages[1] = build_stage(
             "extract",
             "Repository Extraction",
             "running",
-            "Safely extracting repository contents.",
+            (
+                "Safely extracting repository contents."
+            ),
         )
 
 
@@ -493,23 +583,28 @@ async def start_autonomous_scan(
         )
 
 
-        stages[1] = _build_stage(
+        stages[1] = build_stage(
             "extract",
             "Repository Extraction",
             "completed",
-            "Repository extracted successfully.",
+            (
+                "Repository extracted successfully."
+            ),
         )
 
 
         # ====================================================
-        # SEMGREP
+        # STAGE 2 - SEMGREP
         # ====================================================
 
-        stages[2] = _build_stage(
+        stages[2] = build_stage(
             "semgrep",
             "Security Detection",
             "running",
-            "Semgrep is scanning the repository for security issues.",
+            (
+                "Semgrep is scanning the repository "
+                "for security vulnerabilities."
+            ),
         )
 
 
@@ -525,9 +620,7 @@ async def start_autonomous_scan(
             findings = []
 
 
-        safe_findings: list[
-            dict[str, Any]
-        ] = []
+        safe_findings = []
 
 
         for finding in findings:
@@ -539,7 +632,7 @@ async def start_autonomous_scan(
                 continue
 
 
-            current_finding = _safe_finding_copy(
+            current_finding = safe_finding_copy(
                 finding
             )
 
@@ -550,22 +643,28 @@ async def start_autonomous_scan(
             )
 
 
-            line = _get_line_from_finding(
+            line = get_finding_line(
                 current_finding
             )
 
 
-            source_code = ""
+            source_context = ""
 
 
             if path and line:
 
                 try:
 
-                    source_code = get_code_context(
-                        extract_dir,
-                        str(path),
-                        line,
+                    from app.services.code_context import (
+                        get_code_context,
+                    )
+
+                    source_context = (
+                        get_code_context(
+                            extract_dir,
+                            str(path),
+                            line,
+                        )
                     )
 
                 except Exception as exc:
@@ -578,7 +677,7 @@ async def start_autonomous_scan(
 
             current_finding[
                 "source_code"
-            ] = source_code
+            ] = source_context
 
 
             safe_findings.append(
@@ -589,7 +688,7 @@ async def start_autonomous_scan(
         findings = safe_findings
 
 
-        stages[2] = _build_stage(
+        stages[2] = build_stage(
             "semgrep",
             "Security Detection",
             "completed",
@@ -601,14 +700,16 @@ async def start_autonomous_scan(
 
 
         # ====================================================
-        # RISK ASSESSMENT
+        # STAGE 3 - RISK ASSESSMENT
         # ====================================================
 
-        stages[3] = _build_stage(
+        stages[3] = build_stage(
             "risk",
             "Risk Assessment",
             "running",
-            "Calculating vulnerability severity and risk.",
+            (
+                "Calculating severity and risk levels."
+            ),
         )
 
 
@@ -660,104 +761,63 @@ async def start_autonomous_scan(
             overall_risk = {}
 
 
-        stages[3] = _build_stage(
+        stages[3] = build_stage(
             "risk",
             "Risk Assessment",
             "completed",
-            "Risk assessment completed.",
+            (
+                "Risk assessment completed."
+            ),
         )
 
 
         # ====================================================
-        # GROQ AI ANALYSIS
+        # STAGE 4 - GROQ AUTO-FIX ONLY
         # ====================================================
 
-        stages[4] = _build_stage(
-            "ai",
-            "AI Security Analysis",
-            "running",
-            "Groq AI is analyzing the detected vulnerabilities.",
-        )
-
-
-        ai_analysis = ""
-
-
-        try:
-
-            ai_analysis = analyze_security_findings(
-                findings=findings,
-                role=normalized_role,
-            )
-
-        except Exception as exc:
-
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "AI security analysis failed: "
-                    f"{exc}"
-                ),
-            ) from exc
-
-
-        if not ai_analysis:
-
-            ai_analysis = (
-                "No AI analysis was generated."
-            )
-
-
-        stages[4] = _build_stage(
-            "ai",
-            "AI Security Analysis",
-            "completed",
-            "Groq AI security analysis completed.",
-        )
-
-
-        # ====================================================
-        # AI AUTO-FIX
-        # ====================================================
-
-        stages[5] = _build_stage(
+        stages[4] = build_stage(
             "fix",
             "AI Auto-Fix",
             "running",
-            "Generating corrected copies for detected vulnerabilities.",
+            (
+                "AI is preparing corrected copies "
+                "for high-priority findings."
+            ),
         )
 
 
-        fixes: list[dict[str, Any]] = []
+        fixes = []
 
 
         if not findings:
 
-            stages[5] = _build_stage(
+            stages[4] = build_stage(
                 "fix",
                 "AI Auto-Fix",
                 "skipped",
-                "No vulnerabilities require an AI-generated fix.",
+                (
+                    "No vulnerabilities require remediation."
+                ),
             )
 
         else:
 
+            findings_to_fix = findings[
+                :MAX_AUTO_FIXES
+            ]
+
+
             for index, finding in enumerate(
-                findings
+                findings_to_fix
             ):
 
                 path = finding.get(
-                    "path"
-                )
-
-
-                source_code = finding.get(
-                    "source_code",
+                    "path",
                     "",
                 )
 
 
-                fix_result: dict[str, Any] = {
+                fix_result = {
 
                     "success": False,
 
@@ -766,7 +826,9 @@ async def start_autonomous_scan(
                     "original_path": path,
 
                     "filename": (
-                        Path(str(path)).name
+                        Path(
+                            str(path)
+                        ).name
                         if path
                         else None
                     ),
@@ -777,13 +839,13 @@ async def start_autonomous_scan(
                 }
 
 
-                if not source_code:
+                if not path:
 
                     fix_result[
                         "error"
                     ] = (
-                        "Source context unavailable "
-                        "for this finding."
+                        "Finding does not contain "
+                        "a file path."
                     )
 
                     fixes.append(
@@ -793,11 +855,41 @@ async def start_autonomous_scan(
                     continue
 
 
+                # ============================================
+                # READ COMPLETE SOURCE FILE
+                # ============================================
+
+                try:
+
+                    full_source_code = (
+                        read_complete_source_file(
+                            extract_dir,
+                            str(path),
+                        )
+                    )
+
+                except Exception as exc:
+
+                    fix_result[
+                        "error"
+                    ] = str(exc)
+
+                    fixes.append(
+                        fix_result
+                    )
+
+                    continue
+
+
+                # ============================================
+                # GROQ CALL
+                # ============================================
+
                 try:
 
                     fixed_code = generate_fix(
                         vulnerability=finding,
-                        source_code=source_code,
+                        source_code=full_source_code,
                     )
 
 
@@ -807,7 +899,7 @@ async def start_autonomous_scan(
                     ):
 
                         raise ValueError(
-                            "AI Auto-Fix returned an invalid response."
+                            "AI Auto-Fix returned invalid code."
                         )
 
 
@@ -817,7 +909,7 @@ async def start_autonomous_scan(
                     if not fixed_code:
 
                         raise ValueError(
-                            "AI Auto-Fix returned empty corrected code."
+                            "AI Auto-Fix returned empty code."
                         )
 
 
@@ -833,6 +925,11 @@ async def start_autonomous_scan(
 
                 except Exception as exc:
 
+                    print(
+                        f"Auto-Fix error for {path}:",
+                        exc,
+                    )
+
                     fix_result[
                         "error"
                     ] = str(exc)
@@ -843,39 +940,95 @@ async def start_autonomous_scan(
                 )
 
 
+            # ================================================
+            # REPORT SKIPPED FINDINGS
+            # ================================================
+
+            if len(findings) > MAX_AUTO_FIXES:
+
+                for skipped_index in range(
+                    MAX_AUTO_FIXES,
+                    len(findings),
+                ):
+
+                    skipped_finding = findings[
+                        skipped_index
+                    ]
+
+                    skipped_path = (
+                        skipped_finding.get(
+                            "path",
+                            "",
+                        )
+                    )
+
+
+                    fixes.append(
+                        {
+                            "success": False,
+
+                            "finding_index": skipped_index,
+
+                            "original_path": skipped_path,
+
+                            "filename": (
+                                Path(
+                                    str(
+                                        skipped_path
+                                    )
+                                ).name
+                                if skipped_path
+                                else None
+                            ),
+
+                            "fixed_code": None,
+
+                            "error": (
+                                "Auto-Fix skipped to "
+                                "reduce AI usage and "
+                                "processing time."
+                            ),
+                        }
+                    )
+
+
             successful_fixes = sum(
                 1
                 for fix in fixes
-                if fix.get("success")
+                if fix.get(
+                    "success"
+                )
             )
 
 
-            failed_fixes = (
+            failed_or_skipped = (
                 len(fixes)
                 - successful_fixes
             )
 
 
-            stages[5] = _build_stage(
+            stages[4] = build_stage(
                 "fix",
                 "AI Auto-Fix",
                 "completed",
                 (
-                    f"{successful_fixes} fix(es) generated "
-                    f"and {failed_fixes} fix(es) failed."
+                    f"{successful_fixes} fix(es) generated; "
+                    f"{failed_or_skipped} skipped/failed."
                 ),
             )
 
 
         # ====================================================
-        # VALIDATION PREPARATION
+        # STAGE 5 - VALIDATION PREPARATION
         # ====================================================
 
-        stages[6] = _build_stage(
+        stages[5] = build_stage(
             "validation",
             "Validation Preparation",
             "running",
-            "Preparing corrected repository output.",
+            (
+                "Preparing final remediation output."
+            ),
         )
 
 
@@ -885,7 +1038,7 @@ async def start_autonomous_scan(
         )
 
 
-        stages[6] = _build_stage(
+        stages[5] = build_stage(
             "validation",
             "Validation Preparation",
             "completed",
@@ -915,7 +1068,8 @@ async def start_autonomous_scan(
 
             "overall_risk": overall_risk,
 
-            "ai_analysis": ai_analysis,
+            # No Groq report-generation result.
+            "ai_analysis": "",
 
             "fixes": fixes,
 
@@ -924,6 +1078,14 @@ async def start_autonomous_scan(
             "pipeline_status": "completed",
 
             "stages": stages,
+
+            "max_auto_fixes": MAX_AUTO_FIXES,
+
+            "groq_used_for_report": False,
+
+            "groq_used_for_auto_fix": True,
+
+            "second_scan_after_fix": False,
 
             "message": (
                 "Autonomous security analysis completed."
@@ -972,24 +1134,21 @@ async def start_autonomous_scan(
 
 
 # ============================================================
-# LEGACY / INDIVIDUAL SCAN ENDPOINT
+# LEGACY SCAN ENDPOINT
 # ============================================================
 
 @app.post("/scan/upload")
 async def upload_and_scan(
     file: UploadFile = File(...),
 ):
-    """
-    Backward-compatible repository scanning endpoint.
-
-    Phase 4 frontend should use /scan/start instead.
-    """
 
     if not file.filename:
 
         raise HTTPException(
             status_code=400,
-            detail="Repository ZIP file is required.",
+            detail=(
+                "Repository ZIP file is required."
+            ),
         )
 
 
@@ -1004,7 +1163,9 @@ async def upload_and_scan(
 
         raise HTTPException(
             status_code=400,
-            detail="Only ZIP repository files are supported.",
+            detail=(
+                "Only ZIP repository files are supported."
+            ),
         )
 
 
@@ -1020,7 +1181,9 @@ async def upload_and_scan(
 
             raise HTTPException(
                 status_code=400,
-                detail="Uploaded ZIP file is empty.",
+                detail=(
+                    "Uploaded ZIP file is empty."
+                ),
             )
 
 
@@ -1050,65 +1213,6 @@ async def upload_and_scan(
             list,
         ):
             findings = []
-
-
-        safe_findings = []
-
-
-        for finding in findings:
-
-            if not isinstance(
-                finding,
-                dict,
-            ):
-                continue
-
-
-            current_finding = _safe_finding_copy(
-                finding
-            )
-
-
-            path = current_finding.get(
-                "path",
-                "",
-            )
-
-
-            line = _get_line_from_finding(
-                current_finding
-            )
-
-
-            source_code = ""
-
-
-            if path and line:
-
-                try:
-
-                    source_code = get_code_context(
-                        extract_dir,
-                        str(path),
-                        line,
-                    )
-
-                except Exception:
-
-                    source_code = ""
-
-
-            current_finding[
-                "source_code"
-            ] = source_code
-
-
-            safe_findings.append(
-                current_finding
-            )
-
-
-        findings = safe_findings
 
 
         risk_assessments = assess_findings(
@@ -1169,62 +1273,6 @@ async def upload_and_scan(
 
 
 # ============================================================
-# LEGACY AI ANALYSIS ENDPOINT
-# ============================================================
-
-@app.post("/scan/analyze")
-async def analyze_scan(
-    payload: dict,
-):
-    """
-    Backward-compatible AI analysis endpoint.
-
-    Phase 4 frontend should use /scan/start instead.
-    """
-
-    findings = payload.get(
-        "findings",
-        [],
-    )
-
-
-    role = payload.get(
-        "role",
-        "developer",
-    )
-
-
-    try:
-
-        normalized_role = _normalize_role(
-            role
-        )
-
-
-        analysis = analyze_security_findings(
-            findings=findings,
-            role=normalized_role,
-        )
-
-
-        return {
-            "success": True,
-            "analysis": analysis,
-        }
-
-
-    except Exception as exc:
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "AI analysis failed: "
-                f"{exc}"
-            ),
-        ) from exc
-
-
-# ============================================================
 # PHASE 4 INFORMATION
 # ============================================================
 
@@ -1237,8 +1285,9 @@ async def phase4_info():
 
         "phase": "Phase 4",
 
-        "architecture": (
-            "Autonomous Security Pipeline"
+        "title": (
+            "A Multi-Agent System for Automated "
+            "Software Repository Security Analysis"
         ),
 
         "features": [
@@ -1247,18 +1296,28 @@ async def phase4_info():
 
             "Safe ZIP Extraction",
 
-            "Semgrep Detection",
+            "Semgrep Security Detection",
 
             "Risk Assessment",
 
-            "Groq AI Analysis",
-
-            "AI Auto-Fix",
-
-            "Validation Preparation",
+            "Groq AI Auto-Fix",
 
             "Role-Based Reporting",
+
+            "Manual Security Report Download",
+
+            "Manual Fixed Repository Download",
+
+            "Automatic Email Report",
         ],
 
+        "groq_used_for_report": False,
+
+        "groq_used_for_auto_fix": True,
+
+        "max_auto_fixes": MAX_AUTO_FIXES,
+
         "second_scan_after_fix": False,
+
+        "original_repository_modified": False,
     }
