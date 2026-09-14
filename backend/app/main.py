@@ -11,23 +11,41 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.agents.auto_fix_agent import generate_fix
 from app.agents.validation_agent import run_validation_agent
+
+from app.agents.repository_understanding_agent import (
+    run_repository_understanding,
+)
+
+from app.agents.secret_detection_agent import (
+    run_secret_detection,
+)
+
+from app.agents.compliance_agent import (
+    run_compliance_agent,
+)
+
 from app.config import settings
 from app.database import Base, engine
+
 from app.risk_engine import (
     assess_findings,
     calculate_overall_risk,
 )
+
 from app.scanner import (
     cleanup_temp,
     extract_zip_to_temp,
     run_semgrep_scan,
 )
+
 from app.services.code_context import get_code_context
 
 
 # ============================================================
 # APPLICATION
 # ============================================================
+
+APP_VERSION = "5.0.0"
 
 app = FastAPI(
     title=(
@@ -36,10 +54,11 @@ app = FastAPI(
     ),
     description=(
         "Automated software repository security analysis "
-        "using Semgrep, risk assessment, AI-assisted "
-        "remediation and validation."
+        "using specialized security agents, Semgrep, "
+        "risk assessment, AI-assisted remediation, "
+        "compliance mapping and validation."
     ),
-    version="4.0.0",
+    version=APP_VERSION,
 )
 
 
@@ -79,7 +98,8 @@ if isinstance(
 ):
     allowed_origins = list(
         dict.fromkeys(
-            default_origins + configured_origins
+            default_origins
+            + configured_origins
         )
     )
 else:
@@ -90,7 +110,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_origin_regex=(
-        r"https://sentinelforge.*\.vercel\.app"
+        r"https://sentinelforge-.*\.vercel\.app"
     ),
     allow_credentials=True,
     allow_methods=["*"],
@@ -229,7 +249,6 @@ def safe_finding_copy(
         )
 
     except Exception:
-
         return {
             "check_id": finding.get(
                 "check_id",
@@ -293,23 +312,18 @@ def resolve_repository_path(
     )
 
     if raw_path.is_absolute():
-
         target = raw_path.resolve()
-
     else:
-
         target = (
             root / raw_path
         ).resolve()
 
     try:
-
         target.relative_to(
             root
         )
 
     except ValueError as exc:
-
         raise ValueError(
             "Source path is outside the extracted repository."
         ) from exc
@@ -322,7 +336,8 @@ def normalize_repository_path(
     source_path: str,
 ) -> str:
     """
-    Convert Semgrep absolute path into repository-relative path.
+    Convert Semgrep absolute path into
+    repository-relative path.
     """
 
     root = Path(
@@ -355,13 +370,11 @@ def read_complete_source_file(
     )
 
     if not target.exists():
-
         raise FileNotFoundError(
             f"Source file not found: {repository_path}"
         )
 
     if not target.is_file():
-
         raise ValueError(
             f"Source path is not a file: {repository_path}"
         )
@@ -370,7 +383,6 @@ def read_complete_source_file(
         target.stat().st_size
         > MAX_SOURCE_FILE_SIZE
     ):
-
         raise ValueError(
             "Source file is too large for AI Auto-Fix."
         )
@@ -385,26 +397,20 @@ def group_findings_by_file(
     findings: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """
-    Group Semgrep findings by repository file.
+    Group security findings by repository file.
 
-    Example:
+    Multiple findings in the same source file are
+    combined into one AI Auto-Fix request.
 
-        app.py
-          -> finding 1
-          -> finding 2
-          -> finding 3
-
-    The first finding becomes the main finding and the
-    remaining findings are attached through
-    `related_findings`.
-
-    This allows ONE Groq call per unique file.
+    This prevents unnecessary repeated Groq calls.
     """
 
-    groups: dict[str, list[dict[str, Any]]] = {}
+    groups: dict[
+        str,
+        list[dict[str, Any]]
+    ] = {}
 
     path_order: list[str] = []
-
 
     for finding in findings:
 
@@ -428,7 +434,6 @@ def group_findings_by_file(
         key = normalized_path.lower()
 
         if key not in groups:
-
             groups[key] = []
 
             path_order.append(
@@ -439,9 +444,7 @@ def group_findings_by_file(
             finding
         )
 
-
     grouped = []
-
 
     for key in path_order:
 
@@ -469,7 +472,6 @@ def group_findings_by_file(
         grouped.append(
             primary
         )
-
 
     return grouped
 
@@ -520,11 +522,16 @@ async def root():
 
     return {
         "success": True,
+
         "service": (
             "A Multi-Agent System for Automated "
             "Software Repository Security Analysis"
         ),
-        "version": "4.0.0",
+
+        "version": APP_VERSION,
+
+        "phase": "Phase 5",
+
         "message": (
             "Security analysis backend is running."
         ),
@@ -540,18 +547,25 @@ async def health():
 
     return {
         "status": "ok",
-        "service": "sentinelforge-ai-backend",
+
+        "service": (
+            "sentinelforge-ai-backend"
+        ),
+
         "environment": getattr(
             settings,
             "environment",
             "development",
         ),
-        "version": "4.0.0",
+
+        "version": APP_VERSION,
+
+        "phase": "Phase 5",
     }
 
 
 # ============================================================
-# MASTER AUTONOMOUS SCAN
+# MASTER AUTONOMOUS SCAN - PHASE 5
 # ============================================================
 
 @app.post("/scan/start")
@@ -560,32 +574,43 @@ async def start_autonomous_scan(
     email: str = Form(...),
     file: UploadFile = File(...),
 ):
-
     """
-    FINAL AUTONOMOUS SECURITY PIPELINE
+    PHASE 5 AUTONOMOUS SECURITY PIPELINE
 
-        Repository
-             ↓
-        Extraction
-             ↓
-        Semgrep
-             ↓
+        Repository ZIP
+              ↓
+        Safe Extraction
+              ↓
+        Repository Understanding Agent
+              ↓
+        Semgrep Security Detection
+              ↓
+        Secret Detection Agent
+              ↓
+        Combined Security Findings
+              ↓
         Risk Assessment
-             ↓
+              ↓
+        Compliance Agent
+              ↓
+        OWASP Top 10 Mapping
+              ↓
         AI Auto-Fix
-             ↓
+              ↓
         Validation Agent
-             ↓
+              ↓
         Final Results
 
-    Groq is used ONLY for Auto-Fix.
+    Groq is used ONLY for AI Auto-Fix.
 
-    Same source file with multiple Semgrep findings
-    receives ONE Groq Auto-Fix call.
+    Multiple findings belonging to the same source
+    file are combined into one Auto-Fix request.
 
-    Maximum UNIQUE files sent to Groq = 3.
+    Maximum UNIQUE source files sent to Groq = 3.
 
     No second Semgrep scan is performed.
+
+    Original uploaded repository is not modified.
     """
 
     # ========================================================
@@ -638,7 +663,7 @@ async def start_autonomous_scan(
 
 
     # ========================================================
-    # PIPELINE STAGES
+    # PHASE 5 PIPELINE STAGES
     # ========================================================
 
     stages = [
@@ -657,14 +682,32 @@ async def start_autonomous_scan(
         ),
 
         build_stage(
+            "understanding",
+            "Repository Understanding",
+            "pending",
+        ),
+
+        build_stage(
             "semgrep",
             "Security Detection",
             "pending",
         ),
 
         build_stage(
+            "secret",
+            "Secret Detection",
+            "pending",
+        ),
+
+        build_stage(
             "risk",
             "Risk Assessment",
+            "pending",
+        ),
+
+        build_stage(
+            "compliance",
+            "Compliance Mapping",
             "pending",
         ),
 
@@ -683,6 +726,63 @@ async def start_autonomous_scan(
 
 
     extract_dir = None
+
+
+    # ========================================================
+    # INITIALIZE RESULTS
+    # ========================================================
+
+    repository_understanding = {
+        "agent": (
+            "Repository Understanding Agent"
+        ),
+        "success": False,
+        "total_files": 0,
+        "source_files": 0,
+        "languages": {},
+        "dependency_files": [],
+        "configuration_files": [],
+        "authentication_related_files": [],
+        "database_related_files": [],
+        "repository_structure": [],
+    }
+
+
+    secret_detection = {
+        "agent": (
+            "Secret Detection Agent"
+        ),
+        "success": False,
+        "findings_count": 0,
+        "findings": [],
+    }
+
+
+    compliance_result = {
+        "agent": "Compliance Agent",
+        "success": False,
+        "framework": "OWASP Top 10 2021",
+        "findings_mapped": 0,
+        "mappings": [],
+        "category_counts": {},
+    }
+
+
+    findings = []
+
+    secret_findings = []
+
+    all_security_findings = []
+
+    risk_assessments = []
+
+    overall_risk = {}
+
+    fixes = []
+
+    validation_result = {}
+
+    successful_fixes = 0
 
 
     try:
@@ -753,7 +853,9 @@ async def start_autonomous_scan(
             "extract",
             "Repository Extraction",
             "running",
-            "Safely extracting repository contents.",
+            (
+                "Safely extracting repository contents."
+            ),
         )
 
 
@@ -766,21 +868,89 @@ async def start_autonomous_scan(
             "extract",
             "Repository Extraction",
             "completed",
-            "Repository extracted successfully.",
+            (
+                "Repository extracted successfully."
+            ),
         )
 
 
         # ====================================================
-        # SEMGREP
+        # REPOSITORY UNDERSTANDING AGENT
         # ====================================================
 
         stages[2] = build_stage(
+            "understanding",
+            "Repository Understanding",
+            "running",
+            (
+                "Analyzing repository structure, "
+                "languages and important files."
+            ),
+        )
+
+
+        try:
+
+            repository_understanding = (
+                run_repository_understanding(
+                    extract_dir
+                )
+            )
+
+        except Exception as exc:
+
+            print(
+                "Repository Understanding Agent error:",
+                exc,
+            )
+
+            repository_understanding = {
+                "agent": (
+                    "Repository Understanding Agent"
+                ),
+                "success": False,
+                "error": str(exc),
+                "total_files": 0,
+                "source_files": 0,
+                "languages": {},
+                "dependency_files": [],
+                "configuration_files": [],
+                "authentication_related_files": [],
+                "database_related_files": [],
+                "repository_structure": [],
+            }
+
+
+        understanding_file_count = (
+            repository_understanding.get(
+                "total_files",
+                0,
+            )
+        )
+
+
+        stages[2] = build_stage(
+            "understanding",
+            "Repository Understanding",
+            "completed",
+            (
+                f"{understanding_file_count} "
+                "repository file(s) analyzed."
+            ),
+        )
+
+
+        # ====================================================
+        # SEMGREP SECURITY DETECTION
+        # ====================================================
+
+        stages[3] = build_stage(
             "semgrep",
             "Security Detection",
             "running",
             (
                 "Semgrep is scanning the repository "
-                "for vulnerabilities."
+                "for security vulnerabilities."
             ),
         )
 
@@ -794,6 +964,7 @@ async def start_autonomous_scan(
             raw_findings,
             list,
         ):
+
             raw_findings = []
 
 
@@ -801,7 +972,7 @@ async def start_autonomous_scan(
 
 
         # ====================================================
-        # NORMALIZE FINDING PATHS
+        # NORMALIZE SEMGREP FINDING PATHS
         # ====================================================
 
         for raw_finding in raw_findings:
@@ -848,8 +1019,6 @@ async def start_autonomous_scan(
                         exc,
                     )
 
-                    # Ignore an invalid path instead of
-                    # exposing the temporary filesystem path.
                     finding[
                         "path"
                     ] = ""
@@ -907,14 +1076,92 @@ async def start_autonomous_scan(
             ] = source_context
 
 
-        stages[2] = build_stage(
+        stages[3] = build_stage(
             "semgrep",
             "Security Detection",
             "completed",
             (
                 f"{len(findings)} "
-                "security finding(s) detected."
+                "Semgrep security finding(s) detected."
             ),
+        )
+
+
+        # ====================================================
+        # SECRET DETECTION AGENT
+        # ====================================================
+
+        stages[4] = build_stage(
+            "secret",
+            "Secret Detection",
+            "running",
+            (
+                "Scanning repository files for "
+                "potential exposed secrets."
+            ),
+        )
+
+
+        try:
+
+            secret_detection = (
+                run_secret_detection(
+                    extract_dir
+                )
+            )
+
+        except Exception as exc:
+
+            print(
+                "Secret Detection Agent error:",
+                exc,
+            )
+
+            secret_detection = {
+                "agent": (
+                    "Secret Detection Agent"
+                ),
+                "success": False,
+                "findings_count": 0,
+                "findings": [],
+                "error": str(exc),
+            }
+
+
+        secret_findings = (
+            secret_detection.get(
+                "findings",
+                [],
+            )
+        )
+
+
+        if not isinstance(
+            secret_findings,
+            list,
+        ):
+
+            secret_findings = []
+
+
+        stages[4] = build_stage(
+            "secret",
+            "Secret Detection",
+            "completed",
+            (
+                f"{len(secret_findings)} "
+                "potential secret finding(s) detected."
+            ),
+        )
+
+
+        # ====================================================
+        # COMBINE SECURITY FINDINGS
+        # ====================================================
+
+        all_security_findings = (
+            findings
+            + secret_findings
         )
 
 
@@ -922,21 +1169,23 @@ async def start_autonomous_scan(
         # RISK ASSESSMENT
         # ====================================================
 
-        stages[3] = build_stage(
+        stages[5] = build_stage(
             "risk",
             "Risk Assessment",
             "running",
             (
                 "Calculating vulnerability severity "
-                "and risk levels."
+                "and overall risk."
             ),
         )
 
 
         try:
 
-            risk_assessments = assess_findings(
-                findings
+            risk_assessments = (
+                assess_findings(
+                    all_security_findings
+                )
             )
 
         except Exception as exc:
@@ -952,8 +1201,10 @@ async def start_autonomous_scan(
 
         try:
 
-            overall_risk = calculate_overall_risk(
-                risk_assessments
+            overall_risk = (
+                calculate_overall_risk(
+                    risk_assessments
+                )
             )
 
         except Exception as exc:
@@ -971,6 +1222,7 @@ async def start_autonomous_scan(
             risk_assessments,
             list,
         ):
+
             risk_assessments = []
 
 
@@ -978,10 +1230,11 @@ async def start_autonomous_scan(
             overall_risk,
             dict,
         ):
+
             overall_risk = {}
 
 
-        stages[3] = build_stage(
+        stages[5] = build_stage(
             "risk",
             "Risk Assessment",
             "completed",
@@ -992,21 +1245,83 @@ async def start_autonomous_scan(
 
 
         # ====================================================
+        # COMPLIANCE / OWASP AGENT
+        # ====================================================
+
+        stages[6] = build_stage(
+            "compliance",
+            "Compliance Mapping",
+            "running",
+            (
+                "Mapping security findings "
+                "to OWASP Top 10 2021 categories."
+            ),
+        )
+
+
+        try:
+
+            compliance_result = (
+                run_compliance_agent(
+                    all_security_findings
+                )
+            )
+
+        except Exception as exc:
+
+            print(
+                "Compliance Agent error:",
+                exc,
+            )
+
+            compliance_result = {
+                "agent": "Compliance Agent",
+                "success": False,
+                "framework": (
+                    "OWASP Top 10 2021"
+                ),
+                "findings_mapped": 0,
+                "mappings": [],
+                "category_counts": {},
+                "error": str(exc),
+            }
+
+
+        mapped_count = (
+            compliance_result.get(
+                "findings_mapped",
+                0,
+            )
+        )
+
+
+        stages[6] = build_stage(
+            "compliance",
+            "Compliance Mapping",
+            "completed",
+            (
+                f"{mapped_count} "
+                "finding(s) mapped to OWASP categories."
+            ),
+        )
+
+
+        # ====================================================
         # GROUP FINDINGS BY SOURCE FILE
         # ====================================================
 
         grouped_findings = (
             group_findings_by_file(
-                findings
+                all_security_findings
             )
         )
 
 
         # ====================================================
-        # GROQ AUTO-FIX
+        # GROQ AI AUTO-FIX
         # ====================================================
 
-        stages[4] = build_stage(
+        stages[7] = build_stage(
             "fix",
             "AI Auto-Fix",
             "running",
@@ -1022,7 +1337,7 @@ async def start_autonomous_scan(
 
         if not grouped_findings:
 
-            stages[4] = build_stage(
+            stages[7] = build_stage(
                 "fix",
                 "AI Auto-Fix",
                 "skipped",
@@ -1034,12 +1349,15 @@ async def start_autonomous_scan(
 
         else:
 
-            # Only first 3 UNIQUE source files are sent to
-            # Groq. Duplicate findings in the same file are
-            # combined into one Auto-Fix request.
-            files_to_fix = grouped_findings[
-                :MAX_AUTO_FIXES
-            ]
+            # =================================================
+            # MAXIMUM UNIQUE FILE LIMIT
+            # =================================================
+
+            files_to_fix = (
+                grouped_findings[
+                    :MAX_AUTO_FIXES
+                ]
+            )
 
 
             for index, grouped_finding in enumerate(
@@ -1055,12 +1373,13 @@ async def start_autonomous_scan(
 
 
                 fix_result = {
-
                     "success": False,
 
                     "finding_index": index,
 
-                    "original_path": repository_path,
+                    "original_path": (
+                        repository_path
+                    ),
 
                     "filename": (
                         Path(
@@ -1076,6 +1395,10 @@ async def start_autonomous_scan(
                 }
 
 
+                # =============================================
+                # INVALID PATH
+                # =============================================
+
                 if not repository_path:
 
                     fix_result[
@@ -1086,15 +1409,17 @@ async def start_autonomous_scan(
                     )
 
                     fixes.append(
-                        fix_result
+                        clean_fix_result_for_response(
+                            fix_result
+                        )
                     )
 
                     continue
 
 
-                # ============================================
+                # =============================================
                 # READ COMPLETE SOURCE FILE
-                # ============================================
+                # =============================================
 
                 try:
 
@@ -1118,15 +1443,17 @@ async def start_autonomous_scan(
                     ] = str(exc)
 
                     fixes.append(
-                        fix_result
+                        clean_fix_result_for_response(
+                            fix_result
+                        )
                     )
 
                     continue
 
 
-                # ============================================
+                # =============================================
                 # PREPARE VULNERABILITY DATA
-                # ============================================
+                # =============================================
 
                 vulnerability_for_ai = (
                     safe_finding_copy(
@@ -1140,9 +1467,9 @@ async def start_autonomous_scan(
                 ] = repository_path
 
 
-                # ============================================
-                # ONE GROQ CALL FOR THIS FILE
-                # ============================================
+                # =============================================
+                # ONE GROQ CALL PER UNIQUE FILE
+                # =============================================
 
                 try:
 
@@ -1166,7 +1493,9 @@ async def start_autonomous_scan(
                         )
 
 
-                    fixed_code = fixed_code.strip()
+                    fixed_code = (
+                        fixed_code.strip()
+                    )
 
 
                     if not fixed_code:
@@ -1206,15 +1535,20 @@ async def start_autonomous_scan(
                 )
 
 
-            # ------------------------------------------------
+            # =================================================
             # MARK REMAINING UNIQUE FILES AS SKIPPED
-            # ------------------------------------------------
+            # =================================================
 
-            if len(grouped_findings) > MAX_AUTO_FIXES:
+            if (
+                len(grouped_findings)
+                > MAX_AUTO_FIXES
+            ):
 
-                for skipped_group in grouped_findings[
-                    MAX_AUTO_FIXES:
-                ]:
+                for skipped_group in (
+                    grouped_findings[
+                        MAX_AUTO_FIXES:
+                    ]
+                ):
 
                     skipped_path = str(
                         skipped_group.get(
@@ -1228,9 +1562,7 @@ async def start_autonomous_scan(
                         {
                             "success": False,
 
-                            "finding_index": (
-                                -1
-                            ),
+                            "finding_index": -1,
 
                             "original_path": (
                                 skipped_path
@@ -1271,7 +1603,7 @@ async def start_autonomous_scan(
             )
 
 
-            stages[4] = build_stage(
+            stages[7] = build_stage(
                 "fix",
                 "AI Auto-Fix",
                 "completed",
@@ -1286,7 +1618,7 @@ async def start_autonomous_scan(
         # VALIDATION AGENT
         # ====================================================
 
-        stages[5] = build_stage(
+        stages[8] = build_stage(
             "validation",
             "Validation Agent",
             "running",
@@ -1313,7 +1645,6 @@ async def start_autonomous_scan(
 
 
             validation_result = {
-
                 "success": False,
 
                 "status": "attention",
@@ -1347,19 +1678,60 @@ async def start_autonomous_scan(
             }
 
 
-        ready_artifacts = validation_result.get(
-            "ready_artifacts",
-            0,
+        if not isinstance(
+            validation_result,
+            dict,
+        ):
+
+            validation_result = {
+                "success": False,
+
+                "status": "attention",
+
+                "message": (
+                    "Validation Agent returned "
+                    "an invalid response."
+                ),
+
+                "results": [],
+
+                "total_artifacts": len(
+                    fixes
+                ),
+
+                "ready_artifacts": 0,
+
+                "attention_artifacts": len(
+                    fixes
+                ),
+
+                "security_scan_performed": False,
+
+                "second_semgrep_scan": False,
+
+                "findings_modified": False,
+
+                "risk_modified": False,
+
+                "security_verified": False,
+            }
+
+
+        ready_artifacts = (
+            validation_result.get(
+                "ready_artifacts",
+                0,
+            )
         )
 
 
         validation_status = (
-            "Validation Agent completed remediation "
-            "artifact checks."
+            "Validation Agent completed "
+            "remediation artifact checks."
         )
 
 
-        stages[5] = build_stage(
+        stages[8] = build_stage(
             "validation",
             "Validation Agent",
             "completed",
@@ -1384,30 +1756,94 @@ async def start_autonomous_scan(
 
             "email": normalized_email,
 
+
+            # =================================================
+            # SECURITY FINDINGS
+            # =================================================
+
             "findings_count": len(
-                findings
+                all_security_findings
             ),
 
-            "findings": findings,
+            "findings": (
+                all_security_findings
+            ),
+
+            "semgrep_findings_count": (
+                len(findings)
+            ),
+
+            "secret_findings_count": (
+                len(secret_findings)
+            ),
+
+
+            # =================================================
+            # PHASE 5 AGENTS
+            # =================================================
+
+            "repository_understanding": (
+                repository_understanding
+            ),
+
+            "secret_detection": (
+                secret_detection
+            ),
+
+            "compliance": (
+                compliance_result
+            ),
+
+
+            # =================================================
+            # RISK
+            # =================================================
 
             "risk_assessments": (
                 risk_assessments
             ),
 
-            "overall_risk": overall_risk,
+            "overall_risk": (
+                overall_risk
+            ),
 
-            # No AI report generation.
+
+            # =================================================
+            # AI
+            # =================================================
+
             "ai_analysis": "",
 
             "fixes": fixes,
 
-            "validation": validation_result,
 
-            "validation_status": validation_status,
+            # =================================================
+            # VALIDATION
+            # =================================================
 
-            "pipeline_status": "completed",
+            "validation": (
+                validation_result
+            ),
+
+            "validation_status": (
+                validation_status
+            ),
+
+
+            # =================================================
+            # PIPELINE
+            # =================================================
+
+            "pipeline_status": (
+                "completed"
+            ),
 
             "stages": stages,
+
+
+            # =================================================
+            # AUTO-FIX INFORMATION
+            # =================================================
 
             "max_auto_fixes": (
                 MAX_AUTO_FIXES
@@ -1424,21 +1860,34 @@ async def start_autonomous_scan(
 
             "auto_fix_successful": (
                 successful_fixes
-                if grouped_findings
-                else 0
             ),
+
+
+            # =================================================
+            # GROQ INFORMATION
+            # =================================================
 
             "groq_used_for_report": False,
 
             "groq_used_for_auto_fix": True,
 
+
+            # =================================================
+            # SECURITY / PRIVACY
+            # =================================================
+
             "second_scan_after_fix": False,
 
             "original_repository_modified": False,
 
+
+            # =================================================
+            # MESSAGE
+            # =================================================
+
             "message": (
-                "Autonomous repository security "
-                "analysis completed."
+                "Autonomous Phase 5 repository "
+                "security analysis completed."
             ),
         }
 
@@ -1566,6 +2015,7 @@ async def upload_and_scan(
             raw_findings,
             list,
         ):
+
             raw_findings = []
 
 
@@ -1578,6 +2028,7 @@ async def upload_and_scan(
                 raw_finding,
                 dict,
             ):
+
                 continue
 
 
@@ -1617,13 +2068,17 @@ async def upload_and_scan(
             )
 
 
-        risk_assessments = assess_findings(
-            findings
+        risk_assessments = (
+            assess_findings(
+                findings
+            )
         )
 
 
-        overall_risk = calculate_overall_risk(
-            risk_assessments
+        overall_risk = (
+            calculate_overall_risk(
+                risk_assessments
+            )
         )
 
 
@@ -1643,7 +2098,9 @@ async def upload_and_scan(
                 risk_assessments
             ),
 
-            "overall_risk": overall_risk,
+            "overall_risk": (
+                overall_risk
+            ),
         }
 
 
@@ -1679,11 +2136,11 @@ async def upload_and_scan(
 
 
 # ============================================================
-# PHASE 4 INFORMATION
+# PHASE 5 INFORMATION
 # ============================================================
 
-@app.get("/phase4")
-async def phase4_info():
+@app.get("/phase5")
+async def phase5_info():
 
     return {
 
@@ -1694,17 +2151,123 @@ async def phase4_info():
             "Software Repository Security Analysis"
         ),
 
+        "version": APP_VERSION,
+
+        "phase": "Phase 5",
+
+
         "architecture": [
+
             "Repository Upload",
+
             "Safe ZIP Extraction",
+
+            "Repository Understanding Agent",
+
             "Semgrep Security Detection",
+
+            "Secret Detection Agent",
+
+            "Combined Security Findings",
+
             "Risk Assessment",
+
+            "Compliance Agent - OWASP Top 10",
+
             "AI Auto-Fix",
+
             "Validation Agent",
+
             "Role-Based Reporting",
+
             "Automatic Email Delivery",
+
             "Manual Security Report Download",
+
             "Manual Fixed Repository Download",
+        ],
+
+
+        "agents": {
+
+            "repository_understanding": True,
+
+            "secret_detection": True,
+
+            "compliance_mapping": True,
+
+            "risk_assessment": True,
+
+            "ai_auto_fix": True,
+
+            "validation": True,
+        },
+
+
+        "groq_used_for_report": False,
+
+        "groq_used_for_auto_fix": True,
+
+        "max_unique_files_for_auto_fix": (
+            MAX_AUTO_FIXES
+        ),
+
+        "second_scan_after_fix": False,
+
+        "original_repository_modified": False,
+    }
+
+
+# ============================================================
+# BACKWARD COMPATIBILITY
+# ============================================================
+
+@app.get("/phase4")
+async def phase4_info():
+
+    return {
+
+        "success": True,
+
+        "message": (
+            "Phase 4 architecture is preserved "
+            "inside the Phase 5 implementation."
+        ),
+
+        "current_phase": "Phase 5",
+
+        "phase4_core_pipeline": [
+
+            "Repository Upload",
+
+            "Safe ZIP Extraction",
+
+            "Semgrep Security Detection",
+
+            "Risk Assessment",
+
+            "AI Auto-Fix",
+
+            "Validation Agent",
+
+            "Role-Based Reporting",
+
+            "Automatic Email Delivery",
+
+            "Manual Security Report Download",
+
+            "Manual Fixed Repository Download",
+        ],
+
+        "phase5_additions": [
+
+            "Repository Understanding Agent",
+
+            "Secret Detection Agent",
+
+            "Compliance Agent",
+
+            "OWASP Top 10 Mapping",
         ],
 
         "groq_used_for_report": False,
