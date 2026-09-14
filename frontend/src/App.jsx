@@ -473,9 +473,6 @@ export default function App() {
 
       // ------------------------------------------------------
       // FRONTEND PROGRESS FALLBACK
-      //
-      // These messages keep the UI alive while the backend
-      // performs the complete autonomous workflow.
       // ------------------------------------------------------
 
       clearProgressTimers();
@@ -1448,6 +1445,10 @@ export default function App() {
       );
     }
 
+    // --------------------------------------------------------
+    // REPORT DATA
+    // --------------------------------------------------------
+
     const reportFindings =
       data?.findings || [];
 
@@ -1460,11 +1461,63 @@ export default function App() {
     const reportRisk =
       data?.overall_risk || {};
 
+    // --------------------------------------------------------
+    // SEVERITY COUNTS
+    // --------------------------------------------------------
+
+    let critical = 0;
+    let high = 0;
+    let medium = 0;
+    let low = 0;
+
+    reportFindings.forEach(
+      (finding, index) => {
+        const assessment =
+          reportAssessments[
+            index
+          ] || {};
+
+        const severity =
+          String(
+            getSeverity(
+              finding,
+              assessment
+            )
+          ).toUpperCase();
+
+        if (severity === "CRITICAL") {
+          critical += 1;
+        } else if (severity === "HIGH") {
+          high += 1;
+        } else if (severity === "MEDIUM") {
+          medium += 1;
+        } else if (severity === "LOW") {
+          low += 1;
+        }
+      }
+    );
+
+    // --------------------------------------------------------
+    // HTML SECURITY FINDINGS
+    // --------------------------------------------------------
+
     let findingsHtml = "";
 
     if (reportFindings.length === 0) {
-      findingsHtml =
-        "<p>No security vulnerabilities were detected.</p>";
+      findingsHtml = `
+        <div style="
+          padding:16px;
+          border:1px solid #d1d5db;
+          border-radius:10px;
+          background:#f9fafb;
+          font-family:Arial,sans-serif;
+        ">
+          <strong>No security vulnerabilities were detected.</strong>
+          <p style="margin-bottom:0;">
+            The analyzed repository did not produce any security findings.
+          </p>
+        </div>
+      `;
     } else {
       findingsHtml =
         reportFindings
@@ -1475,73 +1528,133 @@ export default function App() {
                   index
                 ] || {};
 
+              const severity =
+                getSeverity(
+                  finding,
+                  assessment
+                );
+
+              const vulnerabilityType =
+                getVulnerabilityType(
+                  finding,
+                  assessment
+                );
+
+              const filePath =
+                finding?.path ||
+                "Unknown";
+
+              const line =
+                getLine(finding);
+
+              const cwe =
+                getCwe(
+                  finding,
+                  assessment
+                );
+
+              const riskScore =
+                getRiskScore(
+                  assessment
+                );
+
+              const message =
+                getMessage(
+                  finding
+                );
+
+              const recommendation =
+                assessment?.recommendation ||
+                "Not specified";
+
+              const impact =
+                assessment?.impact ||
+                "Not specified";
+
+              const exploitability =
+                assessment?.exploitability ||
+                "Not specified";
+
               return `
                 <div style="
                   border:1px solid #e5e7eb;
                   border-radius:10px;
-                  padding:15px;
-                  margin-bottom:12px;
+                  padding:18px;
+                  margin-bottom:15px;
                   font-family:Arial,sans-serif;
+                  background:#ffffff;
                 ">
 
-                  <h3 style="margin-top:0;">
+                  <h3 style="
+                    margin-top:0;
+                    margin-bottom:12px;
+                  ">
+                    Finding ${index + 1}: 
                     ${escapeHtml(
-                      getVulnerabilityType(
-                        finding,
-                        assessment
-                      )
+                      vulnerabilityType
                     )}
                   </h3>
 
                   <p>
                     <strong>Severity:</strong>
                     ${escapeHtml(
-                      getSeverity(
-                        finding,
-                        assessment
-                      )
+                      severity
                     )}
                   </p>
 
                   <p>
                     <strong>File:</strong>
                     ${escapeHtml(
-                      finding?.path ||
-                        "Unknown"
+                      filePath
                     )}
                   </p>
 
                   <p>
                     <strong>Line:</strong>
                     ${escapeHtml(
-                      getLine(finding)
+                      line
                     )}
                   </p>
 
                   <p>
                     <strong>CWE:</strong>
                     ${escapeHtml(
-                      getCwe(
-                        finding,
-                        assessment
-                      )
+                      cwe
                     )}
                   </p>
 
                   <p>
                     <strong>Risk Score:</strong>
                     ${escapeHtml(
-                      getRiskScore(
-                        assessment
-                      )
+                      riskScore
                     )}
                   </p>
 
                   <p>
-                    <strong>Recommendation:</strong>
+                    <strong>Security Message:</strong><br>
                     ${escapeHtml(
-                      assessment?.recommendation ||
-                        "Not specified"
+                      message
+                    )}
+                  </p>
+
+                  <p>
+                    <strong>Impact:</strong><br>
+                    ${escapeHtml(
+                      impact
+                    )}
+                  </p>
+
+                  <p>
+                    <strong>Exploitability:</strong><br>
+                    ${escapeHtml(
+                      exploitability
+                    )}
+                  </p>
+
+                  <p style="margin-bottom:0;">
+                    <strong>Recommended Remediation:</strong><br>
+                    ${escapeHtml(
+                      recommendation
                     )}
                   </p>
 
@@ -1552,10 +1665,18 @@ export default function App() {
           .join("");
     }
 
+    // --------------------------------------------------------
+    // FIX COUNT
+    // --------------------------------------------------------
+
     const successfulFixes =
       reportFixes.filter(
         (fix) => fix?.success
       ).length;
+
+    // --------------------------------------------------------
+    // REPOSITORY
+    // --------------------------------------------------------
 
     const repositoryName =
       getRepositoryName(
@@ -1563,7 +1684,30 @@ export default function App() {
         selectedFile
       );
 
+    // --------------------------------------------------------
+    // RISK
+    // --------------------------------------------------------
+
+    const riskScore =
+      reportRisk.score ??
+      reportRisk.overall_score ??
+      "N/A";
+
+    const riskLevel =
+      getRiskLevel(
+        reportRisk,
+        reportAssessments
+      );
+
+    // --------------------------------------------------------
+    // EMAILJS TEMPLATE PARAMETERS
+    //
+    // IMPORTANT:
+    // These names must match the variables in EmailJS.
+    // --------------------------------------------------------
+
     const templateParams = {
+      // Recipient
       to_email:
         data?.email || email,
 
@@ -1576,6 +1720,7 @@ export default function App() {
       user_email:
         data?.email || email,
 
+      // Basic information
       role:
         data?.role === "student"
           ? "Student"
@@ -1590,19 +1735,43 @@ export default function App() {
       filename:
         repositoryName,
 
+      // ------------------------------------------------------
+      // VARIABLES USED BY EMAILJS TEMPLATE
+      // ------------------------------------------------------
+
+      overall_risk:
+        riskLevel,
+
+      risk_score:
+        riskScore,
+
+      total_findings:
+        reportFindings.length,
+
+      critical:
+        critical,
+
+      high:
+        high,
+
+      medium:
+        medium,
+
+      low:
+        low,
+
+      report:
+        findingsHtml,
+
+      // ------------------------------------------------------
+      // ADDITIONAL VARIABLES
+      // ------------------------------------------------------
+
       findings_count:
         reportFindings.length,
 
-      risk_score:
-        reportRisk.score ??
-        reportRisk.overall_score ??
-        "N/A",
-
       risk_level:
-        getRiskLevel(
-          reportRisk,
-          reportAssessments
-        ),
+        riskLevel,
 
       fixes_generated:
         successfulFixes,
@@ -1617,6 +1786,10 @@ export default function App() {
       subject:
         `Repository Security Report - ${repositoryName}`,
     };
+
+    // --------------------------------------------------------
+    // SEND EMAIL
+    // --------------------------------------------------------
 
     await emailjs.send(
       EMAILJS_SERVICE_ID,
@@ -2963,4 +3136,3 @@ export default function App() {
     </div>
   );
 }
-
