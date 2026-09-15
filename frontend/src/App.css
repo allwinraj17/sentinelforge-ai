@@ -1938,3 +1938,711 @@
     transition-duration: 0.01ms !important;
   }
 }
+/* ============================================================
+   MODERN PROGRESS UI
+   ============================================================ */
+
+.progress-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+  margin-top: 27px;
+}
+
+.progress-percent {
+  color: #4f46e5;
+  font-size: 22px;
+  font-weight: 850;
+  letter-spacing: -0.03em;
+}
+
+.modern-progress-track {
+  width: 100%;
+  height: 10px;
+  margin-top: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e9edf5;
+}
+
+.modern-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background:
+    linear-gradient(
+      90deg,
+      #6366f1,
+      #8b5cf6,
+      #0ea5e9
+    );
+  transition: width 0.6s ease;
+}
+
+
+/* ============================================================
+   CURRENT AGENT BOX
+   ============================================================ */
+
+.current-agent-box {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+
+  margin-top: 18px;
+  padding: 15px;
+
+  border: 1px solid #e0e7ff;
+  border-radius: 14px;
+
+  background:
+    linear-gradient(
+      135deg,
+      #fafaff,
+      #f5f7ff
+    );
+}
+
+.current-agent-pulse {
+  width: 38px;
+  height: 38px;
+
+  flex: 0 0 38px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 11px;
+
+  background: #eef2ff;
+  color: #4f46e5;
+
+  position: relative;
+}
+
+.current-agent-pulse span {
+  width: 10px;
+  height: 10px;
+
+  border-radius: 50%;
+
+  background: #6366f1;
+
+  animation: agentPulse 1.2s ease-in-out infinite;
+}
+
+.current-agent-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.current-agent-content small {
+  display: block;
+
+  margin-bottom: 3px;
+
+  color: #818cf8;
+
+  font-size: 8px;
+  font-weight: 800;
+
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.current-agent-content strong {
+  display: block;
+
+  color: #312e81;
+
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.current-agent-content p {
+  margin: 3px 0 0;
+
+  color: #64748b;
+
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+
+/* ============================================================
+   MODERN PIPELINE
+   ============================================================ */
+
+.modern-pipeline {
+  display: flex;
+  flex-direction: column;
+
+  margin-top: 20px;
+}
+
+.modern-pipeline-step {
+  display: grid;
+
+  grid-template-columns: 38px 1fr;
+
+  column-gap: 12px;
+
+  min-height: 58px;
+
+  position: relative;
+}
+
+.modern-pipeline-node {
+  width: 32px;
+  height: 32px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border: 1px solid #e5e7eb;
+  border-radius: 50%;
+
+  background: #ffffff;
+  color: #94a3b8;
+
+  font-size: 9px;
+  font-weight: 850;
+
+  z-index: 2;
+
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease;
+}
+
+.modern-pipeline-step.completed .modern-pipeline-node {
+  background: #dcfce7;
+  border-color: #bbf7d0;
+  color: #15803d;
+}
+
+.modern-pipeline-step.active .modern-pipeline-node {
+  background: #eef2ff;
+  border-color: #a5b4fc;
+  color: #4f46e5;
+
+  transform: scale(1.08);
+}
+
+.modern-pipeline-step.pending .modern-pipeline-node {
+  background: #f8fafc;
+  color: #94a3b8;
+}
+
+.modern-pipeline-info {
+  padding: 2px 0 18px;
+}
+
+.modern-pipeline-info strong {
+  display: block;
+
+  color: #374151;
+
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.modern-pipeline-info small {
+  display: block;
+
+  margin-top: 3px;
+
+  color: #94a3b8;
+
+  font-size: 8px;
+  line-height: 1.45;
+}
+
+.modern-pipeline-step.active
+.modern-pipeline-info strong {
+  color: #4338ca;
+}
+
+.modern-pipeline-step.active
+.modern-pipeline-info small {
+  color: #6366f1;
+}
+
+.modern-pipeline-line {
+  position: absolute;
+
+  left: 15px;
+  top: 32px;
+  bottom: 0;
+
+  width: 2px;
+
+  background: #e5e7eb;
+
+  z-index: 1;
+}
+
+.modern-pipeline-step.completed .modern-pipeline-line {
+  background: #bbf7d0;
+}
+
+.pipeline-spinner {
+  width: 13px;
+  height: 13px;
+
+  border: 2px solid #c7d2fe;
+  border-top-color: #4f46e5;
+
+  border-radius: 50%;
+
+  animation: pipelineSpin 0.75s linear infinite;
+}
+
+
+/* ============================================================
+   ML PROGRESS PREVIEW
+   ============================================================ */
+
+.ml-progress-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  margin-top: 17px;
+  padding: 14px;
+
+  border: 1px solid #ddd6fe;
+  border-radius: 13px;
+
+  background:
+    linear-gradient(
+      135deg,
+      #faf5ff,
+      #f5f3ff
+    );
+}
+
+.ml-preview-icon {
+  width: 38px;
+  height: 38px;
+
+  flex: 0 0 38px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 11px;
+
+  background: #ede9fe;
+  color: #7c3aed;
+
+  font-size: 17px;
+}
+
+.ml-progress-preview > div:nth-child(2) {
+  flex: 1;
+  min-width: 0;
+}
+
+.ml-progress-preview strong {
+  display: block;
+
+  color: #5b21b6;
+
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.ml-progress-preview p {
+  margin: 3px 0 0;
+
+  color: #7c3aed;
+
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.ml-progress-preview > span {
+  padding: 5px 8px;
+
+  border-radius: 999px;
+
+  background: #ede9fe;
+  color: #6d28d9;
+
+  font-size: 8px;
+  font-weight: 800;
+
+  white-space: nowrap;
+}
+
+
+/* ============================================================
+   PROGRESS FOOTER NOTE
+   ============================================================ */
+
+.progress-footer-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  gap: 7px;
+
+  margin-top: 17px;
+
+  color: #94a3b8;
+
+  font-size: 8px;
+  line-height: 1.5;
+
+  text-align: center;
+}
+
+.progress-footer-note::before {
+  content: "✓";
+
+  width: 17px;
+  height: 17px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 50%;
+
+  background: #f0fdf4;
+  color: #15803d;
+
+  font-size: 9px;
+  font-weight: 800;
+}
+
+
+/* ============================================================
+   ML SECURITY INTELLIGENCE
+   ============================================================ */
+
+.ml-intelligence-card {
+  margin-top: 20px;
+  padding: 20px;
+
+  border: 1px solid #ddd6fe;
+  border-radius: 16px;
+
+  background:
+    linear-gradient(
+      135deg,
+      #fcfbff,
+      #f8f7ff
+    );
+
+  box-shadow:
+    0 10px 28px rgba(
+      76,
+      29,
+      149,
+      0.045
+    );
+}
+
+.ml-intelligence-card .section-heading {
+  margin-bottom: 7px;
+}
+
+.ml-intelligence-card .section-heading span {
+  color: #7c3aed;
+}
+
+.ml-intelligence-card .section-heading h3 {
+  color: #312e81;
+}
+
+.ml-section-description {
+  margin: 0 0 17px;
+
+  color: #64748b;
+
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.ml-finding-list {
+  display: flex;
+  flex-direction: column;
+
+  gap: 14px;
+}
+
+.ml-finding-panel {
+  padding: 16px;
+
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+
+  background: #ffffff;
+}
+
+.ml-finding-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  gap: 12px;
+
+  margin-bottom: 13px;
+}
+
+.ml-finding-panel-header strong {
+  color: #1f2937;
+
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.ml-model-count {
+  padding: 5px 8px;
+
+  border-radius: 999px;
+
+  background: #ede9fe;
+  color: #6d28d9;
+
+  font-size: 7px;
+  font-weight: 800;
+
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.ml-grid {
+  display: grid;
+
+  grid-template-columns:
+    repeat(
+      2,
+      minmax(0, 1fr)
+    );
+
+  gap: 9px;
+}
+
+.ml-item {
+  min-width: 0;
+
+  padding: 12px;
+
+  border: 1px solid #eef2f7;
+  border-radius: 11px;
+
+  background: #f8fafc;
+}
+
+.ml-item-wide {
+  grid-column: 1 / -1;
+}
+
+.ml-item span {
+  display: block;
+
+  color: #94a3b8;
+
+  font-size: 7px;
+  font-weight: 800;
+
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ml-item strong {
+  display: block;
+
+  margin-top: 6px;
+
+  color: #334155;
+
+  font-size: 11px;
+  font-weight: 800;
+
+  line-height: 1.4;
+
+  word-break: break-word;
+}
+
+.ml-item small {
+  display: block;
+
+  margin-top: 4px;
+
+  color: #64748b;
+
+  font-size: 8px;
+
+  line-height: 1.4;
+}
+
+.ml-item.ml-positive {
+  border-color: #d1fae5;
+  background: #f8fffb;
+}
+
+.ml-item.ml-positive strong {
+  color: #166534;
+}
+
+.ml-item.ml-warning {
+  border-color: #fde68a;
+  background: #fffbeb;
+}
+
+.ml-item.ml-warning strong {
+  color: #92400e;
+}
+
+.ml-item.ml-purple {
+  border-color: #ddd6fe;
+  background: #faf5ff;
+}
+
+.ml-item.ml-purple strong {
+  color: #6d28d9;
+}
+
+.ml-item.ml-blue {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.ml-item.ml-blue strong {
+  color: #1d4ed8;
+}
+
+.ml-item.ml-fix {
+  border-color: #c7d2fe;
+  background:
+    linear-gradient(
+      135deg,
+      #f8f7ff,
+      #f5f3ff
+    );
+}
+
+.ml-item.ml-fix strong {
+  color: #4338ca;
+}
+
+
+/* ============================================================
+   ANIMATIONS
+   ============================================================ */
+
+@keyframes pipelineSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes agentPulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+
+/* ============================================================
+   ML RESPONSIVE
+   ============================================================ */
+
+@media (max-width: 800px) {
+
+  .ml-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ml-item-wide {
+    grid-column: auto;
+  }
+
+  .ml-finding-panel {
+    padding: 14px;
+  }
+
+  .ml-finding-panel-header {
+    align-items: flex-start;
+  }
+}
+
+
+@media (max-width: 600px) {
+
+  .progress-top {
+    align-items: flex-end;
+  }
+
+  .progress-percent {
+    font-size: 19px;
+  }
+
+  .current-agent-box {
+    padding: 12px;
+  }
+
+  .current-agent-pulse {
+    width: 34px;
+    height: 34px;
+    flex-basis: 34px;
+  }
+
+  .ml-intelligence-card {
+    padding: 14px;
+    border-radius: 13px;
+  }
+
+  .ml-finding-panel {
+    padding: 12px;
+  }
+
+  .ml-model-count {
+    font-size: 6px;
+  }
+
+  .ml-item {
+    padding: 10px;
+  }
+
+  .ml-item strong {
+    font-size: 10px;
+  }
+
+  .ml-progress-preview {
+    align-items: flex-start;
+  }
+
+  .ml-progress-preview > span {
+    font-size: 7px;
+  }
+}
+
+
+/* ============================================================
+   REDUCED MOTION
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+
+  .pipeline-spinner,
+  .current-agent-pulse span {
+    animation: none !important;
+  }
+}

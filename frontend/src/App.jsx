@@ -36,38 +36,58 @@ const PIPELINE_STAGES = [
   },
   {
     id: "extract",
-    title: "Repository Extraction",
-    message: "Extracting and preparing repository files.",
+    title: "Secure Extraction",
+    message: "Safely extracting and preparing repository files.",
+  },
+  {
+    id: "understanding",
+    title: "Repository Understanding",
+    message: "Understanding repository structure, files and technologies.",
   },
   {
     id: "semgrep",
-    title: "Security Detection",
-    message: "Scanning source code for vulnerabilities.",
+    title: "Semgrep Security Detection",
+    message: "Scanning source code for security vulnerabilities.",
+  },
+  {
+    id: "secret",
+    title: "Secret Detection",
+    message: "Checking for hardcoded secrets and sensitive credentials.",
+  },
+  {
+    id: "ml",
+    title: "ML Security Intelligence",
+    message: "Running seven specialized machine-learning analysis agents.",
   },
   {
     id: "risk",
     title: "Risk Assessment",
-    message: "Evaluating severity and security risk.",
+    message: "Calculating deterministic security risk.",
   },
   {
     id: "fix",
     title: "AI Auto-Fix",
-    message: "Generating secure remediation.",
+    message: "Generating secure remediation for supported findings.",
   },
   {
     id: "validation",
     title: "Validation Agent",
-    message: "Validating generated remediation artifacts.",
+    message: "Checking generated remediation artifacts.",
+  },
+  {
+    id: "compliance",
+    title: "Compliance Mapping",
+    message: "Mapping security findings to relevant OWASP categories.",
   },
   {
     id: "report",
     title: "Report Preparation",
-    message: "Preparing the security analysis report.",
+    message: "Preparing the final security report.",
   },
   {
     id: "email",
     title: "Email Delivery",
-    message: "Preparing report delivery.",
+    message: "Preparing automatic report delivery.",
   },
 ];
 
@@ -240,6 +260,76 @@ function getSafeRepositoryName(name) {
   return String(name)
     .replace(/\.zip$/i, "")
     .replace(/[^\w.-]+/g, "_");
+}
+
+// ============================================================
+// ML DISPLAY HELPERS
+// ============================================================
+
+function getMlResultForFinding(result, finding, index) {
+  const results = Array.isArray(result?.results)
+    ? result.results
+    : [];
+
+  const findingPath = String(finding?.path || "");
+  const findingMessage = String(getMessage(finding));
+
+  return (
+    results.find((item) =>
+      findingPath &&
+      String(item?.path || "") === findingPath
+    ) ||
+    results.find((item) =>
+      findingMessage &&
+      String(item?.message || "") === findingMessage
+    ) ||
+    results[index] ||
+    null
+  );
+}
+
+function formatMlConfidence(value) {
+  const number = Number(value);
+
+  if (Number.isNaN(number)) {
+    return "N/A";
+  }
+
+  const percentage = number <= 1
+    ? number * 100
+    : number;
+
+  return `${percentage.toFixed(2)}%`;
+}
+
+function getMlConfidenceLevel(value) {
+  const number = Number(value);
+
+  if (Number.isNaN(number)) {
+    return "Confidence unavailable";
+  }
+
+  const normalized = number > 1
+    ? number / 100
+    : number;
+
+  if (normalized >= 0.8) {
+    return "High Confidence";
+  }
+
+  if (normalized >= 0.5) {
+    return "Medium Confidence";
+  }
+
+  return "Low Confidence";
+}
+
+function getMlDisplayValue(value, fallback = "N/A") {
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+
+  return String(value);
 }
 
 // ============================================================
@@ -483,49 +573,77 @@ export default function App() {
             1,
             "Safely extracting repository files..."
           );
-        }, 1200),
+        }, 900),
 
         setTimeout(() => {
           updateProgress(
             2,
-            "Security Detection Agent is scanning the repository..."
+            "Repository Understanding Agent is analyzing structure, files and technologies..."
           );
-        }, 3200),
+        }, 1800),
 
         setTimeout(() => {
           updateProgress(
             3,
-            "Risk Assessment Agent is evaluating vulnerabilities..."
+            "Semgrep Security Detection Agent is scanning the repository..."
           );
-        }, 5200),
+        }, 3000),
 
         setTimeout(() => {
           updateProgress(
             4,
-            "AI Auto-Fix Agent is generating remediation..."
+            "Secret Detection Agent is checking for hardcoded credentials..."
           );
-        }, 7200),
+        }, 4300),
 
         setTimeout(() => {
           updateProgress(
             5,
-            "Validation Agent is checking generated remediation..."
+            "ML Security Intelligence is running seven specialized ML agents..."
           );
-        }, 9800),
+        }, 5600),
 
         setTimeout(() => {
           updateProgress(
             6,
-            "Preparing the final security report..."
+            "Risk Assessment Agent is calculating deterministic security risk..."
           );
-        }, 11600),
+        }, 7000),
 
         setTimeout(() => {
           updateProgress(
             7,
+            "AI Auto-Fix Agent is generating remediation..."
+          );
+        }, 8500),
+
+        setTimeout(() => {
+          updateProgress(
+            8,
+            "Validation Agent is checking generated remediation artifacts..."
+          );
+        }, 10100),
+
+        setTimeout(() => {
+          updateProgress(
+            9,
+            "Compliance Agent is mapping findings to OWASP categories..."
+          );
+        }, 11400),
+
+        setTimeout(() => {
+          updateProgress(
+            10,
+            "Preparing the final security report..."
+          );
+        }, 12700),
+
+        setTimeout(() => {
+          updateProgress(
+            11,
             "Preparing automatic email delivery..."
           );
-        }, 13200),
+        }, 14000),
       ];
 
       // ------------------------------------------------------
@@ -571,7 +689,7 @@ export default function App() {
       // FINAL RESULT
       // ------------------------------------------------------
 
-      setProgressStage(7);
+      setProgressStage(PIPELINE_STAGES.length - 1);
 
       setProgressMessage(
         "Autonomous analysis completed successfully."
@@ -2592,6 +2710,310 @@ export default function App() {
                   </strong>
 
                 </div>
+
+              </div>
+
+              {/* ML SECURITY INTELLIGENCE */}
+
+              <div className="results-card ml-intelligence-card">
+
+                <div className="section-heading">
+
+                  <div>
+
+                    <span>
+                      ML SECURITY INTELLIGENCE
+                    </span>
+
+                    <h3>
+                      Machine-learning analysis of detected findings
+                    </h3>
+
+                    <p className="ml-section-description">
+                      Seven specialized ML agents provide additional intelligence after Semgrep detection.
+                    </p>
+
+                  </div>
+
+                </div>
+
+                {findings.length === 0 ? (
+
+                  <div className="secure-box">
+                    No findings were available for ML security intelligence.
+                  </div>
+
+                ) : (
+
+                  <div className="ml-finding-list">
+
+                    {findings.map((finding, index) => {
+                      const triage = getMlResultForFinding(
+                        scanData?.ml_triage,
+                        finding,
+                        index
+                      );
+
+                      const classification = getMlResultForFinding(
+                        scanData?.ml_classification,
+                        finding,
+                        index
+                      );
+
+                      const mlSeverity = getMlResultForFinding(
+                        scanData?.ml_severity,
+                        finding,
+                        index
+                      );
+
+                      const priority = getMlResultForFinding(
+                        scanData?.ml_priority,
+                        finding,
+                        index
+                      );
+
+                      const context = getMlResultForFinding(
+                        scanData?.ml_code_context,
+                        finding,
+                        index
+                      );
+
+                      const recommendation = getMlResultForFinding(
+                        scanData?.ml_fix_recommendation,
+                        finding,
+                        index
+                      );
+
+                      const similarityResults = Array.isArray(
+                        scanData?.ml_similarity?.results
+                      )
+                        ? scanData.ml_similarity.results
+                        : [];
+
+                      const relatedSimilarity = similarityResults.find(
+                        (item) => {
+                          const firstPath = String(
+                            item?.finding_1?.path ||
+                            item?.path_1 ||
+                            ""
+                          );
+
+                          const secondPath = String(
+                            item?.finding_2?.path ||
+                            item?.path_2 ||
+                            ""
+                          );
+
+                          return (
+                            (finding?.path &&
+                              firstPath === String(finding.path)) ||
+                            (finding?.path &&
+                              secondPath === String(finding.path))
+                          );
+                        }
+                      ) || similarityResults[index] || null;
+
+                      const triageProbability =
+                        triage?.ml_triage?.vulnerability_probability ??
+                        triage?.vulnerability_probability;
+
+                      const triageClassification =
+                        triage?.ml_triage?.classification ??
+                        triage?.classification;
+
+                      const triageConfidence =
+                        triage?.ml_triage?.confidence_level ??
+                        triage?.confidence_level ??
+                        getMlConfidenceLevel(triageProbability);
+
+                      const predictedType =
+                        classification?.ml_classification?.predicted_type ??
+                        classification?.predicted_type ??
+                        classification?.vulnerability_type;
+
+                      const predictedSeverity =
+                        mlSeverity?.ml_severity?.predicted_severity ??
+                        mlSeverity?.predicted_severity ??
+                        mlSeverity?.severity;
+
+                      const severityConfidence =
+                        mlSeverity?.ml_severity?.confidence ??
+                        mlSeverity?.confidence;
+
+                      const predictedPriority =
+                        priority?.ml_priority?.predicted_priority ??
+                        priority?.predicted_priority ??
+                        priority?.priority;
+
+                      const priorityConfidence =
+                        priority?.ml_priority?.confidence ??
+                        priority?.confidence;
+
+                      const predictedContext =
+                        context?.ml_code_context?.predicted_context ??
+                        context?.ml_code_context?.context ??
+                        context?.predicted_context ??
+                        context?.context;
+
+                      const similarityScore =
+                        relatedSimilarity?.similarity ??
+                        relatedSimilarity?.similarity_score ??
+                        relatedSimilarity?.score;
+
+                      const similarityLabel =
+                        relatedSimilarity?.similarity_level ??
+                        relatedSimilarity?.classification ??
+                        relatedSimilarity?.label;
+
+                      const recommendedFix =
+                        recommendation?.ml_fix_recommendation?.recommended_fix ??
+                        recommendation?.recommended_fix ??
+                        recommendation?.fix_recommendation;
+
+                      const recommendationConfidence =
+                        recommendation?.ml_fix_recommendation?.confidence ??
+                        recommendation?.confidence;
+
+                      return (
+                        <article
+                          className="ml-finding-panel"
+                          key={`ml-${index}`}
+                        >
+
+                          <div className="ml-finding-panel-header">
+                            <div>
+                              <span className="finding-number">
+                                ML ANALYSIS · FINDING {index + 1}
+                              </span>
+                              <h4>
+                                {getVulnerabilityType(
+                                  finding,
+                                  assessments[index] || {}
+                                )}
+                              </h4>
+                            </div>
+
+                            <span className="ml-model-count">
+                              7 ML AGENTS
+                            </span>
+                          </div>
+
+                          <div className="ml-grid">
+
+                            <div className="ml-item">
+                              <span>Vulnerability Triage</span>
+                              <strong>
+                                {getMlDisplayValue(
+                                  triageClassification,
+                                  "Analysis unavailable"
+                                )}
+                              </strong>
+                              <small>
+                                Probability: {formatMlConfidence(
+                                  triageProbability
+                                )}
+                                <br />
+                                {triageConfidence}
+                              </small>
+                            </div>
+
+                            <div className="ml-item">
+                              <span>Vulnerability Classification</span>
+                              <strong>
+                                {getMlDisplayValue(
+                                  predictedType,
+                                  "Analysis unavailable"
+                                )}
+                              </strong>
+                              <small>
+                                ML predicted vulnerability category
+                              </small>
+                            </div>
+
+                            <div className="ml-item">
+                              <span>ML Severity Prediction</span>
+                              <strong>
+                                {getMlDisplayValue(
+                                  predictedSeverity,
+                                  "N/A"
+                                )}
+                              </strong>
+                              <small>
+                                Confidence: {formatMlConfidence(
+                                  severityConfidence
+                                )}
+                              </small>
+                            </div>
+
+                            <div className="ml-item">
+                              <span>ML Priority Prediction</span>
+                              <strong>
+                                {getMlDisplayValue(
+                                  predictedPriority,
+                                  "N/A"
+                                )}
+                              </strong>
+                              <small>
+                                Confidence: {formatMlConfidence(
+                                  priorityConfidence
+                                )}
+                              </small>
+                            </div>
+
+                            <div className="ml-item">
+                              <span>Code Context Analysis</span>
+                              <strong>
+                                {getMlDisplayValue(
+                                  predictedContext,
+                                  "N/A"
+                                )}
+                              </strong>
+                              <small>
+                                Context confidence: {formatMlConfidence(
+                                  context?.ml_code_context?.confidence ??
+                                    context?.confidence
+                                )}
+                              </small>
+                            </div>
+
+                            <div className="ml-item">
+                              <span>Duplicate Vulnerability Similarity</span>
+                              <strong>
+                                {getMlDisplayValue(
+                                  similarityLabel,
+                                  "No comparison"
+                                )}
+                              </strong>
+                              <small>
+                                Similarity: {formatMlConfidence(
+                                  similarityScore
+                                )}
+                              </small>
+                            </div>
+
+                            <div className="ml-item ml-item-wide">
+                              <span>Fix Recommendation</span>
+                              <strong>
+                                {getMlDisplayValue(
+                                  recommendedFix,
+                                  "No recommendation available"
+                                )}
+                              </strong>
+                              <small>
+                                Confidence: {formatMlConfidence(
+                                  recommendationConfidence
+                                )}
+                              </small>
+                            </div>
+
+                          </div>
+
+                        </article>
+                      );
+                    })}
+
+                  </div>
+                )}
 
               </div>
 

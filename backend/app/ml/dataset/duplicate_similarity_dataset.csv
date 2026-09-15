@@ -1,0 +1,101 @@
+id,finding_1,finding_2,label
+1,"User input directly concatenated into SQL query","Request parameter directly inserted into SQL statement",1
+2,"SQL query constructed using unsanitized user input","User controlled value concatenated into database query",1
+3,"Potential SQL injection through request parameter","Unsanitized input reaches SQL execution",1
+4,"User input reaches database query","External request data used in SQL statement",1
+5,"SQL injection detected in login query","SQL injection detected through username parameter",1
+6,"Command injection through user input","User controlled input passed directly to shell command",1
+7,"Request parameter reaches subprocess execution","User input is passed to operating system command",1
+8,"Shell command constructed from request data","Command execution uses untrusted request parameter",1
+9,"User supplied filename reaches file operation","Request filename is used directly in filesystem access",1
+10,"Path traversal through user supplied path","Untrusted request path controls local file access",1
+11,"User controlled file path reaches open function","External filename is used in file read operation",1
+12,"Hardcoded API key detected in source","API secret embedded directly in application code",1
+13,"Hardcoded database password found","Database credential stored directly in source code",1
+14,"Secret token stored in configuration","Authentication token hardcoded in configuration",1
+15,"Cross site scripting through request parameter","User controlled input rendered without HTML escaping",1
+16,"Reflected XSS vulnerability detected","Request input reflected into browser output",1
+17,"Unescaped user input reaches HTML response","User supplied content rendered directly in webpage",1
+18,"Weak password hashing algorithm detected","Password protected using insecure hashing algorithm",1
+19,"Insecure cryptographic algorithm used","Application uses weak encryption method",1
+20,"TLS certificate verification disabled","SSL certificate validation is disabled",1
+21,"User input directly concatenated into SQL query","Debug mode enabled in production",0
+22,"SQL query constructed from request parameter","Hardcoded API key found in source",0
+23,"Potential SQL injection vulnerability","Weak password hashing detected",0
+24,"Database query uses untrusted input","Application debug configuration is unsafe",0
+25,"Command injection through request input","Hardcoded cloud access token detected",0
+26,"User input passed to subprocess","SQL query contains unsanitized parameter",0
+27,"Shell command constructed from user data","Cross site scripting vulnerability detected",0
+28,"Request parameter reaches shell command","Weak encryption algorithm detected",0
+29,"Path traversal through filename","SQL injection detected in database query",0
+30,"Untrusted file path reaches filesystem","Hardcoded database password found",0
+31,"User controlled filename opens local file","XSS through browser output",0
+32,"Filesystem path controlled by request","Command injection through shell execution",0
+33,"Hardcoded API secret detected","User supplied filename controls file access",0
+34,"Database password stored in source","Request parameter reaches subprocess",0
+35,"Authentication token hardcoded in configuration","SQL injection through request parameter",0
+36,"Private key embedded in source","User input rendered into HTML response",0
+37,"User input rendered into webpage","Weak password hashing detected",0
+38,"Reflected XSS vulnerability","Hardcoded secret found in application",0
+39,"Unescaped request data reaches HTML","Path traversal through filename",0
+40,"Weak hashing algorithm detected","Command injection through user input",0
+41,"Insecure SSL certificate validation","SQL injection vulnerability detected",0
+42,"Weak encryption algorithm used","User controlled path reaches filesystem",0
+43,"TLS validation disabled","Hardcoded API key detected",0
+44,"Debug mode enabled in production","SQL injection through database query",0
+45,"Development configuration exposed","Command execution uses user input",0
+46,"Unsafe application configuration","Cross site scripting through request",0
+47,"Sensitive information exposed in API response","User supplied filename used in file access",0
+48,"Stack trace returned to client","Hardcoded password stored in source",0
+49,"Authentication check missing on endpoint","SQL query constructed from user input",0
+50,"Authorization check missing","Command injection detected in request parameter",0
+51,"User input reaches SQL execution","Request data reaches database query",1
+52,"SQL statement uses request parameter","Database query uses external input",1
+53,"Unsanitized SQL parameter detected","User controlled SQL value detected",1
+54,"User input passed into database cursor","Request input passed to SQL execution",1
+55,"Shell command uses request parameter","User input reaches subprocess call",1
+56,"User input reaches system command","Untrusted request data reaches shell execution",1
+57,"Command built using external parameter","OS command constructed from user input",1
+58,"User input controls shell argument","Request data controls command execution",1
+59,"User supplied path controls file access","Request parameter controls filesystem path",1
+60,"Filename from request reaches file reader","External filename reaches file operation",1
+61,"Untrusted path used in file opening","User controlled filename used to access file",1
+62,"Request path reaches filesystem API","Remote input determines local file path",1
+63,"AWS key hardcoded in application","Cloud access credential embedded in source",1
+64,"API token stored directly in source","Secret API credential hardcoded in application",1
+65,"Database credential embedded in code","Database password stored in source file",1
+66,"Private key committed to configuration","Sensitive private key embedded in project",1
+67,"User input reflected in HTML","Request data rendered directly in webpage",1
+68,"Unescaped request parameter reaches browser","User controlled content reaches HTML output",1
+69,"XSS through reflected request value","Reflected user input appears in browser response",1
+70,"HTML output contains untrusted input","User supplied data rendered without escaping",1
+71,"Weak password hash detected","Insecure password hashing method detected",1
+72,"Application uses outdated hash algorithm","Weak cryptographic hashing used for passwords",1
+73,"Certificate validation disabled","TLS verification disabled in application",1
+74,"Insecure encryption algorithm detected","Weak encryption algorithm used by application",1
+75,"Debug configuration enabled","Production application running with debug enabled",1
+76,"Development mode active in production","Production configuration contains debug setting",1
+77,"Unsafe configuration option enabled","Insecure application configuration detected",1
+78,"Production configuration exposes debug information","Debug setting enabled in deployed service",1
+79,"Sensitive information exposed through response","API response contains confidential information",1
+80,"Stack trace returned by endpoint","Internal error details exposed to client",1
+81,"Server details exposed in API response","Application implementation details revealed",1
+82,"Error response reveals internal information","Sensitive error details returned to user",1
+83,"SQL injection through user input","Path traversal through request filename",0
+84,"Command injection through request data","XSS through browser response",0
+85,"Hardcoded secret detected","Weak cryptographic algorithm detected",0
+86,"Path traversal vulnerability","Authentication check missing",0
+87,"XSS vulnerability detected","Command injection through shell",0
+88,"Weak password hashing","Hardcoded API credential",0
+89,"Debug mode enabled","SQL injection detected",0
+90,"Information exposure through API response","Path traversal detected",0
+91,"Authentication vulnerability detected","Weak encryption algorithm",0
+92,"Unsafe configuration detected","User input reaches SQL query",0
+93,"Database injection finding","Shell command injection finding",0
+94,"Filesystem traversal finding","Cross site scripting finding",0
+95,"Application secret exposed","User controlled file path",0
+96,"Browser output injection","Database query injection",0
+97,"Cryptographic weakness detected","Authentication failure detected",0
+98,"Production debug setting detected","Hardcoded secret detected",0
+99,"Sensitive error information exposed","SQL injection finding",0
+100,"Missing authorization check","Command injection finding",0

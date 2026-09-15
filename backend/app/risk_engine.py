@@ -68,12 +68,19 @@ def identify_vulnerability(finding: Dict[str, Any]) -> str:
     Identify the vulnerability category from Semgrep metadata.
     """
 
-    metadata = finding.get("extra", {}).get("metadata", {})
+    metadata = finding.get("extra", {}).get(
+        "metadata",
+        {}
+    )
 
-    vulnerability_class = metadata.get("vulnerability_class")
+    vulnerability_class = metadata.get(
+        "vulnerability_class"
+    )
 
     if isinstance(vulnerability_class, list):
-        vulnerability_class = " ".join(vulnerability_class)
+        vulnerability_class = " ".join(
+            vulnerability_class
+        )
 
     if not vulnerability_class:
         vulnerability_class = ""
@@ -102,7 +109,10 @@ def identify_vulnerability(finding: Dict[str, Any]) -> str:
         return "eval"
 
     # Also inspect the Semgrep message
-    message = finding.get("extra", {}).get("message", "").lower()
+    message = finding.get("extra", {}).get(
+        "message",
+        ""
+    ).lower()
 
     if "sql injection" in message:
         return "sql-injection"
@@ -133,7 +143,10 @@ def normalize_severity(finding: Dict[str, Any]) -> str:
     severity = extra.get("severity")
 
     if not severity:
-        severity = extra.get("metadata", {}).get("severity")
+        severity = extra.get(
+            "metadata",
+            {}
+        ).get("severity")
 
     if not severity:
         return "MEDIUM"
@@ -164,7 +177,10 @@ def calculate_risk_score(
     vulnerability_type: str,
 ) -> float:
     """
-    Calculate a deterministic risk score from 1 to 10.
+    Calculate the official deterministic risk score
+    from 1 to 10.
+
+    ML triage does not modify this score.
     """
 
     base_score = SEVERITY_SCORES.get(
@@ -185,17 +201,128 @@ def calculate_risk_score(
     if vulnerability_type in high_impact:
         base_score += 1.0
 
-    return min(round(base_score, 1), 10.0)
+    return min(
+        round(base_score, 1),
+        10.0
+    )
+
+
+# ============================================================
+# ML TRIAGE PRIORITY
+# ============================================================
+
+def calculate_ml_triage_priority(
+    vulnerability_probability: float,
+) -> str:
+    """
+    Convert the ML vulnerability probability into
+    a simple triage priority.
+
+    This is a supporting ML signal and is NOT the
+    official SentinelForge risk score.
+    """
+
+    try:
+        probability = float(
+            vulnerability_probability
+        )
+    except (TypeError, ValueError):
+        return "Unknown"
+
+    if probability >= 0.80:
+        return "High ML Priority"
+
+    if probability >= 0.50:
+        return "Medium ML Priority"
+
+    return "Low ML Priority"
+
+
+# ============================================================
+# APPLY ML TRIAGE TO RISK ASSESSMENT
+# ============================================================
+
+def apply_ml_prioritization(
+    assessment: Dict[str, Any],
+    ml_triage: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Add ML-supported triage information to an existing
+    risk assessment.
+
+    The original deterministic risk score remains unchanged.
+
+    ML triage is used only as an additional prioritization
+    signal for security findings.
+    """
+
+    updated_assessment = dict(
+        assessment
+    )
+
+    if not isinstance(
+        ml_triage,
+        dict
+    ):
+        updated_assessment["ml_triage"] = {
+            "available": False,
+            "classification": "Not Available",
+            "vulnerability_probability": None,
+            "priority": "Unknown",
+        }
+
+        return updated_assessment
+
+    classification = ml_triage.get(
+        "classification"
+    )
+
+    probability = ml_triage.get(
+        "vulnerability_probability"
+    )
+
+    confidence_level = ml_triage.get(
+        "confidence_level"
+    )
+
+    if probability is not None:
+
+        priority = calculate_ml_triage_priority(
+            probability
+        )
+
+    else:
+
+        priority = "Unknown"
+
+    updated_assessment["ml_triage"] = {
+        "available": True,
+        "classification": classification
+            if classification
+            else "Not Available",
+        "vulnerability_probability": probability,
+        "confidence_level": confidence_level
+            if confidence_level
+            else "Unknown",
+        "priority": priority,
+    }
+
+    return updated_assessment
 
 
 # ============================================================
 # CREATE RISK ASSESSMENT
 # ============================================================
 
-def assess_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
+def assess_finding(
+    finding: Dict[str, Any]
+) -> Dict[str, Any]:
     """
     Convert a Semgrep finding into a SentinelForge
     risk assessment.
+
+    The official risk score is calculated independently
+    from the ML triage result.
     """
 
     vulnerability_type = identify_vulnerability(
@@ -229,9 +356,12 @@ def assess_finding(finding: Dict[str, Any]) -> Dict[str, Any]:
         "exploitability": risk_information["exploitability"],
         "recommendation": risk_information["recommendation"],
         "file": finding.get("path"),
-        "line": finding.get("start", {}).get("line"),
+        "line": finding.get("start", {}).get(
+            "line"
+        ),
         "cwe": finding.get("extra", {}).get(
-            "metadata", {}
+            "metadata",
+            {}
         ).get("cwe"),
     }
 
@@ -250,8 +380,11 @@ def assess_findings(
     assessments = []
 
     for finding in findings:
+
         assessments.append(
-            assess_finding(finding)
+            assess_finding(
+                finding
+            )
         )
 
     return assessments
@@ -266,9 +399,16 @@ def calculate_overall_risk(
 ) -> Dict[str, Any]:
     """
     Calculate the overall security risk of the scanned code.
+
+    The official overall score continues to come from
+    the deterministic risk engine.
+
+    ML triage does not replace or modify the official
+    project risk score.
     """
 
     if not assessments:
+
         return {
             "overall_score": 0.0,
             "overall_level": "SECURE",
@@ -284,45 +424,56 @@ def calculate_overall_risk(
         for assessment in assessments
     ]
 
-    overall_score = max(scores)
+    overall_score = max(
+        scores
+    )
 
     critical = sum(
         1
-        for a in assessments
-        if a["severity"] == "CRITICAL"
+        for assessment in assessments
+        if assessment["severity"] == "CRITICAL"
     )
 
     high = sum(
         1
-        for a in assessments
-        if a["severity"] == "HIGH"
+        for assessment in assessments
+        if assessment["severity"] == "HIGH"
     )
 
     medium = sum(
         1
-        for a in assessments
-        if a["severity"] == "MEDIUM"
+        for assessment in assessments
+        if assessment["severity"] == "MEDIUM"
     )
 
     low = sum(
         1
-        for a in assessments
-        if a["severity"] == "LOW"
+        for assessment in assessments
+        if assessment["severity"] == "LOW"
     )
 
     if critical > 0:
+
         overall_level = "CRITICAL"
+
     elif high > 0:
+
         overall_level = "HIGH"
+
     elif medium > 0:
+
         overall_level = "MEDIUM"
+
     else:
+
         overall_level = "LOW"
 
     return {
         "overall_score": overall_score,
         "overall_level": overall_level,
-        "total_findings": len(assessments),
+        "total_findings": len(
+            assessments
+        ),
         "critical": critical,
         "high": high,
         "medium": medium,

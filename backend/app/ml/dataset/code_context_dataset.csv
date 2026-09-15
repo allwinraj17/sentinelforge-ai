@@ -1,0 +1,101 @@
+id,finding_text,vulnerability_type,cwe,source_type,file_extension,label
+1,"User input reaches SQL query through string concatenation","SQL Injection","CWE-89","semgrep",".py",DATABASE
+2,"Request parameter is directly inserted into database query","SQL Injection","CWE-89","semgrep",".py",DATABASE
+3,"Unsanitized username is used in SQL statement","SQL Injection","CWE-89","semgrep",".php",DATABASE
+4,"User controlled value is concatenated with SELECT query","SQL Injection","CWE-89","semgrep",".js",DATABASE
+5,"External input reaches database execution function","SQL Injection","CWE-89","semgrep",".py",DATABASE
+6,"Request parameter is passed into database cursor execution","SQL Injection","CWE-89","semgrep",".py",DATABASE
+7,"User input is used to construct SQL WHERE condition","SQL Injection","CWE-89","semgrep",".php",DATABASE
+8,"Untrusted request data flows into database query","SQL Injection","CWE-89","semgrep",".js",DATABASE
+9,"Application builds SQL query using form input","SQL Injection","CWE-89","semgrep",".py",DATABASE
+10,"User supplied ID is directly used in database lookup","SQL Injection","CWE-89","semgrep",".py",DATABASE
+11,"Command is constructed using request parameter","Command Injection","CWE-78","semgrep",".py",COMMAND
+12,"User input is passed directly to shell execution","Command Injection","CWE-78","semgrep",".py",COMMAND
+13,"Request data reaches subprocess call","Command Injection","CWE-78","semgrep",".py",COMMAND
+14,"Untrusted parameter is used in operating system command","Command Injection","CWE-78","semgrep",".js",COMMAND
+15,"User controlled filename is passed to shell command","Command Injection","CWE-78","semgrep",".py",COMMAND
+16,"External input reaches system command execution","Command Injection","CWE-78","semgrep",".php",COMMAND
+17,"Request parameter is concatenated into command string","Command Injection","CWE-78","semgrep",".py",COMMAND
+18,"Application executes shell command using user data","Command Injection","CWE-78","semgrep",".js",COMMAND
+19,"Unsanitized input is passed to process execution API","Command Injection","CWE-78","semgrep",".py",COMMAND
+20,"Remote input controls command argument","Command Injection","CWE-78","semgrep",".py",COMMAND
+21,"User input is rendered directly into HTML response","XSS","CWE-79","semgrep",".js",OUTPUT
+22,"Request parameter is inserted into webpage without escaping","XSS","CWE-79","semgrep",".html",OUTPUT
+23,"Untrusted content is returned inside HTML page","XSS","CWE-79","semgrep",".php",OUTPUT
+24,"User controlled value reaches browser output","XSS","CWE-79","semgrep",".js",OUTPUT
+25,"Request data is rendered without output encoding","XSS","CWE-79","semgrep",".html",OUTPUT
+26,"User supplied text is displayed directly in response","XSS","CWE-79","semgrep",".php",OUTPUT
+27,"External parameter is inserted into HTML template","XSS","CWE-79","semgrep",".js",OUTPUT
+28,"Unescaped request value reaches page output","XSS","CWE-79","semgrep",".html",OUTPUT
+29,"User controlled content is written into DOM","XSS","CWE-79","semgrep",".js",OUTPUT
+30,"Application reflects request input in browser response","XSS","CWE-79","semgrep",".php",OUTPUT
+31,"User supplied filename is used to open a file","Path Traversal","CWE-22","semgrep",".py",FILE
+32,"Request parameter controls filesystem path","Path Traversal","CWE-22","semgrep",".py",FILE
+33,"Untrusted filename reaches file read operation","Path Traversal","CWE-22","semgrep",".php",FILE
+34,"User input is passed to file opening function","Path Traversal","CWE-22","semgrep",".py",FILE
+35,"External path value is used to access local file","Path Traversal","CWE-22","semgrep",".js",FILE
+36,"Request data controls file location","Path Traversal","CWE-22","semgrep",".py",FILE
+37,"User controlled path reaches filesystem API","Path Traversal","CWE-22","semgrep",".php",FILE
+38,"Filename from request is used in file operation","Path Traversal","CWE-22","semgrep",".py",FILE
+39,"Untrusted path is passed to file read function","Path Traversal","CWE-22","semgrep",".py",FILE
+40,"Remote user input determines local file path","Path Traversal","CWE-22","semgrep",".js",FILE
+41,"Hardcoded API key is stored in application source","Hardcoded Secret","CWE-798","secret",".py",CONFIGURATION
+42,"Cloud access token is embedded in configuration","Hardcoded Secret","CWE-798","secret",".env",CONFIGURATION
+43,"Database password is directly stored in source code","Hardcoded Secret","CWE-798","secret",".py",CONFIGURATION
+44,"Private key is included in project configuration","Hardcoded Secret","CWE-321","secret",".pem",CONFIGURATION
+45,"Application secret is hardcoded in configuration file","Hardcoded Secret","CWE-798","secret",".yaml",CONFIGURATION
+46,"Authentication token is embedded in source code","Hardcoded Secret","CWE-798","secret",".js",CONFIGURATION
+47,"Production password is stored directly in environment configuration","Hardcoded Secret","CWE-798","secret",".env",CONFIGURATION
+48,"Secret credential is committed to configuration file","Hardcoded Secret","CWE-798","secret",".json",CONFIGURATION
+49,"API secret is visible in application configuration","Hardcoded Secret","CWE-798","secret",".py",CONFIGURATION
+50,"Sensitive credential is stored as a source constant","Hardcoded Secret","CWE-798","secret",".js",CONFIGURATION
+51,"Password is checked against authentication logic","Authentication","CWE-287","semgrep",".py",AUTHENTICATION
+52,"User credentials are processed by login function","Authentication","CWE-306","semgrep",".py",AUTHENTICATION
+53,"Authentication token is validated by application","Authentication","CWE-287","semgrep",".js",AUTHENTICATION
+54,"User session is created after credential verification","Authentication","CWE-287","semgrep",".py",AUTHENTICATION
+55,"Login request reaches authentication handler","Authentication","CWE-306","semgrep",".php",AUTHENTICATION
+56,"Access control check is missing before sensitive operation","Authentication","CWE-862","semgrep",".py",AUTHENTICATION
+57,"User identity is verified using request credentials","Authentication","CWE-287","semgrep",".js",AUTHENTICATION
+58,"Authorization check controls access to administrative function","Authentication","CWE-862","semgrep",".py",AUTHENTICATION
+59,"Session token is used to authenticate API request","Authentication","CWE-287","semgrep",".js",AUTHENTICATION
+60,"Sensitive endpoint lacks authentication validation","Authentication","CWE-306","semgrep",".py",AUTHENTICATION
+61,"Weak hashing algorithm is used to protect passwords","Cryptography","CWE-327","semgrep",".py",CRYPTOGRAPHY
+62,"Application uses insecure encryption algorithm","Cryptography","CWE-327","semgrep",".py",CRYPTOGRAPHY
+63,"Weak cryptographic function is used for sensitive data","Cryptography","CWE-327","semgrep",".js",CRYPTOGRAPHY
+64,"Password is protected using outdated hashing method","Cryptography","CWE-916","semgrep",".py",CRYPTOGRAPHY
+65,"Application disables certificate validation","Cryptography","CWE-295","semgrep",".py",CRYPTOGRAPHY
+66,"Insecure SSL configuration is used by application","Cryptography","CWE-295","semgrep",".js",CRYPTOGRAPHY
+67,"Sensitive information is encrypted using weak algorithm","Cryptography","CWE-327","semgrep",".py",CRYPTOGRAPHY
+68,"Application uses deprecated cryptographic primitive","Cryptography","CWE-327","semgrep",".py",CRYPTOGRAPHY
+69,"Weak password hashing is detected in login module","Cryptography","CWE-916","semgrep",".py",CRYPTOGRAPHY
+70,"TLS certificate verification is disabled","Cryptography","CWE-295","semgrep",".py",CRYPTOGRAPHY
+71,"Debug mode is enabled in production configuration","Misconfiguration","CWE-16","semgrep",".py",CONFIGURATION
+72,"Application configuration exposes debugging option","Misconfiguration","CWE-16","semgrep",".yaml",CONFIGURATION
+73,"Development setting is enabled in deployed service","Misconfiguration","CWE-16","semgrep",".json",CONFIGURATION
+74,"Security configuration contains unsafe default value","Misconfiguration","CWE-16","semgrep",".yaml",CONFIGURATION
+75,"Production configuration uses development settings","Misconfiguration","CWE-16","semgrep",".py",CONFIGURATION
+76,"Application server is configured with debug enabled","Misconfiguration","CWE-16","semgrep",".py",CONFIGURATION
+77,"Insecure configuration option is enabled","Misconfiguration","CWE-16","semgrep",".json",CONFIGURATION
+78,"Security setting is disabled in application configuration","Misconfiguration","CWE-16","semgrep",".yaml",CONFIGURATION
+79,"Deployment configuration exposes internal debug information","Misconfiguration","CWE-16","semgrep",".py",CONFIGURATION
+80,"Unsafe application setting is stored in configuration file","Misconfiguration","CWE-16","semgrep",".json",CONFIGURATION
+81,"Sensitive information is returned in API response","Information Exposure","CWE-200","semgrep",".py",OUTPUT
+82,"Application exposes internal details through error response","Information Exposure","CWE-209","semgrep",".js",OUTPUT
+83,"Stack trace is returned to remote user","Information Exposure","CWE-209","semgrep",".py",OUTPUT
+84,"Internal configuration details appear in HTTP response","Information Exposure","CWE-200","semgrep",".php",OUTPUT
+85,"Sensitive database information is exposed in response","Information Exposure","CWE-200","semgrep",".py",OUTPUT
+86,"Application returns debugging information to client","Information Exposure","CWE-209","semgrep",".js",OUTPUT
+87,"Exception details are visible through public endpoint","Information Exposure","CWE-209","semgrep",".py",OUTPUT
+88,"Server information is exposed in API response","Information Exposure","CWE-200","semgrep",".js",OUTPUT
+89,"Sensitive application data is included in response","Information Exposure","CWE-200","semgrep",".php",OUTPUT
+90,"Error response reveals internal implementation details","Information Exposure","CWE-209","semgrep",".py",OUTPUT
+91,"Security rule matched a variable name in source code","Other","CWE-0","semgrep",".py",OTHER
+92,"SQL keyword appears only inside documentation comment","Other","CWE-0","semgrep",".md",OTHER
+93,"Example security payload is present in test documentation","Other","CWE-0","semgrep",".md",OTHER
+94,"Placeholder value is used inside unit test","Other","CWE-0","semgrep",".py",OTHER
+95,"Generic configuration variable was detected by rule","Other","CWE-0","semgrep",".yaml",OTHER
+96,"Sample command appears in documentation file","Other","CWE-0","semgrep",".md",OTHER
+97,"Security terminology appears in source comment","Other","CWE-0","semgrep",".py",OTHER
+98,"Mock credential is used only for automated testing","Other","CWE-0","secret",".json",OTHER
+99,"Example vulnerability text appears in README file","Other","CWE-0","semgrep",".md",OTHER
+100,"Test fixture contains a placeholder security value","Other","CWE-0","secret",".txt",OTHER

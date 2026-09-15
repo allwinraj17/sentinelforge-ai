@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import io
 import json
 import zipfile
@@ -24,6 +23,14 @@ from app.agents.compliance_agent import (
     run_compliance_agent,
 )
 
+from app.agents.ml_triage_agent import run_ml_triage
+from app.agents.ml_classification_agent import run_ml_classification
+from app.agents.ml_severity_agent import run_ml_severity
+from app.agents.ml_priority_agent import run_ml_priority
+from app.agents.ml_code_context_agent import run_ml_code_context
+from app.agents.ml_similarity_agent import run_ml_similarity
+from app.agents.ml_fix_recommendation_agent import run_ml_fix_recommendation
+
 from app.config import settings
 from app.database import Base, engine
 
@@ -45,7 +52,7 @@ from app.services.code_context import get_code_context
 # APPLICATION
 # ============================================================
 
-APP_VERSION = "5.0.0"
+APP_VERSION = "7.0.0"
 
 app = FastAPI(
     title=(
@@ -476,6 +483,89 @@ def group_findings_by_file(
     return grouped
 
 
+def build_ml_finding(
+    finding: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Convert a Semgrep finding into the common flat structure
+    expected by the ML agents.
+
+    The original Semgrep finding is never replaced; this is only
+    a separate ML input representation.
+    """
+
+    extra = finding.get("extra", {})
+    if not isinstance(extra, dict):
+        extra = {}
+
+    metadata = extra.get("metadata", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    message = (
+        extra.get("message")
+        or finding.get("message")
+        or finding.get("check_id")
+        or "Security finding"
+    )
+
+    severity = (
+        extra.get("severity")
+        or metadata.get("severity")
+        or finding.get("severity")
+        or "INFO"
+    )
+
+    cwe = metadata.get("cwe", finding.get("cwe", ""))
+    if isinstance(cwe, list):
+        cwe = ", ".join(str(item) for item in cwe)
+
+    source_type = (
+        metadata.get("source")
+        or finding.get("source_type")
+        or "semgrep"
+    )
+
+    vulnerability_type = (
+        metadata.get("vulnerability_class")
+        or finding.get("vulnerability_type")
+        or "Other"
+    )
+
+    return {
+        "message": str(message),
+        "finding_text": str(message),
+        "vulnerability_type": str(vulnerability_type),
+        "cwe": str(cwe),
+        "source_type": str(source_type),
+        "path": str(finding.get("path", "")),
+        "severity": str(severity),
+        "user_input": int(finding.get("user_input", 0) or 0),
+        "dangerous_api": int(finding.get("dangerous_api", 0) or 0),
+        "production_context": int(finding.get("production_context", 0) or 0),
+        "exposure": int(finding.get("exposure", 0) or 0),
+        "exploitability": int(finding.get("exploitability", 0) or 0),
+    }
+
+
+def build_ml_error(
+    agent_name: str,
+    model_name: str,
+    total: int,
+    error: str,
+) -> dict[str, Any]:
+    """Build a consistent non-fatal ML agent error response."""
+
+    return {
+        "agent": agent_name,
+        "success": False,
+        "model": model_name,
+        "total_findings": total,
+        "results": [],
+        "error": error,
+    }
+
+
 def clean_fix_result_for_response(
     fix: dict[str, Any],
 ) -> dict[str, Any]:
@@ -586,6 +676,15 @@ async def start_autonomous_scan(
         Semgrep Security Detection
               ↓
         Secret Detection Agent
+              ↓
+        ML Security Intelligence
+        ├── Vulnerability Triage
+        ├── Vulnerability Classification
+        ├── Severity Prediction
+        ├── Priority Prediction
+        ├── Code Context Analysis
+        ├── Duplicate Similarity
+        └── Fix Recommendation
               ↓
         Combined Security Findings
               ↓
@@ -699,6 +798,14 @@ async def start_autonomous_scan(
             "pending",
         ),
 
+        build_stage("ml_triage", "ML Vulnerability Triage", "pending"),
+        build_stage("ml_classification", "ML Vulnerability Classification", "pending"),
+        build_stage("ml_severity", "ML Severity Prediction", "pending"),
+        build_stage("ml_priority", "ML Priority Prediction", "pending"),
+        build_stage("ml_code_context", "ML Code Context Analysis", "pending"),
+        build_stage("ml_similarity", "ML Duplicate Similarity", "pending"),
+        build_stage("ml_fix_recommendation", "ML Fix Recommendation", "pending"),
+
         build_stage(
             "risk",
             "Risk Assessment",
@@ -767,6 +874,51 @@ async def start_autonomous_scan(
         "category_counts": {},
     }
 
+
+    ml_triage_result = build_ml_error(
+        "ML Vulnerability Triage Agent",
+        "TF-IDF + Logistic Regression",
+        0,
+        "Not executed yet.",
+    )
+    ml_classification_result = build_ml_error(
+        "ML Vulnerability Classification Agent",
+        "TF-IDF + Linear SVM",
+        0,
+        "Not executed yet.",
+    )
+    ml_severity_result = build_ml_error(
+        "ML Severity Prediction Agent",
+        "TF-IDF + One-Hot Encoding + Random Forest",
+        0,
+        "Not executed yet.",
+    )
+    ml_priority_result = build_ml_error(
+        "ML Priority Prediction Agent",
+        "TF-IDF + One-Hot Encoding + Random Forest",
+        0,
+        "Not executed yet.",
+    )
+    ml_code_context_result = build_ml_error(
+        "ML Code Context Analysis Agent",
+        "TF-IDF + Linear SVM",
+        0,
+        "Not executed yet.",
+    )
+    ml_similarity_result = {
+        "agent": "ML Duplicate Vulnerability Similarity Agent",
+        "success": False,
+        "model": "TF-IDF + Cosine Similarity",
+        "total_pairs": 0,
+        "results": [],
+        "error": "Not executed yet.",
+    }
+    ml_fix_recommendation_result = build_ml_error(
+        "ML Fix Recommendation Agent",
+        "TF-IDF + Logistic Regression",
+        0,
+        "Not executed yet.",
+    )
 
     findings = []
 
@@ -1156,6 +1308,239 @@ async def start_autonomous_scan(
 
 
         # ====================================================
+        # ML SECURITY INTELLIGENCE
+        # ====================================================
+        # ML receives normalized Semgrep findings only.
+        # Secret findings remain in the existing security workflow.
+
+        ml_findings = [
+            build_ml_finding(item)
+            for item in findings
+            if isinstance(item, dict)
+        ]
+
+        # ---------------- ML TRIAGE ----------------
+        stages[5] = build_stage(
+            "ml_triage",
+            "ML Vulnerability Triage",
+            "running",
+            "Estimating whether detected findings are likely vulnerabilities.",
+        )
+        try:
+            ml_triage_result = run_ml_triage(ml_findings)
+            if not isinstance(ml_triage_result, dict):
+                ml_triage_result = build_ml_error(
+                    "ML Vulnerability Triage Agent",
+                    "TF-IDF + Logistic Regression",
+                    len(ml_findings),
+                    "Invalid ML triage response.",
+                )
+        except Exception as exc:
+            ml_triage_result = build_ml_error(
+                "ML Vulnerability Triage Agent",
+                "TF-IDF + Logistic Regression",
+                len(ml_findings),
+                str(exc),
+            )
+        stages[5] = build_stage(
+            "ml_triage",
+            "ML Vulnerability Triage",
+            "completed" if ml_triage_result.get("success") else "attention",
+            f"{len(ml_triage_result.get('results', []))} finding(s) analyzed.",
+        )
+
+        # ---------------- ML CLASSIFICATION ----------------
+        stages[6] = build_stage(
+            "ml_classification",
+            "ML Vulnerability Classification",
+            "running",
+            "Predicting the vulnerability category of detected findings.",
+        )
+        try:
+            ml_classification_result = run_ml_classification(ml_findings)
+            if not isinstance(ml_classification_result, dict):
+                ml_classification_result = build_ml_error(
+                    "ML Vulnerability Classification Agent",
+                    "TF-IDF + Linear SVM",
+                    len(ml_findings),
+                    "Invalid ML classification response.",
+                )
+        except Exception as exc:
+            ml_classification_result = build_ml_error(
+                "ML Vulnerability Classification Agent",
+                "TF-IDF + Linear SVM",
+                len(ml_findings),
+                str(exc),
+            )
+        stages[6] = build_stage(
+            "ml_classification",
+            "ML Vulnerability Classification",
+            "completed" if ml_classification_result.get("success") else "attention",
+            f"{len(ml_classification_result.get('results', []))} finding(s) classified.",
+        )
+
+        # ---------------- ML SEVERITY ----------------
+        stages[7] = build_stage(
+            "ml_severity",
+            "ML Severity Prediction",
+            "running",
+            "Predicting supporting severity labels from security context.",
+        )
+        try:
+            ml_severity_result = run_ml_severity(ml_findings)
+            if not isinstance(ml_severity_result, dict):
+                ml_severity_result = build_ml_error(
+                    "ML Severity Prediction Agent",
+                    "TF-IDF + One-Hot Encoding + Random Forest",
+                    len(ml_findings),
+                    "Invalid ML severity response.",
+                )
+        except Exception as exc:
+            ml_severity_result = build_ml_error(
+                "ML Severity Prediction Agent",
+                "TF-IDF + One-Hot Encoding + Random Forest",
+                len(ml_findings),
+                str(exc),
+            )
+        stages[7] = build_stage(
+            "ml_severity",
+            "ML Severity Prediction",
+            "completed" if ml_severity_result.get("success") else "attention",
+            f"{len(ml_severity_result.get('results', []))} finding(s) scored by the ML model.",
+        )
+
+        # ---------------- ML PRIORITY ----------------
+        stages[8] = build_stage(
+            "ml_priority",
+            "ML Priority Prediction",
+            "running",
+            "Predicting remediation investigation priority.",
+        )
+        try:
+            ml_priority_result = run_ml_priority(ml_findings)
+            if not isinstance(ml_priority_result, dict):
+                ml_priority_result = build_ml_error(
+                    "ML Priority Prediction Agent",
+                    "TF-IDF + One-Hot Encoding + Random Forest",
+                    len(ml_findings),
+                    "Invalid ML priority response.",
+                )
+        except Exception as exc:
+            ml_priority_result = build_ml_error(
+                "ML Priority Prediction Agent",
+                "TF-IDF + One-Hot Encoding + Random Forest",
+                len(ml_findings),
+                str(exc),
+            )
+        stages[8] = build_stage(
+            "ml_priority",
+            "ML Priority Prediction",
+            "completed" if ml_priority_result.get("success") else "attention",
+            f"{len(ml_priority_result.get('results', []))} finding(s) prioritized.",
+        )
+
+        # ---------------- ML CODE CONTEXT ----------------
+        stages[9] = build_stage(
+            "ml_code_context",
+            "ML Code Context Analysis",
+            "running",
+            "Analyzing the source context associated with detected findings.",
+        )
+        try:
+            ml_code_context_result = run_ml_code_context(ml_findings)
+            if not isinstance(ml_code_context_result, dict):
+                ml_code_context_result = build_ml_error(
+                    "ML Code Context Analysis Agent",
+                    "TF-IDF + Linear SVM",
+                    len(ml_findings),
+                    "Invalid ML code context response.",
+                )
+        except Exception as exc:
+            ml_code_context_result = build_ml_error(
+                "ML Code Context Analysis Agent",
+                "TF-IDF + Linear SVM",
+                len(ml_findings),
+                str(exc),
+            )
+        stages[9] = build_stage(
+            "ml_code_context",
+            "ML Code Context Analysis",
+            "completed" if ml_code_context_result.get("success") else "attention",
+            f"{len(ml_code_context_result.get('results', []))} finding(s) contextualized.",
+        )
+
+        # ---------------- ML SIMILARITY ----------------
+        stages[10] = build_stage(
+            "ml_similarity",
+            "ML Duplicate Similarity",
+            "running",
+            "Comparing findings to identify related or duplicate vulnerabilities.",
+        )
+        try:
+            similarity_pairs = []
+            for first_index in range(len(ml_findings)):
+                for second_index in range(first_index + 1, len(ml_findings)):
+                    similarity_pairs.append({
+                        "finding_1": ml_findings[first_index],
+                        "finding_2": ml_findings[second_index],
+                    })
+            ml_similarity_result = run_ml_similarity(similarity_pairs)
+            if not isinstance(ml_similarity_result, dict):
+                ml_similarity_result = {
+                    "agent": "ML Duplicate Vulnerability Similarity Agent",
+                    "success": False,
+                    "model": "TF-IDF + Cosine Similarity",
+                    "total_pairs": len(similarity_pairs),
+                    "results": [],
+                    "error": "Invalid ML similarity response.",
+                }
+        except Exception as exc:
+            ml_similarity_result = {
+                "agent": "ML Duplicate Vulnerability Similarity Agent",
+                "success": False,
+                "model": "TF-IDF + Cosine Similarity",
+                "total_pairs": 0,
+                "results": [],
+                "error": str(exc),
+            }
+        stages[10] = build_stage(
+            "ml_similarity",
+            "ML Duplicate Similarity",
+            "completed" if ml_similarity_result.get("success") else "attention",
+            f"{len(ml_similarity_result.get('results', []))} finding pair(s) compared.",
+        )
+
+        # ---------------- ML FIX RECOMMENDATION ----------------
+        stages[11] = build_stage(
+            "ml_fix_recommendation",
+            "ML Fix Recommendation",
+            "running",
+            "Recommending security remediation strategies.",
+        )
+        try:
+            ml_fix_recommendation_result = run_ml_fix_recommendation(ml_findings)
+            if not isinstance(ml_fix_recommendation_result, dict):
+                ml_fix_recommendation_result = build_ml_error(
+                    "ML Fix Recommendation Agent",
+                    "TF-IDF + Logistic Regression",
+                    len(ml_findings),
+                    "Invalid ML fix recommendation response.",
+                )
+        except Exception as exc:
+            ml_fix_recommendation_result = build_ml_error(
+                "ML Fix Recommendation Agent",
+                "TF-IDF + Logistic Regression",
+                len(ml_findings),
+                str(exc),
+            )
+        stages[11] = build_stage(
+            "ml_fix_recommendation",
+            "ML Fix Recommendation",
+            "completed" if ml_fix_recommendation_result.get("success") else "attention",
+            f"{len(ml_fix_recommendation_result.get('results', []))} remediation recommendation(s) generated.",
+        )
+
+        # ====================================================
         # COMBINE SECURITY FINDINGS
         # ====================================================
 
@@ -1169,7 +1554,7 @@ async def start_autonomous_scan(
         # RISK ASSESSMENT
         # ====================================================
 
-        stages[5] = build_stage(
+        stages[12] = build_stage(
             "risk",
             "Risk Assessment",
             "running",
@@ -1234,7 +1619,7 @@ async def start_autonomous_scan(
             overall_risk = {}
 
 
-        stages[5] = build_stage(
+        stages[12] = build_stage(
             "risk",
             "Risk Assessment",
             "completed",
@@ -1248,7 +1633,7 @@ async def start_autonomous_scan(
         # COMPLIANCE / OWASP AGENT
         # ====================================================
 
-        stages[6] = build_stage(
+        stages[13] = build_stage(
             "compliance",
             "Compliance Mapping",
             "running",
@@ -1295,7 +1680,7 @@ async def start_autonomous_scan(
         )
 
 
-        stages[6] = build_stage(
+        stages[13] = build_stage(
             "compliance",
             "Compliance Mapping",
             "completed",
@@ -1321,7 +1706,7 @@ async def start_autonomous_scan(
         # GROQ AI AUTO-FIX
         # ====================================================
 
-        stages[7] = build_stage(
+        stages[14] = build_stage(
             "fix",
             "AI Auto-Fix",
             "running",
@@ -1337,7 +1722,7 @@ async def start_autonomous_scan(
 
         if not grouped_findings:
 
-            stages[7] = build_stage(
+            stages[14] = build_stage(
                 "fix",
                 "AI Auto-Fix",
                 "skipped",
@@ -1603,7 +1988,7 @@ async def start_autonomous_scan(
             )
 
 
-            stages[7] = build_stage(
+            stages[14] = build_stage(
                 "fix",
                 "AI Auto-Fix",
                 "completed",
@@ -1618,7 +2003,7 @@ async def start_autonomous_scan(
         # VALIDATION AGENT
         # ====================================================
 
-        stages[8] = build_stage(
+        stages[15] = build_stage(
             "validation",
             "Validation Agent",
             "running",
@@ -1731,7 +2116,7 @@ async def start_autonomous_scan(
         )
 
 
-        stages[8] = build_stage(
+        stages[15] = build_stage(
             "validation",
             "Validation Agent",
             "completed",
@@ -1789,6 +2174,18 @@ async def start_autonomous_scan(
             "secret_detection": (
                 secret_detection
             ),
+
+            # =================================================
+            # ML SECURITY INTELLIGENCE
+            # =================================================
+
+            "ml_triage": ml_triage_result,
+            "ml_classification": ml_classification_result,
+            "ml_severity": ml_severity_result,
+            "ml_priority": ml_priority_result,
+            "ml_code_context": ml_code_context_result,
+            "ml_similarity": ml_similarity_result,
+            "ml_fix_recommendation": ml_fix_recommendation_result,
 
             "compliance": (
                 compliance_result
@@ -1886,8 +2283,7 @@ async def start_autonomous_scan(
             # =================================================
 
             "message": (
-                "Autonomous Phase 5 repository "
-                "security analysis completed."
+                "Autonomous Phase 7 repository security analysis completed."
             ),
         }
 
@@ -2153,7 +2549,7 @@ async def phase5_info():
 
         "version": APP_VERSION,
 
-        "phase": "Phase 5",
+        "phase": "Phase 7 - ML Security Intelligence",
 
 
         "architecture": [
@@ -2201,6 +2597,13 @@ async def phase5_info():
             "ai_auto_fix": True,
 
             "validation": True,
+            "ml_triage": True,
+            "ml_classification": True,
+            "ml_severity": True,
+            "ml_priority": True,
+            "ml_code_context": True,
+            "ml_similarity": True,
+            "ml_fix_recommendation": True,
         },
 
 

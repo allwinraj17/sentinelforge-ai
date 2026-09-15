@@ -1,0 +1,151 @@
+finding_text,vulnerability_type,cwe,source_type,file_extension,user_input,dangerous_api,production_context,label
+"SQL injection through unsanitized login parameter","SQL Injection",CWE-89,semgrep,.py,1,1,1,CRITICAL
+"User controlled value reaches production SQL query","SQL Injection",CWE-89,semgrep,.js,1,1,1,CRITICAL
+"Remote command injection through request parameter","Command Injection",CWE-78,semgrep,.py,1,1,1,CRITICAL
+"Attacker controlled input passed to shell execution","Command Injection",CWE-78,semgrep,.js,1,1,1,CRITICAL
+"Production endpoint accessible without authentication","Authentication",CWE-306,semgrep,.py,1,0,1,CRITICAL
+"Administrative API lacks authorization protection","Authentication",CWE-862,semgrep,.js,1,0,1,CRITICAL
+"Path traversal allows arbitrary server file access","Path Traversal",CWE-22,semgrep,.py,1,1,1,CRITICAL
+"User supplied path reaches unrestricted file operation","Path Traversal",CWE-22,semgrep,.php,1,1,1,CRITICAL
+"Hardcoded production cloud credential detected","Hardcoded Secret",CWE-798,secret,.py,0,0,1,CRITICAL
+"Production private key embedded in source code","Hardcoded Secret",CWE-321,secret,.pem,0,0,1,CRITICAL
+"Reflected XSS permits attacker script execution","XSS",CWE-79,semgrep,.js,1,0,1,CRITICAL
+"Stored XSS in production application","XSS",CWE-79,semgrep,.php,1,0,1,CRITICAL
+"Production application executes attacker supplied expression","Code Execution",CWE-95,semgrep,.py,1,1,1,CRITICAL
+"Unsafe deserialization of untrusted production input","Code Execution",CWE-502,semgrep,.java,1,1,1,CRITICAL
+"Weak cryptography protects production authentication data","Insecure Cryptography",CWE-327,semgrep,.java,0,1,1,CRITICAL
+"Production SSL certificate verification disabled","Insecure Cryptography",CWE-295,semgrep,.py,0,1,1,CRITICAL
+"Database password hardcoded in deployed backend","Hardcoded Secret",CWE-798,secret,.py,0,0,1,CRITICAL
+"Production signing secret stored in source","Hardcoded Secret",CWE-798,secret,.ts,0,0,1,CRITICAL
+"Production application accepts attacker controlled URL","SSRF",CWE-918,semgrep,.py,1,1,1,CRITICAL
+"Server side request forgery reaches internal service","SSRF",CWE-918,semgrep,.js,1,1,1,CRITICAL
+"Critical security token generated predictably","Other",CWE-330,semgrep,.py,0,1,1,CRITICAL
+"Production debug configuration exposes sensitive behavior","Other",CWE-16,semgrep,.py,0,0,1,CRITICAL
+"Sensitive administrative function has no access control","Authentication",CWE-862,semgrep,.php,1,0,1,CRITICAL
+"Production file download exposes arbitrary filesystem paths","Path Traversal",CWE-22,semgrep,.js,1,1,1,CRITICAL
+"Attacker controlled SQL fragment reaches database driver","SQL Injection",CWE-89,semgrep,.php,1,1,1,CRITICAL
+"Hardcoded authentication token committed to production","Hardcoded Secret",CWE-798,secret,.yaml,0,0,1,CRITICAL
+"Production application evaluates untrusted code","Code Execution",CWE-95,semgrep,.js,1,1,1,CRITICAL
+"Password hashing uses severely weak production algorithm","Insecure Cryptography",CWE-327,semgrep,.py,0,1,1,CRITICAL
+"Production endpoint bypasses authorization entirely","Authentication",CWE-862,semgrep,.py,1,0,1,CRITICAL
+"Private API credential exposed in deployed configuration","Hardcoded Secret",CWE-798,secret,.json,0,0,1,CRITICAL
+"Potential SQL injection through request parameter","SQL Injection",CWE-89,semgrep,.py,1,1,1,HIGH
+"Unsanitized value used in application database query","SQL Injection",CWE-89,semgrep,.js,1,1,1,HIGH
+"External input reaches subprocess call","Command Injection",CWE-78,semgrep,.py,1,1,1,HIGH
+"Unsanitized filename reaches shell command","Command Injection",CWE-78,semgrep,.php,1,1,1,HIGH
+"Sensitive API route lacks authentication validation","Authentication",CWE-306,semgrep,.py,1,0,1,HIGH
+"Authorization check missing from application route","Authentication",CWE-862,semgrep,.js,1,0,1,HIGH
+"User supplied filename used in file access","Path Traversal",CWE-22,semgrep,.py,1,1,1,HIGH
+"Potential directory traversal in download handler","Path Traversal",CWE-22,semgrep,.php,1,1,1,HIGH
+"Hardcoded API key found in application source","Hardcoded Secret",CWE-798,secret,.py,0,0,1,HIGH
+"Application contains embedded authentication token","Hardcoded Secret",CWE-798,secret,.js,0,0,1,HIGH
+"User content rendered without escaping","XSS",CWE-79,semgrep,.js,1,0,1,HIGH
+"Reflected XSS through request input","XSS",CWE-79,semgrep,.php,1,0,1,HIGH
+"Weak hashing algorithm used for passwords","Insecure Cryptography",CWE-327,semgrep,.py,0,1,1,HIGH
+"Deprecated encryption algorithm used by application","Insecure Cryptography",CWE-327,semgrep,.java,0,1,1,HIGH
+"SSL certificate validation disabled","Insecure Cryptography",CWE-295,semgrep,.py,0,1,1,HIGH
+"Server accepts external URL without validation","SSRF",CWE-918,semgrep,.py,1,1,1,HIGH
+"Unsafe expression evaluation detected","Code Execution",CWE-95,semgrep,.py,1,1,1,HIGH
+"Dynamic code execution detected in server code","Code Execution",CWE-95,semgrep,.js,1,1,1,HIGH
+"Sensitive information exposed in production error","Other",CWE-209,semgrep,.py,0,0,1,HIGH
+"Production debug mode is enabled","Other",CWE-16,semgrep,.yaml,0,0,1,HIGH
+"Hardcoded database credential in configuration","Hardcoded Secret",CWE-798,secret,.json,0,0,1,HIGH
+"Private service credential stored in source file","Hardcoded Secret",CWE-798,secret,.yaml,0,0,1,HIGH
+"API route uses weak authorization controls","Authentication",CWE-862,semgrep,.py,1,0,1,HIGH
+"Unrestricted file operation uses request parameter","Path Traversal",CWE-22,semgrep,.js,1,1,1,HIGH
+"SQL statement constructed from external form value","SQL Injection",CWE-89,semgrep,.php,1,1,1,HIGH
+"Shell command uses external query parameter","Command Injection",CWE-78,semgrep,.py,1,1,1,HIGH
+"Unescaped HTML output contains user supplied content","XSS",CWE-79,semgrep,.html,1,0,1,HIGH
+"Production configuration contains sensitive debug data","Other",CWE-16,semgrep,.json,0,0,1,HIGH
+"Weak cryptographic primitive protects application data","Insecure Cryptography",CWE-327,semgrep,.py,0,1,1,HIGH
+"Authentication mechanism has a security weakness","Authentication",CWE-287,semgrep,.py,1,0,1,HIGH
+"Debug mode enabled in staging environment","Other",CWE-16,semgrep,.py,0,0,0,MEDIUM
+"Sensitive error information exposed internally","Other",CWE-209,semgrep,.py,0,0,0,MEDIUM
+"Weak hash used for non authentication data","Insecure Cryptography",CWE-327,semgrep,.py,0,1,0,MEDIUM
+"Deprecated cryptographic function in internal tool","Insecure Cryptography",CWE-327,semgrep,.js,0,1,0,MEDIUM
+"Authentication missing on low sensitivity test route","Authentication",CWE-306,semgrep,.py,1,0,0,MEDIUM
+"Development endpoint has incomplete authorization","Authentication",CWE-862,semgrep,.js,1,0,0,MEDIUM
+"User input reaches restricted development file operation","Path Traversal",CWE-22,semgrep,.py,1,1,0,MEDIUM
+"Potential SQL injection in internal testing interface","SQL Injection",CWE-89,semgrep,.py,1,1,0,MEDIUM
+"Potential XSS in internal dashboard","XSS",CWE-79,semgrep,.js,1,0,0,MEDIUM
+"Unsanitized content rendered in development page","XSS",CWE-79,semgrep,.html,1,0,0,MEDIUM
+"Mock API credential included in staging configuration","Hardcoded Secret",CWE-798,secret,.json,0,0,0,MEDIUM
+"Development token stored in local configuration","Hardcoded Secret",CWE-798,secret,.yaml,0,0,0,MEDIUM
+"Shell command receives controlled input in staging utility","Command Injection",CWE-78,semgrep,.py,1,1,0,MEDIUM
+"Development script executes supplied command","Command Injection",CWE-78,semgrep,.js,1,1,0,MEDIUM
+"SSL verification disabled for internal staging service","Insecure Cryptography",CWE-295,semgrep,.py,0,1,0,MEDIUM
+"External URL accepted by internal integration","SSRF",CWE-918,semgrep,.py,1,1,0,MEDIUM
+"Dynamic expression evaluation used in testing tool","Code Execution",CWE-95,semgrep,.py,1,1,0,MEDIUM
+"Unsafe deserialization in development utility","Code Execution",CWE-502,semgrep,.py,1,1,0,MEDIUM
+"Detailed debug information available to testers","Other",CWE-209,semgrep,.js,0,0,0,MEDIUM
+"Weak password validation in development portal","Authentication",CWE-521,semgrep,.py,1,0,0,MEDIUM
+"Test file download accepts user supplied path","Path Traversal",CWE-22,semgrep,.py,1,1,0,MEDIUM
+"Internal query builder accepts unsanitized input","SQL Injection",CWE-89,semgrep,.js,1,1,0,MEDIUM
+"Staging page reflects user controlled content","XSS",CWE-79,semgrep,.php,1,0,0,MEDIUM
+"Temporary credential stored in staging config","Hardcoded Secret",CWE-798,secret,.json,0,0,0,MEDIUM
+"Weak encryption used for temporary internal data","Insecure Cryptography",CWE-327,semgrep,.py,0,1,0,MEDIUM
+"Development API has incomplete access validation","Authentication",CWE-306,semgrep,.py,1,0,0,MEDIUM
+"Internal command tool accepts user filename","Command Injection",CWE-78,semgrep,.py,1,1,0,MEDIUM
+"Development service exposes detailed exceptions","Other",CWE-209,semgrep,.py,0,0,0,MEDIUM
+"Test environment uses dynamic code evaluation","Code Execution",CWE-95,semgrep,.js,1,1,0,MEDIUM
+"Development authentication uses weak verification","Authentication",CWE-287,semgrep,.py,1,0,0,MEDIUM
+"Example SQL query uses a fixed constant value","SQL Injection",CWE-89,semgrep,.py,0,1,0,LOW
+"Test database query contains no external input","SQL Injection",CWE-89,semgrep,.js,0,1,0,LOW
+"Fixed internal command used by utility script","Command Injection",CWE-78,semgrep,.py,0,1,0,LOW
+"Sample shell command uses constant argument","Command Injection",CWE-78,semgrep,.sh,0,1,0,LOW
+"Development test endpoint intentionally accepts input","Authentication",CWE-306,semgrep,.py,0,0,0,LOW
+"Mock route bypasses authentication for unit testing","Authentication",CWE-306,semgrep,.js,0,0,0,LOW
+"File operation uses fixed internal path","Path Traversal",CWE-22,semgrep,.py,0,1,0,LOW
+"Test fixture contains constant file path","Path Traversal",CWE-22,semgrep,.json,0,1,0,LOW
+"Sample credential used only in unit test fixture","Hardcoded Secret",CWE-798,secret,.py,0,0,0,LOW
+"Placeholder token appears in example configuration","Hardcoded Secret",CWE-798,secret,.txt,0,0,0,LOW
+"Weak hash used only for non security test data","Insecure Cryptography",CWE-327,semgrep,.py,0,1,0,LOW
+"Legacy algorithm appears in test helper code","Insecure Cryptography",CWE-327,semgrep,.js,0,1,0,LOW
+"Example HTML contains text only in documentation","XSS",CWE-79,semgrep,.md,0,0,0,LOW
+"Test string contains HTML markup without rendering","XSS",CWE-79,semgrep,.txt,0,0,0,LOW
+"Development debug statement in local script","Other",CWE-16,semgrep,.py,0,0,0,LOW
+"Generic security keyword matched in variable name","Other",CWE-0,semgrep,.py,0,0,0,LOW
+"Fixed URL used by internal test request","SSRF",CWE-918,semgrep,.py,0,1,0,LOW
+"Documentation shows a sample external URL","SSRF",CWE-918,semgrep,.md,0,0,0,LOW
+"Test utility evaluates fixed internal expression","Code Execution",CWE-95,semgrep,.py,0,1,0,LOW
+"Example code demonstrates fixed expression evaluation","Code Execution",CWE-95,semgrep,.md,0,0,0,LOW
+"Mock credential is isolated to unit tests","Hardcoded Secret",CWE-798,secret,.json,0,0,0,LOW
+"Sample password appears only in documentation","Hardcoded Secret",CWE-798,secret,.md,0,0,0,LOW
+"Constant SQL example included in documentation","SQL Injection",CWE-89,semgrep,.md,0,0,0,LOW
+"Fixed command shown in documentation comment","Command Injection",CWE-78,semgrep,.md,0,0,0,LOW
+"Test route intentionally skips authentication checks","Authentication",CWE-306,semgrep,.py,0,0,0,LOW
+"Example path value is constant in test data","Path Traversal",CWE-22,semgrep,.txt,0,0,0,LOW
+"Placeholder API key used in sample project","Hardcoded Secret",CWE-798,secret,.example,0,0,0,LOW
+"Constant encryption operation used for test data","Insecure Cryptography",CWE-327,semgrep,.py,0,1,0,LOW
+"Documentation contains security warning example","Other",CWE-0,semgrep,.md,0,0,0,LOW
+"Local development debug configuration only","Other",CWE-16,semgrep,.json,0,0,0,LOW
+"SQL keyword appears inside documentation text","SQL Injection",CWE-89,semgrep,.md,0,0,0,INFO
+"Example SQL statement shown in a comment","SQL Injection",CWE-89,semgrep,.txt,0,0,0,INFO
+"Shell command appears in documentation example","Command Injection",CWE-78,semgrep,.md,0,0,0,INFO
+"Security test command documented as an example","Command Injection",CWE-78,semgrep,.txt,0,0,0,INFO
+"Variable name contains the word password","Other",CWE-0,semgrep,.py,0,0,0,INFO
+"Variable name contains the word secret","Other",CWE-0,semgrep,.js,0,0,0,INFO
+"Example private key shown in documentation","Hardcoded Secret",CWE-321,secret,.md,0,0,0,INFO
+"Sample API key displayed as documentation placeholder","Hardcoded Secret",CWE-798,secret,.md,0,0,0,INFO
+"Placeholder token value used for testing","Hardcoded Secret",CWE-798,secret,.txt,0,0,0,INFO
+"Security rule matched non sensitive configuration value","Other",CWE-0,semgrep,.yaml,0,0,0,INFO
+"Debug keyword appears in development documentation","Other",CWE-16,semgrep,.md,0,0,0,INFO
+"Example authentication route described in documentation","Authentication",CWE-306,semgrep,.md,0,0,0,INFO
+"Sample path traversal string shown in documentation","Path Traversal",CWE-22,semgrep,.md,0,0,0,INFO
+"Example XSS payload displayed as security documentation","XSS",CWE-79,semgrep,.md,0,0,0,INFO
+"XSS keyword appears in security training note","XSS",CWE-79,semgrep,.txt,0,0,0,INFO
+"Weak algorithm name mentioned in documentation","Insecure Cryptography",CWE-327,semgrep,.md,0,0,0,INFO
+"MD5 mentioned as an insecure algorithm example","Insecure Cryptography",CWE-327,semgrep,.md,0,0,0,INFO
+"SSL validation warning described in documentation","Insecure Cryptography",CWE-295,semgrep,.md,0,0,0,INFO
+"Example external URL shown in documentation","SSRF",CWE-918,semgrep,.md,0,0,0,INFO
+"SSRF term appears in security training material","SSRF",CWE-918,semgrep,.txt,0,0,0,INFO
+"Example eval usage shown in documentation","Code Execution",CWE-95,semgrep,.md,0,0,0,INFO
+"Unsafe deserialization discussed in security note","Code Execution",CWE-502,semgrep,.md,0,0,0,INFO
+"Authentication keyword appears in source comment","Authentication",CWE-306,semgrep,.py,0,0,0,INFO
+"SQL injection mentioned in README security section","SQL Injection",CWE-89,semgrep,.md,0,0,0,INFO
+"Command injection mentioned in README security section","Command Injection",CWE-78,semgrep,.md,0,0,0,INFO
+"Path traversal mentioned in README security section","Path Traversal",CWE-22,semgrep,.md,0,0,0,INFO
+"Secret detection rule matched example placeholder","Hardcoded Secret",CWE-798,secret,.example,0,0,0,INFO
+"Generic configuration warning without sensitive data","Other",CWE-0,semgrep,.yaml,0,0,0,INFO
+"Security scanner informational finding in documentation","Other",CWE-0,semgrep,.md,0,0,0,INFO
+"Security category mentioned in training material","Other",CWE-0,semgrep,.txt,0,0,0,INFO
