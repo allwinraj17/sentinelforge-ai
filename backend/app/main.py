@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import io
 import json
 import zipfile
@@ -620,7 +621,7 @@ async def root():
 
         "version": APP_VERSION,
 
-        "phase": "Phase 5",
+        "phase": "Phase 7 - ML Security Intelligence",
 
         "message": (
             "Security analysis backend is running."
@@ -650,7 +651,7 @@ async def health():
 
         "version": APP_VERSION,
 
-        "phase": "Phase 5",
+        "phase": "Phase 7 - ML Security Intelligence",
     }
 
 
@@ -2634,10 +2635,10 @@ async def phase4_info():
 
         "message": (
             "Phase 4 architecture is preserved "
-            "inside the Phase 5 implementation."
+            "inside the Phase 7 implementation."
         ),
 
-        "current_phase": "Phase 5",
+        "current_phase": "Phase 7 - ML Security Intelligence",
 
         "phase4_core_pipeline": [
 

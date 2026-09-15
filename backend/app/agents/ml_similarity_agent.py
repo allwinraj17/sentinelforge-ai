@@ -43,6 +43,7 @@ def load_model():
 # ---------------------------------------------------------
 
 def build_security_text(finding):
+
     message = finding.get(
         "message",
         finding.get("finding_text", "")
@@ -117,7 +118,9 @@ def classify_similarity(score):
 
 def compare_findings(
     finding_1,
-    finding_2
+    finding_2,
+    finding_1_index=None,
+    finding_2_index=None
 ):
 
     model = load_model()
@@ -146,16 +149,22 @@ def compare_findings(
     score = float(score)
 
     return {
+        "finding_1_index": finding_1_index,
+        "finding_2_index": finding_2_index,
+
         "finding_1": finding_1,
         "finding_2": finding_2,
+
         "similarity_score": round(
             score,
             4
         ),
+
         "similarity_percentage": round(
             score * 100,
             2
         ),
+
         "classification": classify_similarity(
             score
         )
@@ -186,9 +195,19 @@ def run_ml_similarity(
                 {}
             )
 
+            finding_1_index = pair.get(
+                "finding_1_index"
+            )
+
+            finding_2_index = pair.get(
+                "finding_2_index"
+            )
+
             comparison = compare_findings(
                 finding_1,
-                finding_2
+                finding_2,
+                finding_1_index,
+                finding_2_index
             )
 
             results.append(

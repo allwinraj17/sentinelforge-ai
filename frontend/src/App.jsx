@@ -42,52 +42,62 @@ const PIPELINE_STAGES = [
   {
     id: "understanding",
     title: "Repository Understanding",
-    message: "Understanding repository structure, files and technologies.",
+    message:
+      "Understanding repository structure, files and technologies.",
   },
   {
     id: "semgrep",
     title: "Semgrep Security Detection",
-    message: "Scanning source code for security vulnerabilities.",
+    message:
+      "Scanning source code for security vulnerabilities.",
   },
   {
     id: "secret",
     title: "Secret Detection",
-    message: "Checking for hardcoded secrets and sensitive credentials.",
+    message:
+      "Checking for hardcoded secrets and sensitive credentials.",
   },
   {
     id: "ml",
     title: "ML Security Intelligence",
-    message: "Running seven specialized machine-learning analysis agents.",
+    message:
+      "Running seven specialized machine-learning analysis agents.",
   },
   {
     id: "risk",
     title: "Risk Assessment",
-    message: "Calculating deterministic security risk.",
+    message:
+      "Calculating deterministic security risk.",
   },
   {
     id: "fix",
     title: "AI Auto-Fix",
-    message: "Generating secure remediation for supported findings.",
+    message:
+      "Generating secure remediation for supported findings.",
   },
   {
     id: "validation",
     title: "Validation Agent",
-    message: "Checking generated remediation artifacts.",
+    message:
+      "Checking generated remediation artifacts.",
   },
   {
     id: "compliance",
     title: "Compliance Mapping",
-    message: "Mapping security findings to relevant OWASP categories.",
+    message:
+      "Mapping security findings to relevant OWASP categories.",
   },
   {
     id: "report",
     title: "Report Preparation",
-    message: "Preparing the final security report.",
+    message:
+      "Preparing the final security report.",
   },
   {
     id: "email",
     title: "Email Delivery",
-    message: "Preparing automatic report delivery.",
+    message:
+      "Preparing automatic report delivery.",
   },
 ];
 
@@ -161,11 +171,15 @@ function getRiskScore(assessment) {
 
 function getRiskLevel(overallRisk, riskAssessments) {
   if (overallRisk?.risk_level) {
-    return String(overallRisk.risk_level).toUpperCase();
+    return String(
+      overallRisk.risk_level
+    ).toUpperCase();
   }
 
   if (overallRisk?.level) {
-    return String(overallRisk.level).toUpperCase();
+    return String(
+      overallRisk.level
+    ).toUpperCase();
   }
 
   if (riskAssessments?.length > 0) {
@@ -199,7 +213,9 @@ function getRiskLevel(overallRisk, riskAssessments) {
         }
       }
 
-      return String(levels[0]).toUpperCase();
+      return String(
+        levels[0]
+      ).toUpperCase();
     }
   }
 
@@ -221,9 +237,11 @@ function getRiskLevel(overallRisk, riskAssessments) {
 }
 
 function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
+  const url =
+    URL.createObjectURL(blob);
 
-  const link = document.createElement("a");
+  const link =
+    document.createElement("a");
 
   link.href = url;
   link.download = filename;
@@ -248,7 +266,10 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function getRepositoryName(scanData, selectedFile) {
+function getRepositoryName(
+  scanData,
+  selectedFile
+) {
   return (
     scanData?.filename ||
     selectedFile?.name ||
@@ -266,15 +287,25 @@ function getSafeRepositoryName(name) {
 // ML DISPLAY HELPERS
 // ============================================================
 
-function getMlResultForFinding(result, finding, index) {
-  const results = Array.isArray(result?.results)
-    ? result.results
-    : [];
+function getMlResultForFinding(
+  result,
+  finding,
+  index
+) {
+  const results =
+    Array.isArray(result?.results)
+      ? result.results
+      : [];
 
-  // Backend returns ML results in the same order as normalized findings.
-  // Prefer index so multiple findings from the same file are not mixed up.
+  // Backend returns ML results in the
+  // same order as normalized findings.
+  //
+  // Index-based mapping is important because
+  // multiple Semgrep findings can belong to
+  // the same vulnerable source file.
   return results[index] || null;
 }
+
 function formatMlConfidence(value) {
   const number = Number(value);
 
@@ -282,9 +313,10 @@ function formatMlConfidence(value) {
     return "N/A";
   }
 
-  const percentage = number <= 1
-    ? number * 100
-    : number;
+  const percentage =
+    number <= 1
+      ? number * 100
+      : number;
 
   return `${percentage.toFixed(2)}%`;
 }
@@ -296,9 +328,10 @@ function getMlConfidenceLevel(value) {
     return "Confidence unavailable";
   }
 
-  const normalized = number > 1
-    ? number / 100
-    : number;
+  const normalized =
+    number > 1
+      ? number / 100
+      : number;
 
   if (normalized >= 0.8) {
     return "High Confidence";
@@ -311,8 +344,15 @@ function getMlConfidenceLevel(value) {
   return "Low Confidence";
 }
 
-function getMlDisplayValue(value, fallback = "N/A") {
-  if (value === null || value === undefined || value === "") {
+function getMlDisplayValue(
+  value,
+  fallback = "N/A"
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
     return fallback;
   }
 
@@ -324,13 +364,16 @@ function getMlDisplayValue(value, fallback = "N/A") {
 // ============================================================
 
 export default function App() {
+
   // ==========================================================
   // INPUT
   // ==========================================================
 
-  const [role, setRole] = useState("student");
+  const [role, setRole] =
+    useState("student");
 
-  const [email, setEmail] = useState("");
+  const [email, setEmail] =
+    useState("");
 
   const [selectedFile, setSelectedFile] =
     useState(null);
@@ -339,14 +382,17 @@ export default function App() {
   // ANALYSIS
   // ==========================================================
 
-  const [running, setRunning] = useState(false);
+  const [running, setRunning] =
+    useState(false);
 
   const [completed, setCompleted] =
     useState(false);
 
-  const [error, setError] = useState("");
+  const [error, setError] =
+    useState("");
 
-  const [scanData, setScanData] = useState(null);
+  const [scanData, setScanData] =
+    useState(null);
 
   // ==========================================================
   // PROGRESS
@@ -368,16 +414,20 @@ export default function App() {
   const [zipDownloaded, setZipDownloaded] =
     useState(false);
 
-  const [pdfStatus, setPdfStatus] = useState("");
+  const [pdfStatus, setPdfStatus] =
+    useState("");
 
-  const [zipStatus, setZipStatus] = useState("");
+  const [zipStatus, setZipStatus] =
+    useState("");
 
   const [emailStatus, setEmailStatus] =
     useState("");
 
-  const emailStartedRef = useRef(false);
+  const emailStartedRef =
+    useRef(false);
 
-  const progressTimersRef = useRef([]);
+  const progressTimersRef =
+    useRef([]);
 
   // ==========================================================
   // CLEANUP TIMERS
@@ -386,7 +436,8 @@ export default function App() {
   useEffect(() => {
     return () => {
       progressTimersRef.current.forEach(
-        (timer) => clearTimeout(timer)
+        (timer) =>
+          clearTimeout(timer)
       );
     };
   }, []);
@@ -397,7 +448,8 @@ export default function App() {
 
   function handleFileChange(event) {
     const file =
-      event.target.files?.[0] || null;
+      event.target.files?.[0] ||
+      null;
 
     setSelectedFile(file);
 
@@ -433,13 +485,13 @@ export default function App() {
     message
   ) {
     setProgressStage(stageIndex);
-
     setProgressMessage(message);
   }
 
   function clearProgressTimers() {
     progressTimersRef.current.forEach(
-      (timer) => clearTimeout(timer)
+      (timer) =>
+        clearTimeout(timer)
     );
 
     progressTimersRef.current = [];
@@ -450,6 +502,7 @@ export default function App() {
   // ==========================================================
 
   async function startAutonomousAnalysis() {
+
     setError("");
 
     setCompleted(false);
@@ -473,7 +526,9 @@ export default function App() {
     // --------------------------------------------------------
 
     if (!role) {
-      setError("Please select your role.");
+      setError(
+        "Please select your role."
+      );
       return;
     }
 
@@ -513,9 +568,13 @@ export default function App() {
     // FILE SIZE
     // --------------------------------------------------------
 
-    const maxSize = 50 * 1024 * 1024;
+    const maxSize =
+      50 * 1024 * 1024;
 
-    if (selectedFile.size > maxSize) {
+    if (
+      selectedFile.size >
+      maxSize
+    ) {
       setError(
         "Repository ZIP must be smaller than 50 MB."
       );
@@ -534,9 +593,14 @@ export default function App() {
     );
 
     try {
-      const formData = new FormData();
 
-      formData.append("role", role);
+      const formData =
+        new FormData();
+
+      formData.append(
+        "role",
+        role
+      );
 
       formData.append(
         "email",
@@ -555,6 +619,7 @@ export default function App() {
       clearProgressTimers();
 
       progressTimersRef.current = [
+
         setTimeout(() => {
           updateProgress(
             1,
@@ -637,20 +702,22 @@ export default function App() {
       // BACKEND REQUEST
       // ------------------------------------------------------
 
-      const response = await fetch(
-        `${API_URL}/scan/start`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
+      const response =
+        await fetch(
+          `${API_URL}/scan/start`,
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
 
       clearProgressTimers();
 
       let data = null;
 
       try {
-        data = await response.json();
+        data =
+          await response.json();
       } catch {
         throw new Error(
           `Backend returned an invalid response (${response.status}).`
@@ -676,7 +743,9 @@ export default function App() {
       // FINAL RESULT
       // ------------------------------------------------------
 
-      setProgressStage(PIPELINE_STAGES.length - 1);
+      setProgressStage(
+        PIPELINE_STAGES.length - 1
+      );
 
       setProgressMessage(
         "Autonomous analysis completed successfully."
@@ -687,7 +756,9 @@ export default function App() {
       setTimeout(() => {
         setCompleted(true);
       }, 350);
+
     } catch (requestError) {
+
       console.error(
         "Autonomous analysis error:",
         requestError
@@ -703,8 +774,11 @@ export default function App() {
       setProgressMessage("");
 
       setProgressStage(-1);
+
     } finally {
+
       setRunning(false);
+
     }
   }
 
@@ -713,6 +787,7 @@ export default function App() {
   // ==========================================================
 
   function buildSecurityReportPDF(data) {
+
     const reportRole =
       data?.role || role;
 
@@ -734,10 +809,11 @@ export default function App() {
         selectedFile
       );
 
-    const doc = new jsPDF({
-      unit: "mm",
-      format: "a4",
-    });
+    const doc =
+      new jsPDF({
+        unit: "mm",
+        format: "a4",
+      });
 
     const pageWidth =
       doc.internal.pageSize.getWidth();
@@ -754,6 +830,7 @@ export default function App() {
     function addPageIfNeeded(
       requiredHeight = 10
     ) {
+
       if (
         y + requiredHeight >
         pageHeight - 16
@@ -761,6 +838,7 @@ export default function App() {
         doc.addPage();
         y = 18;
       }
+
     }
 
     // --------------------------------------------------------
@@ -771,6 +849,7 @@ export default function App() {
       text,
       options = {}
     ) {
+
       const fontSize =
         options.fontSize || 10;
 
@@ -784,11 +863,15 @@ export default function App() {
         options.maxWidth ||
         pageWidth - 30;
 
-      doc.setFontSize(fontSize);
+      doc.setFontSize(
+        fontSize
+      );
 
       doc.setFont(
         "helvetica",
-        bold ? "bold" : "normal"
+        bold
+          ? "bold"
+          : "normal"
       );
 
       const lines =
@@ -838,7 +921,8 @@ export default function App() {
     );
 
     y +=
-      titleLines.length * 7;
+      titleLines.length *
+      7;
 
     doc.setFont(
       "helvetica",
@@ -919,7 +1003,10 @@ export default function App() {
     // STUDENT REPORT
     // ========================================================
 
-    if (reportRole === "student") {
+    if (
+      reportRole === "student"
+    ) {
+
       writeText(
         "Security Explanation",
         {
@@ -928,13 +1015,22 @@ export default function App() {
         }
       );
 
-      if (reportFindings.length === 0) {
+      if (
+        reportFindings.length === 0
+      ) {
+
         writeText(
           "No security vulnerabilities were detected in the analyzed repository."
         );
+
       } else {
+
         reportFindings.forEach(
-          (finding, index) => {
+          (
+            finding,
+            index
+          ) => {
+
             const assessment =
               reportAssessments[
                 index
@@ -992,10 +1088,14 @@ export default function App() {
             );
 
             y += 4;
+
           }
         );
+
       }
+
     } else {
+
       // ======================================================
       // DEVELOPER REPORT
       // ======================================================
@@ -1008,13 +1108,22 @@ export default function App() {
         }
       );
 
-      if (reportFindings.length === 0) {
+      if (
+        reportFindings.length === 0
+      ) {
+
         writeText(
           "No security vulnerabilities were detected."
         );
+
       } else {
+
         reportFindings.forEach(
-          (finding, index) => {
+          (
+            finding,
+            index
+          ) => {
+
             const assessment =
               reportAssessments[
                 index
@@ -1120,6 +1229,7 @@ export default function App() {
             if (
               finding?.source_code
             ) {
+
               writeText(
                 "Source Context:",
                 {
@@ -1134,12 +1244,16 @@ export default function App() {
                   lineHeight: 4,
                 }
               );
+
             }
 
             y += 4;
+
           }
         );
+
       }
+
     }
 
     // ========================================================
@@ -1196,10 +1310,14 @@ export default function App() {
         "Remediation artifact checks completed."
     );
 
-    if (validation?.status) {
+    if (
+      validation?.status
+    ) {
+
       writeText(
         `Validation Status: ${validation.status}`
       );
+
     }
 
     // ========================================================
@@ -1215,7 +1333,7 @@ export default function App() {
     );
 
     writeText(
-      "Repository → Extraction → Security Detection → Risk Assessment → AI Auto-Fix → Validation → Report → Email"
+      "Repository Upload → Secure Extraction → Repository Understanding → Semgrep Detection → Secret Detection → ML Security Intelligence → Risk Assessment → AI Auto-Fix → Validation → Compliance → PDF Report → Email"
     );
 
     // ========================================================
@@ -1257,11 +1375,13 @@ export default function App() {
   // ==========================================================
 
   function downloadSecurityReport() {
+
     if (!scanData) {
       return;
     }
 
     try {
+
       setPdfStatus(
         "Generating security report..."
       );
@@ -1291,7 +1411,9 @@ export default function App() {
       setPdfStatus(
         "Security report downloaded successfully."
       );
+
     } catch (pdfError) {
+
       console.error(
         "PDF generation error:",
         pdfError
@@ -1303,6 +1425,7 @@ export default function App() {
           "Unknown error"
         }`
       );
+
     }
   }
 
@@ -1311,21 +1434,27 @@ export default function App() {
   // ==========================================================
 
   async function downloadFixedRepository() {
+
     if (!selectedFile) {
+
       setZipStatus(
         "Original repository ZIP is unavailable."
       );
+
       return;
     }
 
     if (!scanData) {
+
       setZipStatus(
         "Analysis results are unavailable."
       );
+
       return;
     }
 
     try {
+
       setZipStatus(
         "Preparing fixed repository..."
       );
@@ -1345,13 +1474,18 @@ export default function App() {
 
       let skippedCount = 0;
 
-      for (const fix of fixes) {
+      for (
+        const fix of fixes
+      ) {
+
         if (
           !fix?.success ||
           !fix?.fixed_code ||
           !fix?.original_path
         ) {
+
           skippedCount += 1;
+
           continue;
         }
 
@@ -1361,7 +1495,9 @@ export default function App() {
           );
 
         if (!targetPath) {
+
           skippedCount += 1;
+
           continue;
         }
 
@@ -1369,7 +1505,10 @@ export default function App() {
         // DIRECT MATCH
         // ----------------------------------------------------
 
-        if (zip.file(targetPath)) {
+        if (
+          zip.file(targetPath)
+        ) {
+
           zip.file(
             targetPath,
             fix.fixed_code
@@ -1387,7 +1526,10 @@ export default function App() {
         const dotPath =
           `./${targetPath}`;
 
-        if (zip.file(dotPath)) {
+        if (
+          zip.file(dotPath)
+        ) {
+
           zip.file(
             dotPath,
             fix.fixed_code
@@ -1406,6 +1548,7 @@ export default function App() {
 
         zip.forEach(
           (relativePath) => {
+
             if (
               matchedPath ||
               relativePath.endsWith("/")
@@ -1418,22 +1561,30 @@ export default function App() {
                 relativePath
               ) === targetPath
             ) {
+
               matchedPath =
                 relativePath;
+
             }
+
           }
         );
 
         if (matchedPath) {
+
           zip.file(
             matchedPath,
             fix.fixed_code
           );
 
           replacedCount += 1;
+
         } else {
+
           skippedCount += 1;
+
         }
+
       }
 
       // ======================================================
@@ -1441,6 +1592,7 @@ export default function App() {
       // ======================================================
 
       const manifest = {
+
         project_title:
           PROJECT_TITLE,
 
@@ -1471,6 +1623,7 @@ export default function App() {
         validation_agent:
           scanData?.validation ||
           "completed",
+
       };
 
       zip.file(
@@ -1520,7 +1673,9 @@ export default function App() {
       setZipStatus(
         `Fixed repository downloaded. ${replacedCount} file(s) replaced.`
       );
+
     } catch (zipError) {
+
       console.error(
         "ZIP generation error:",
         zipError
@@ -1532,6 +1687,7 @@ export default function App() {
           "Unknown error"
         }`
       );
+
     }
   }
 
@@ -1539,15 +1695,20 @@ export default function App() {
   // EMAIL
   // ==========================================================
 
-  async function sendAutomaticEmail(data) {
+  async function sendAutomaticEmail(
+    data
+  ) {
+
     if (
       !EMAILJS_SERVICE_ID ||
       !EMAILJS_TEMPLATE_ID ||
       !EMAILJS_PUBLIC_KEY
     ) {
+
       throw new Error(
         "Email service is not configured."
       );
+
     }
 
     // --------------------------------------------------------
@@ -1576,7 +1737,11 @@ export default function App() {
     let low = 0;
 
     reportFindings.forEach(
-      (finding, index) => {
+      (
+        finding,
+        index
+      ) => {
+
         const assessment =
           reportAssessments[
             index
@@ -1590,15 +1755,36 @@ export default function App() {
             )
           ).toUpperCase();
 
-        if (severity === "CRITICAL") {
+        if (
+          severity ===
+          "CRITICAL"
+        ) {
+
           critical += 1;
-        } else if (severity === "HIGH") {
+
+        } else if (
+          severity ===
+          "HIGH"
+        ) {
+
           high += 1;
-        } else if (severity === "MEDIUM") {
+
+        } else if (
+          severity ===
+          "MEDIUM"
+        ) {
+
           medium += 1;
-        } else if (severity === "LOW") {
+
+        } else if (
+          severity ===
+          "LOW"
+        ) {
+
           low += 1;
+
         }
+
       }
     );
 
@@ -1608,7 +1794,10 @@ export default function App() {
 
     let findingsHtml = "";
 
-    if (reportFindings.length === 0) {
+    if (
+      reportFindings.length === 0
+    ) {
+
       findingsHtml = `
         <div style="
           padding:16px;
@@ -1623,11 +1812,17 @@ export default function App() {
           </p>
         </div>
       `;
+
     } else {
+
       findingsHtml =
         reportFindings
           .map(
-            (finding, index) => {
+            (
+              finding,
+              index
+            ) => {
+
               const assessment =
                 reportAssessments[
                   index
@@ -1765,9 +1960,11 @@ export default function App() {
 
                 </div>
               `;
+
             }
           )
           .join("");
+
     }
 
     // --------------------------------------------------------
@@ -1806,13 +2003,12 @@ export default function App() {
 
     // --------------------------------------------------------
     // EMAILJS TEMPLATE PARAMETERS
-    //
-    // IMPORTANT:
-    // These names must match the variables in EmailJS.
     // --------------------------------------------------------
 
     const templateParams = {
+
       // Recipient
+
       to_email:
         data?.email || email,
 
@@ -1826,6 +2022,7 @@ export default function App() {
         data?.email || email,
 
       // Basic information
+
       role:
         data?.role === "student"
           ? "Student"
@@ -1840,9 +2037,7 @@ export default function App() {
       filename:
         repositoryName,
 
-      // ------------------------------------------------------
-      // VARIABLES USED BY EMAILJS TEMPLATE
-      // ------------------------------------------------------
+      // Variables used by EmailJS
 
       overall_risk:
         riskLevel,
@@ -1868,9 +2063,7 @@ export default function App() {
       report:
         findingsHtml,
 
-      // ------------------------------------------------------
-      // ADDITIONAL VARIABLES
-      // ------------------------------------------------------
+      // Additional variables
 
       findings_count:
         reportFindings.length,
@@ -1890,6 +2083,7 @@ export default function App() {
 
       subject:
         `Repository Security Report - ${repositoryName}`,
+
     };
 
     // --------------------------------------------------------
@@ -1914,16 +2108,21 @@ export default function App() {
   // ==========================================================
 
   async function triggerAutomaticEmail() {
+
     if (
       !scanData ||
       emailStartedRef.current
     ) {
+
       return;
+
     }
 
-    emailStartedRef.current = true;
+    emailStartedRef.current =
+      true;
 
     try {
+
       setEmailStatus(
         "Sending report to your email..."
       );
@@ -1938,7 +2137,9 @@ export default function App() {
           email
         }.`
       );
+
     } catch (emailError) {
+
       console.error(
         "Email delivery error:",
         emailError
@@ -1950,6 +2151,7 @@ export default function App() {
           "Unknown error"
         }`
       );
+
     }
   }
 
@@ -1958,13 +2160,17 @@ export default function App() {
   // ==========================================================
 
   useEffect(() => {
+
     if (
       completed &&
       scanData &&
       !emailStartedRef.current
     ) {
+
       triggerAutomaticEmail();
+
     }
+
   }, [completed, scanData]);
 
   // ==========================================================
@@ -1972,6 +2178,7 @@ export default function App() {
   // ==========================================================
 
   function resetAnalysis() {
+
     clearProgressTimers();
 
     setRole("student");
@@ -2002,7 +2209,8 @@ export default function App() {
 
     setEmailStatus("");
 
-    emailStartedRef.current = false;
+    emailStartedRef.current =
+      false;
 
     const input =
       document.getElementById(
@@ -2356,7 +2564,10 @@ export default function App() {
               <div className="progress-list">
 
                 {PIPELINE_STAGES.map(
-                  (stage, index) => {
+                  (
+                    stage,
+                    index
+                  ) => {
 
                     let status =
                       "pending";
@@ -2365,17 +2576,22 @@ export default function App() {
                       index <
                       progressStage
                     ) {
+
                       status =
                         "completed";
+
                     } else if (
                       index ===
                       progressStage
                     ) {
+
                       status =
                         "active";
+
                     }
 
                     return (
+
                       <div
                         className={
                           `progress-stage ${status}`
@@ -2422,7 +2638,9 @@ export default function App() {
                         </div>
 
                       </div>
+
                     );
+
                   }
                 )}
 
@@ -2431,6 +2649,7 @@ export default function App() {
             </div>
 
           </section>
+
         )}
 
         {/* ================================================== */}
@@ -2521,7 +2740,10 @@ export default function App() {
                     scanData?.stages ||
                     []
                   ).map(
-                    (stage, index) => (
+                    (
+                      stage,
+                      index
+                    ) => (
 
                       <div
                         className={
@@ -2539,11 +2761,9 @@ export default function App() {
                         <div className="pipeline-icon">
 
                           {stage.status ===
-                            "skipped" ? (
-                            "–"
-                          ) : (
-                            "✓"
-                          )}
+                            "skipped"
+                            ? "–"
+                            : "✓"}
 
                         </div>
 
@@ -2562,8 +2782,10 @@ export default function App() {
                         </div>
 
                         <div className="pipeline-status">
+
                           {stage.status ||
                             "completed"}
+
                         </div>
 
                       </div>
@@ -2608,11 +2830,13 @@ export default function App() {
                   >
 
                     <div className="pipeline-icon">
+
                       {emailStatus.startsWith(
                         "Security report sent"
                       )
                         ? "✓"
                         : "✉"}
+
                     </div>
 
                     <div className="pipeline-content">
@@ -2629,11 +2853,13 @@ export default function App() {
                     </div>
 
                     <div className="pipeline-status">
+
                       {emailStatus.startsWith(
                         "Security report sent"
                       )
                         ? "sent"
                         : "processing"}
+
                     </div>
 
                   </div>
@@ -2700,7 +2926,9 @@ export default function App() {
 
               </div>
 
+              {/* ================================================== */}
               {/* ML SECURITY INTELLIGENCE */}
+              {/* ================================================== */}
 
               <div className="results-card ml-intelligence-card">
 
@@ -2727,284 +2955,470 @@ export default function App() {
                 {findings.length === 0 ? (
 
                   <div className="secure-box">
+
                     No findings were available for ML security intelligence.
+
                   </div>
 
                 ) : (
 
                   <div className="ml-finding-list">
 
-                    {findings.map((finding, index) => {
-                      const triage = getMlResultForFinding(
-                        scanData?.ml_triage,
+                    {findings.map(
+                      (
                         finding,
                         index
-                      );
+                      ) => {
 
-                      const classification = getMlResultForFinding(
-                        scanData?.ml_classification,
-                        finding,
-                        index
-                      );
+                        // ------------------------------------------------
+                        // PER-FINDING ML RESULTS
+                        // ------------------------------------------------
 
-                      const mlSeverity = getMlResultForFinding(
-                        scanData?.ml_severity,
-                        finding,
-                        index
-                      );
-
-                      const priority = getMlResultForFinding(
-                        scanData?.ml_priority,
-                        finding,
-                        index
-                      );
-
-                      const context = getMlResultForFinding(
-                        scanData?.ml_code_context,
-                        finding,
-                        index
-                      );
-
-                      const recommendation = getMlResultForFinding(
-                        scanData?.ml_fix_recommendation,
-                        finding,
-                        index
-                      );
-
-                      const similarityResults = Array.isArray(
-                        scanData?.ml_similarity?.results
-                      )
-                        ? scanData.ml_similarity.results
-                        : [];
-
-                      const relatedSimilarity = similarityResults.find(
-                        (item) => {
-                          const firstPath = String(
-                            item?.finding_1?.path ||
-                            item?.path_1 ||
-                            ""
+                        const triage =
+                          getMlResultForFinding(
+                            scanData?.ml_triage,
+                            finding,
+                            index
                           );
 
-                          const secondPath = String(
-                            item?.finding_2?.path ||
-                            item?.path_2 ||
-                            ""
+                        const classification =
+                          getMlResultForFinding(
+                            scanData?.ml_classification,
+                            finding,
+                            index
                           );
 
-                          return (
-                            (finding?.path &&
-                              firstPath === String(finding.path)) ||
-                            (finding?.path &&
-                              secondPath === String(finding.path))
+                        const mlSeverity =
+                          getMlResultForFinding(
+                            scanData?.ml_severity,
+                            finding,
+                            index
                           );
-                        }
-                      ) || similarityResults[index] || null;
 
-                      const triageProbability =
-                        triage?.ml_triage?.vulnerability_probability ??
-                        triage?.vulnerability_probability;
+                        const priority =
+                          getMlResultForFinding(
+                            scanData?.ml_priority,
+                            finding,
+                            index
+                          );
 
-                      const triageClassification =
-                        triage?.ml_triage?.classification ??
-                        triage?.classification;
+                        const context =
+                          getMlResultForFinding(
+                            scanData?.ml_code_context,
+                            finding,
+                            index
+                          );
 
-                      const triageConfidence =
-                        triage?.ml_triage?.confidence_level ??
-                        triage?.confidence_level ??
-                        getMlConfidenceLevel(triageProbability);
+                        const recommendation =
+                          getMlResultForFinding(
+                            scanData?.ml_fix_recommendation,
+                            finding,
+                            index
+                          );
 
-                      const predictedType =
-                        classification?.ml_classification?.predicted_type ??
-                        classification?.predicted_type ??
-                        classification?.vulnerability_type;
+                        // ------------------------------------------------
+                        // SIMILARITY
+                        // ------------------------------------------------
 
-                      const predictedSeverity =
-                        mlSeverity?.ml_severity?.predicted_severity ??
-                        mlSeverity?.predicted_severity ??
-                        mlSeverity?.severity;
+                        const similarityResults =
+                          Array.isArray(
+                            scanData
+                              ?.ml_similarity
+                              ?.results
+                          )
+                            ? scanData
+                                .ml_similarity
+                                .results
+                            : [];
 
-                      const severityConfidence =
-                        mlSeverity?.ml_severity?.confidence ??
-                        mlSeverity?.confidence;
+                        const relatedSimilarity =
+                        
+                         similarityResults
+                         .filter(
+                        (item) =>
+                        item?.finding_1_index === index ||
+                        item?.finding_2_index === index
+                       )
+                     .sort(
+                      (a, b) =>
+                      Number(b?.similarity_score ?? 0) -
+                      Number(a?.similarity_score ?? 0)
+                      )[0] || null;
 
-                      const predictedPriority =
-                        priority?.ml_priority?.predicted_priority ??
-                        priority?.predicted_priority ??
-                        priority?.priority;
+                        // ------------------------------------------------
+                        // TRIAGE
+                        // ------------------------------------------------
 
-                      const priorityConfidence =
-                        priority?.ml_priority?.confidence ??
-                        priority?.confidence;
+                        const triageProbability =
+                          triage
+                            ?.ml_triage
+                            ?.vulnerability_probability ??
+                          triage
+                            ?.vulnerability_probability;
 
-                      const predictedContext =
-                        context?.ml_code_context?.predicted_context ??
-                        context?.ml_code_context?.context ??
-                        context?.predicted_context ??
-                        context?.context;
+                        const triageClassification =
+                          triage
+                            ?.ml_triage
+                            ?.classification ??
+                          triage
+                            ?.classification;
 
-                      const similarityScore =
-                        relatedSimilarity?.similarity ??
-                        relatedSimilarity?.similarity_score ??
-                        relatedSimilarity?.score;
+                        const triageConfidence =
+                          triage
+                            ?.ml_triage
+                            ?.confidence_level ??
+                          triage
+                            ?.confidence_level ??
+                          getMlConfidenceLevel(
+                            triageProbability
+                          );
 
-                      const similarityLabel =
-                        relatedSimilarity?.similarity_level ??
-                        relatedSimilarity?.classification ??
-                        relatedSimilarity?.label;
+                        // ------------------------------------------------
+                        // CLASSIFICATION
+                        // ------------------------------------------------
 
-                      const recommendedFix =
-                        recommendation?.ml_fix_recommendation?.recommended_fix ??
-                        recommendation?.recommended_fix ??
-                        recommendation?.fix_recommendation;
+                        const predictedType =
+                          classification
+                            ?.ml_classification
+                            ?.predicted_type ??
+                          classification
+                            ?.predicted_type ??
+                          classification
+                            ?.vulnerability_type;
 
-                      const recommendationConfidence =
-                        recommendation?.ml_fix_recommendation?.confidence ??
-                        recommendation?.confidence;
+                        // ------------------------------------------------
+                        // SEVERITY
+                        // ------------------------------------------------
 
-                      return (
-                        <article
-                          className="ml-finding-panel"
-                          key={`ml-${index}`}
-                        >
+                        const predictedSeverity =
+                          mlSeverity
+                            ?.ml_severity
+                            ?.predicted_severity ??
+                          mlSeverity
+                            ?.predicted_severity ??
+                          mlSeverity
+                            ?.severity;
 
-                          <div className="ml-finding-panel-header">
-                            <div>
-                              <span className="finding-number">
-                                ML ANALYSIS · FINDING {index + 1}
+                        const severityConfidence =
+                          mlSeverity
+                            ?.ml_severity
+                            ?.confidence ??
+                          mlSeverity
+                            ?.confidence;
+
+                        // ------------------------------------------------
+                        // PRIORITY
+                        // ------------------------------------------------
+
+                        const predictedPriority =
+                          priority
+                            ?.ml_priority
+                            ?.predicted_priority ??
+                          priority
+                            ?.predicted_priority ??
+                          priority
+                            ?.priority;
+
+                        const priorityConfidence =
+                          priority
+                            ?.ml_priority
+                            ?.confidence ??
+                          priority
+                            ?.confidence;
+
+                        // ------------------------------------------------
+                        // CODE CONTEXT
+                        // ------------------------------------------------
+
+                        const predictedContext =
+                          context
+                            ?.ml_code_context
+                            ?.predicted_context ??
+                          context
+                            ?.ml_code_context
+                            ?.context ??
+                          context
+                            ?.predicted_context ??
+                          context
+                            ?.context;
+
+                        // ------------------------------------------------
+                        // SIMILARITY
+                        // ------------------------------------------------
+
+                        const similarityScore =
+                          relatedSimilarity
+                            ?.similarity ??
+                          relatedSimilarity
+                            ?.similarity_score ??
+                          relatedSimilarity
+                            ?.score;
+
+                        const similarityLabel =
+                          relatedSimilarity
+                            ?.similarity_level ??
+                          relatedSimilarity
+                            ?.classification ??
+                          relatedSimilarity
+                            ?.label;
+
+                        // ------------------------------------------------
+                        // FIX RECOMMENDATION
+                        // ------------------------------------------------
+
+                        const recommendedFix =
+                          recommendation
+                            ?.ml_fix_recommendation
+                            ?.recommended_fix ??
+                          recommendation
+                            ?.recommended_fix ??
+                          recommendation
+                            ?.fix_recommendation;
+
+                        const recommendationConfidence =
+                          recommendation
+                            ?.ml_fix_recommendation
+                            ?.confidence ??
+                          recommendation
+                            ?.confidence;
+
+                        return (
+
+                          <article
+                            className="ml-finding-panel"
+                            key={`ml-${index}`}
+                          >
+
+                            <div className="ml-finding-panel-header">
+
+                              <div>
+
+                                <span className="finding-number">
+                                  ML ANALYSIS · FINDING {index + 1}
+                                </span>
+
+                                <h4>
+                                  {getVulnerabilityType(
+                                    finding,
+                                    assessments[
+                                      index
+                                    ] || {}
+                                  )}
+                                </h4>
+
+                              </div>
+
+                              <span className="ml-model-count">
+                                7 ML AGENTS
                               </span>
-                              <h4>
-                                {getVulnerabilityType(
-                                  finding,
-                                  assessments[index] || {}
-                                )}
-                              </h4>
+
                             </div>
 
-                            <span className="ml-model-count">
-                              7 ML AGENTS
-                            </span>
-                          </div>
+                            <div className="ml-grid">
 
-                          <div className="ml-grid">
+                              {/* TRIAGE */}
 
-                            <div className="ml-item">
-                              <span>Vulnerability Triage</span>
-                              <strong>
-                                {getMlDisplayValue(
-                                  triageClassification,
-                                  "Analysis unavailable"
-                                )}
-                              </strong>
-                              <small>
-                                Probability: {formatMlConfidence(
-                                  triageProbability
-                                )}
-                                <br />
-                                {triageConfidence}
-                              </small>
+                              <div className="ml-item">
+
+                                <span>
+                                  Vulnerability Triage
+                                </span>
+
+                                <strong>
+                                  {getMlDisplayValue(
+                                    triageClassification,
+                                    "Analysis unavailable"
+                                  )}
+                                </strong>
+
+                                <small>
+
+                                  Probability:{" "}
+                                  {formatMlConfidence(
+                                    triageProbability
+                                  )}
+
+                                  <br />
+
+                                  {triageConfidence}
+
+                                </small>
+
+                              </div>
+
+                              {/* CLASSIFICATION */}
+
+                              <div className="ml-item">
+
+                                <span>
+                                  Vulnerability Classification
+                                </span>
+
+                                <strong>
+                                  {getMlDisplayValue(
+                                    predictedType,
+                                    "Analysis unavailable"
+                                  )}
+                                </strong>
+
+                                <small>
+                                  ML predicted vulnerability category
+                                </small>
+
+                              </div>
+
+                              {/* SEVERITY */}
+
+                              <div className="ml-item">
+
+                                <span>
+                                  ML Severity Prediction
+                                </span>
+
+                                <strong>
+                                  {getMlDisplayValue(
+                                    predictedSeverity,
+                                    "N/A"
+                                  )}
+                                </strong>
+
+                                <small>
+
+                                  Confidence:{" "}
+                                  {formatMlConfidence(
+                                    severityConfidence
+                                  )}
+
+                                </small>
+
+                              </div>
+
+                              {/* PRIORITY */}
+
+                              <div className="ml-item">
+
+                                <span>
+                                  ML Priority Prediction
+                                </span>
+
+                                <strong>
+                                  {getMlDisplayValue(
+                                    predictedPriority,
+                                    "N/A"
+                                  )}
+                                </strong>
+
+                                <small>
+
+                                  Confidence:{" "}
+                                  {formatMlConfidence(
+                                    priorityConfidence
+                                  )}
+
+                                </small>
+
+                              </div>
+
+                              {/* CONTEXT */}
+
+                              <div className="ml-item">
+
+                                <span>
+                                  Code Context Analysis
+                                </span>
+
+                                <strong>
+                                  {getMlDisplayValue(
+                                    predictedContext,
+                                    "N/A"
+                                  )}
+                                </strong>
+
+                                <small>
+
+                                  Context confidence:{" "}
+                                  {formatMlConfidence(
+                                    context
+                                      ?.ml_code_context
+                                      ?.confidence ??
+                                      context
+                                        ?.confidence
+                                  )}
+
+                                </small>
+
+                              </div>
+
+                              {/* SIMILARITY */}
+
+                              <div className="ml-item">
+
+                                <span>
+                                  Duplicate Vulnerability Similarity
+                                </span>
+
+                                <strong>
+                                  {getMlDisplayValue(
+                                    similarityLabel,
+                                    "No comparison"
+                                  )}
+                                </strong>
+
+                                <small>
+
+                                  Similarity:{" "}
+                                  {formatMlConfidence(
+                                    similarityScore
+                                  )}
+
+                                </small>
+
+                              </div>
+
+                              {/* FIX RECOMMENDATION */}
+
+                              <div className="ml-item ml-item-wide">
+
+                                <span>
+                                  Fix Recommendation
+                                </span>
+
+                                <strong>
+                                  {getMlDisplayValue(
+                                    recommendedFix,
+                                    "No recommendation available"
+                                  )}
+                                </strong>
+
+                                <small>
+
+                                  Confidence:{" "}
+                                  {formatMlConfidence(
+                                    recommendationConfidence
+                                  )}
+
+                                </small>
+
+                              </div>
+
                             </div>
 
-                            <div className="ml-item">
-                              <span>Vulnerability Classification</span>
-                              <strong>
-                                {getMlDisplayValue(
-                                  predictedType,
-                                  "Analysis unavailable"
-                                )}
-                              </strong>
-                              <small>
-                                ML predicted vulnerability category
-                              </small>
-                            </div>
+                          </article>
 
-                            <div className="ml-item">
-                              <span>ML Severity Prediction</span>
-                              <strong>
-                                {getMlDisplayValue(
-                                  predictedSeverity,
-                                  "N/A"
-                                )}
-                              </strong>
-                              <small>
-                                Confidence: {formatMlConfidence(
-                                  severityConfidence
-                                )}
-                              </small>
-                            </div>
+                        );
 
-                            <div className="ml-item">
-                              <span>ML Priority Prediction</span>
-                              <strong>
-                                {getMlDisplayValue(
-                                  predictedPriority,
-                                  "N/A"
-                                )}
-                              </strong>
-                              <small>
-                                Confidence: {formatMlConfidence(
-                                  priorityConfidence
-                                )}
-                              </small>
-                            </div>
-
-                            <div className="ml-item">
-                              <span>Code Context Analysis</span>
-                              <strong>
-                                {getMlDisplayValue(
-                                  predictedContext,
-                                  "N/A"
-                                )}
-                              </strong>
-                              <small>
-                                Context confidence: {formatMlConfidence(
-                                  context?.ml_code_context?.confidence ??
-                                    context?.confidence
-                                )}
-                              </small>
-                            </div>
-
-                            <div className="ml-item">
-                              <span>Duplicate Vulnerability Similarity</span>
-                              <strong>
-                                {getMlDisplayValue(
-                                  similarityLabel,
-                                  "No comparison"
-                                )}
-                              </strong>
-                              <small>
-                                Similarity: {formatMlConfidence(
-                                  similarityScore
-                                )}
-                              </small>
-                            </div>
-
-                            <div className="ml-item ml-item-wide">
-                              <span>Fix Recommendation</span>
-                              <strong>
-                                {getMlDisplayValue(
-                                  recommendedFix,
-                                  "No recommendation available"
-                                )}
-                              </strong>
-                              <small>
-                                Confidence: {formatMlConfidence(
-                                  recommendationConfidence
-                                )}
-                              </small>
-                            </div>
-
-                          </div>
-
-                        </article>
-                      );
-                    })}
+                      }
+                    )}
 
                   </div>
+
                 )}
 
               </div>
 
+              {/* ================================================== */}
               {/* SECURITY FINDINGS */}
+              {/* ================================================== */}
 
               <div className="results-card">
 
@@ -3027,8 +3441,10 @@ export default function App() {
                 {findings.length === 0 ? (
 
                   <div className="secure-box">
+
                     ✓ No security vulnerabilities
                     were detected.
+
                   </div>
 
                 ) : (
@@ -3047,11 +3463,10 @@ export default function App() {
                           ] || {};
 
                         return (
+
                           <article
                             className="finding-card"
-                            key={
-                              index
-                            }
+                            key={index}
                           >
 
                             <div className="finding-header">
@@ -3064,23 +3479,27 @@ export default function App() {
                                 </span>
 
                                 <h4>
+
                                   {
                                     getVulnerabilityType(
                                       finding,
                                       assessment
                                     )
                                   }
+
                                 </h4>
 
                               </div>
 
                               <span className="severity-badge">
+
                                 {
                                   getSeverity(
                                     finding,
                                     assessment
                                   )
                                 }
+
                               </span>
 
                             </div>
@@ -3206,16 +3625,21 @@ export default function App() {
                             )}
 
                           </article>
+
                         );
+
                       }
                     )}
 
                   </div>
+
                 )}
 
               </div>
 
+              {/* ================================================== */}
               {/* AI AUTO-FIX */}
+              {/* ================================================== */}
 
               <div className="results-card">
 
@@ -3281,7 +3705,10 @@ export default function App() {
                   <div className="fix-list">
 
                     {fixes.map(
-                      (fix, index) => (
+                      (
+                        fix,
+                        index
+                      ) => (
 
                         <div
                           className="fix-item"
@@ -3298,17 +3725,21 @@ export default function App() {
                             </strong>
 
                             <small>
+
                               {fix?.success
                                 ? "Remediation generated successfully"
                                 : "Remediation unavailable"}
+
                             </small>
 
                           </div>
 
                           <span>
+
                             {fix?.success
                               ? "FIXED"
                               : "SKIPPED"}
+
                           </span>
 
                         </div>
@@ -3322,7 +3753,9 @@ export default function App() {
 
               </div>
 
+              {/* ================================================== */}
               {/* VALIDATION */}
+              {/* ================================================== */}
 
               <div className="results-card">
 
@@ -3355,11 +3788,13 @@ export default function App() {
                     </strong>
 
                     <small>
+
                       {
                         scanData.validation
                           ?.message ||
                         "Remediation artifact checks completed."
                       }
+
                     </small>
 
                   </div>
@@ -3368,7 +3803,9 @@ export default function App() {
 
               </div>
 
+              {/* ================================================== */}
               {/* DOWNLOADS */}
+              {/* ================================================== */}
 
               <div className="results-card">
 
@@ -3478,7 +3915,9 @@ export default function App() {
 
               </div>
 
+              {/* ================================================== */}
               {/* EMAIL */}
+              {/* ================================================== */}
 
               <div className="results-card">
 
@@ -3511,8 +3950,10 @@ export default function App() {
                     </strong>
 
                     <small>
+
                       {emailStatus ||
                         "Preparing email..."}
+
                     </small>
 
                   </div>
@@ -3522,6 +3963,7 @@ export default function App() {
               </div>
 
             </section>
+
           )}
 
       </main>
