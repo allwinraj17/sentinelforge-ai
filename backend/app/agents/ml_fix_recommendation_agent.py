@@ -101,6 +101,162 @@ def build_finding_text(finding):
 
 
 # ---------------------------------------------------------
+# Recommendation Consistency Guard
+# ---------------------------------------------------------
+
+def apply_recommendation_guard(
+    finding,
+    model_recommendation
+):
+
+    message = str(
+        finding.get(
+            "message",
+            finding.get("finding_text", "")
+        )
+    ).lower()
+
+    vulnerability_type = str(
+        finding.get(
+            "vulnerability_type",
+            ""
+        )
+    ).lower()
+
+    cwe = str(
+        finding.get(
+            "cwe",
+            ""
+        )
+    ).lower()
+
+    combined_text = (
+        message
+        + " "
+        + vulnerability_type
+        + " "
+        + cwe
+    )
+
+    # -----------------------------------------------------
+    # SQL Injection
+    # -----------------------------------------------------
+
+    if (
+        "sql injection" in combined_text
+        or "sql-injection" in combined_text
+        or "cwe-89" in combined_text
+        or "sql" in combined_text
+    ):
+        return (
+            "Use parameterized queries or prepared statements"
+        )
+
+    # -----------------------------------------------------
+    # Cross-Site Scripting
+    # -----------------------------------------------------
+
+    if (
+        "xss" in combined_text
+        or "cross-site scripting" in combined_text
+        or "cwe-79" in combined_text
+    ):
+        return (
+            "Apply context-aware output encoding and input sanitization"
+        )
+
+    # -----------------------------------------------------
+    # Command Injection
+    # -----------------------------------------------------
+
+    if (
+        "command injection" in combined_text
+        or "command-injection" in combined_text
+        or "cwe-78" in combined_text
+    ):
+        return (
+            "Avoid shell execution and use safe process APIs with strict input validation"
+        )
+
+    # -----------------------------------------------------
+    # Path Traversal
+    # -----------------------------------------------------
+
+    if (
+        "path traversal" in combined_text
+        or "path-traversal" in combined_text
+        or "cwe-22" in combined_text
+    ):
+        return (
+            "Validate and restrict file paths to an allowed directory"
+        )
+
+    # -----------------------------------------------------
+    # Hardcoded Secret
+    # -----------------------------------------------------
+
+    if (
+        "hardcoded secret" in combined_text
+        or "hardcoded-secret" in combined_text
+        or "secret" in combined_text
+        or "api key" in combined_text
+        or "password" in combined_text
+        or "token" in combined_text
+    ):
+        return (
+            "Move secrets to environment variables or a secure secret manager"
+        )
+
+    # -----------------------------------------------------
+    # Insecure Cryptography
+    # -----------------------------------------------------
+
+    if (
+        "insecure cryptography" in combined_text
+        or "weak cryptography" in combined_text
+        or "cwe-327" in combined_text
+    ):
+        return (
+            "Use modern cryptographic algorithms and secure password hashing"
+        )
+
+    # -----------------------------------------------------
+    # Authentication
+    # -----------------------------------------------------
+
+    if (
+        "authentication" in combined_text
+        or "authorization" in combined_text
+        or "cwe-287" in combined_text
+    ):
+        return (
+            "Strengthen authentication and authorization checks before protected operations"
+        )
+
+    # -----------------------------------------------------
+    # Debug Configuration
+    # -----------------------------------------------------
+
+    if (
+        "debug=true" in combined_text
+        or "debug = true" in combined_text
+        or "active debug code" in combined_text
+        or "cwe-489" in combined_text
+    ):
+        return (
+            "Disable debug mode in production and use secure configuration settings"
+        )
+
+    # -----------------------------------------------------
+    # Unknown / Other
+    # -----------------------------------------------------
+
+    return (
+        "Review the affected code and apply the appropriate security control"
+    )
+
+
+# ---------------------------------------------------------
 # Recommend Fix
 # ---------------------------------------------------------
 
@@ -119,6 +275,10 @@ def recommend_fix(finding):
         [finding_text]
     )
 
+    # -----------------------------------------------------
+    # ML Prediction
+    # -----------------------------------------------------
+
     prediction = model.predict(
         vector
     )[0]
@@ -131,16 +291,34 @@ def recommend_fix(finding):
         max(probabilities)
     )
 
+    ml_recommendation = str(
+        prediction
+    )
+
+    # -----------------------------------------------------
+    # Consistency Guard
+    # -----------------------------------------------------
+
+    final_recommendation = apply_recommendation_guard(
+        finding,
+        ml_recommendation
+    )
+
     return {
-        "recommended_fix": str(prediction),
+        "recommended_fix": final_recommendation,
+
+        "ml_predicted_fix": ml_recommendation,
+
         "confidence": round(
             confidence,
             4
         ),
+
         "confidence_percentage": round(
             confidence * 100,
             2
         ),
+
         "confidence_level": get_confidence_level(
             confidence
         )
@@ -171,18 +349,22 @@ def run_ml_fix_recommendation(findings):
                         ""
                     )
                 ),
+
                 "vulnerability_type": finding.get(
                     "vulnerability_type",
                     ""
                 ),
+
                 "cwe": finding.get(
                     "cwe",
                     ""
                 ),
+
                 "path": finding.get(
                     "path",
                     ""
                 ),
+
                 "ml_fix_recommendation":
                     recommendation
             })

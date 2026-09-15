@@ -3032,18 +3032,17 @@ export default function App() {
                             : [];
 
                         const relatedSimilarity =
-                        
-                         similarityResults
-                         .filter(
-                        (item) =>
-                        item?.finding_1_index === index ||
-                        item?.finding_2_index === index
-                       )
-                     .sort(
-                      (a, b) =>
-                      Number(b?.similarity_score ?? 0) -
-                      Number(a?.similarity_score ?? 0)
-                      )[0] || null;
+  similarityResults
+    .filter(
+      (item) =>
+        item?.finding_1_index === index ||
+        item?.finding_2_index === index
+    )
+    .sort(
+      (a, b) =>
+        Number(b?.similarity_score ?? 0) -
+        Number(a?.similarity_score ?? 0)
+    )[0] || null;
 
                         // ------------------------------------------------
                         // TRIAGE
