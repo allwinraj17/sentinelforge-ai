@@ -271,23 +271,10 @@ function getMlResultForFinding(result, finding, index) {
     ? result.results
     : [];
 
-  const findingPath = String(finding?.path || "");
-  const findingMessage = String(getMessage(finding));
-
-  return (
-    results.find((item) =>
-      findingPath &&
-      String(item?.path || "") === findingPath
-    ) ||
-    results.find((item) =>
-      findingMessage &&
-      String(item?.message || "") === findingMessage
-    ) ||
-    results[index] ||
-    null
-  );
+  // Backend returns ML results in the same order as normalized findings.
+  // Prefer index so multiple findings from the same file are not mixed up.
+  return results[index] || null;
 }
-
 function formatMlConfidence(value) {
   const number = Number(value);
 
