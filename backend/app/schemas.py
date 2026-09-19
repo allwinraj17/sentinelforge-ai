@@ -48,9 +48,26 @@ class AIAnalysisResult(BaseModel):
 class AutoFixResult(BaseModel):
     """
     Result returned by the Auto-Fix Agent for one finding.
+
+    finding_id is the new stable identifier used to connect the
+    same finding across detection, ML analysis, risk assessment,
+    Auto-Fix, validation, dashboard and reporting.
+
+    finding_index is retained for backward compatibility with
+    the existing application logic.
     """
 
     success: bool = True
+
+    # --------------------------------------------------------
+    # New stable finding identifier
+    # --------------------------------------------------------
+
+    finding_id: str | None = None
+
+    # --------------------------------------------------------
+    # Existing positional identifier
+    # --------------------------------------------------------
 
     finding_index: int
 
@@ -89,6 +106,10 @@ class AutonomousScanResponse(BaseModel):
     """
     Complete response returned by the Phase 4 autonomous
     backend pipeline.
+
+    The findings list contains the complete finding objects.
+    Each finding will receive a stable finding_id during the
+    security analysis pipeline.
     """
 
     success: bool

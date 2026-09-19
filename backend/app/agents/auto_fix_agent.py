@@ -43,13 +43,55 @@ def clean_text(
     return text
 
 
-def compact_finding(
+def _get_first_value(
+    data: dict[str, Any],
+    keys: list[str],
+    default: Any = "",
+) -> Any:
+    """
+    Return the first non-empty value from a dictionary.
+
+    This keeps the Auto-Fix Agent compatible with slightly
+    different ML result field names.
+    """
+
+    if not isinstance(
+        data,
+        dict,
+    ):
+        return default
+
+    for key in keys:
+
+        value = data.get(key)
+
+        if value is None:
+            continue
+
+        if isinstance(
+            value,
+            str,
+        ):
+
+            if not value.strip():
+                continue
+
+        return value
+
+    return default
+
+
+def _extract_ml_result(
     finding: dict[str, Any],
+    result_name: str,
+    aliases: list[str],
 ) -> dict[str, Any]:
     """
-    Keep only security-relevant information from a finding.
+    Extract one ML result from a finding.
 
-    Large scanner fields are intentionally ignored.
+    The main pipeline will attach the ML outputs to findings.
+    This helper supports both the planned explicit field names
+    and a nested 'ml_results' structure.
     """
 
     if not isinstance(
@@ -58,6 +100,382 @@ def compact_finding(
     ):
         return {}
 
+    # --------------------------------------------------------
+    # Direct field
+    # --------------------------------------------------------
+
+    direct = finding.get(
+        result_name
+    )
+
+    if isinstance(
+        direct,
+        dict,
+    ):
+        return direct
+
+    # --------------------------------------------------------
+    # Nested ML result structure
+    # --------------------------------------------------------
+
+    ml_results = finding.get(
+        "ml_results",
+        {},
+    )
+
+    if isinstance(
+        ml_results,
+        dict,
+    ):
+
+        nested = ml_results.get(
+            result_name
+        )
+
+        if isinstance(
+            nested,
+            dict,
+        ):
+            return nested
+
+        for alias in aliases:
+
+            nested = ml_results.get(
+                alias
+            )
+
+            if isinstance(
+                nested,
+                dict,
+            ):
+                return nested
+
+    # --------------------------------------------------------
+    # Alternate direct aliases
+    # --------------------------------------------------------
+
+    for alias in aliases:
+
+        value = finding.get(
+            alias
+        )
+
+        if isinstance(
+            value,
+            dict,
+        ):
+            return value
+
+    return {}
+
+
+def _compact_ml_intelligence(
+    finding: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Extract the useful ML intelligence associated with a finding.
+
+    ML is supplementary intelligence. It does not replace
+    Semgrep detection or the deterministic Risk Engine.
+    """
+
+    if not isinstance(
+        finding,
+        dict,
+    ):
+        return {}
+
+    # --------------------------------------------------------
+    # Vulnerability classification
+    # --------------------------------------------------------
+
+    classification = _extract_ml_result(
+        finding,
+        "ml_classification",
+        [
+            "classification",
+            "classification_result",
+        ],
+    )
+
+    classification_value = _get_first_value(
+        classification,
+        [
+            "prediction",
+            "predicted_class",
+            "classification",
+            "vulnerability_type",
+            "label",
+        ],
+    )
+
+    classification_confidence = _get_first_value(
+        classification,
+        [
+            "confidence",
+            "probability",
+            "vulnerability_probability",
+        ],
+    )
+
+    # --------------------------------------------------------
+    # Severity prediction
+    # --------------------------------------------------------
+
+    severity = _extract_ml_result(
+        finding,
+        "ml_severity",
+        [
+            "severity",
+            "severity_prediction",
+            "severity_result",
+        ],
+    )
+
+    severity_value = _get_first_value(
+        severity,
+        [
+            "prediction",
+            "predicted_severity",
+            "severity",
+            "label",
+        ],
+    )
+
+    severity_confidence = _get_first_value(
+        severity,
+        [
+            "confidence",
+            "probability",
+        ],
+    )
+
+    # --------------------------------------------------------
+    # Priority prediction
+    # --------------------------------------------------------
+
+    priority = _extract_ml_result(
+        finding,
+        "ml_priority",
+        [
+            "priority",
+            "priority_prediction",
+            "priority_result",
+        ],
+    )
+
+    priority_value = _get_first_value(
+        priority,
+        [
+            "prediction",
+            "predicted_priority",
+            "priority",
+            "label",
+        ],
+    )
+
+    priority_confidence = _get_first_value(
+        priority,
+        [
+            "confidence",
+            "probability",
+        ],
+    )
+
+    # --------------------------------------------------------
+    # Code context
+    # --------------------------------------------------------
+
+    context = _extract_ml_result(
+        finding,
+        "ml_code_context",
+        [
+            "code_context",
+            "context",
+            "code_context_result",
+        ],
+    )
+
+    context_value = _get_first_value(
+        context,
+        [
+            "prediction",
+            "predicted_context",
+            "context",
+            "code_context",
+            "label",
+        ],
+    )
+
+    context_confidence = _get_first_value(
+        context,
+        [
+            "confidence",
+            "probability",
+        ],
+    )
+
+    # --------------------------------------------------------
+    # Fix recommendation
+    # --------------------------------------------------------
+
+    recommendation = _extract_ml_result(
+        finding,
+        "ml_fix_recommendation",
+        [
+            "fix_recommendation",
+            "recommendation",
+            "fix_recommendation_result",
+        ],
+    )
+
+    recommendation_value = _get_first_value(
+        recommendation,
+        [
+            "recommendation",
+            "prediction",
+            "predicted_recommendation",
+            "fix",
+            "label",
+        ],
+    )
+
+    recommendation_confidence = _get_first_value(
+        recommendation,
+        [
+            "confidence",
+            "probability",
+        ],
+    )
+
+    # --------------------------------------------------------
+    # Triage
+    # --------------------------------------------------------
+
+    triage = _extract_ml_result(
+        finding,
+        "ml_triage",
+        [
+            "triage",
+            "triage_result",
+        ],
+    )
+
+    triage_value = _get_first_value(
+        triage,
+        [
+            "prediction",
+            "classification",
+            "triage",
+            "label",
+        ],
+    )
+
+    triage_probability = _get_first_value(
+        triage,
+        [
+            "probability",
+            "vulnerability_probability",
+        ],
+    )
+
+    triage_confidence = _get_first_value(
+        triage,
+        [
+            "confidence",
+        ],
+    )
+
+    return {
+        "triage": {
+            "prediction": clean_text(
+                triage_value,
+                120,
+            ),
+            "probability": clean_text(
+                triage_probability,
+                60,
+            ),
+            "confidence": clean_text(
+                triage_confidence,
+                60,
+            ),
+        },
+
+        "classification": {
+            "prediction": clean_text(
+                classification_value,
+                150,
+            ),
+            "confidence": clean_text(
+                classification_confidence,
+                60,
+            ),
+        },
+
+        "severity_prediction": {
+            "prediction": clean_text(
+                severity_value,
+                60,
+            ),
+            "confidence": clean_text(
+                severity_confidence,
+                60,
+            ),
+        },
+
+        "priority": {
+            "prediction": clean_text(
+                priority_value,
+                60,
+            ),
+            "confidence": clean_text(
+                priority_confidence,
+                60,
+            ),
+        },
+
+        "code_context": {
+            "prediction": clean_text(
+                context_value,
+                120,
+            ),
+            "confidence": clean_text(
+                context_confidence,
+                60,
+            ),
+        },
+
+        "fix_recommendation": {
+            "recommendation": clean_text(
+                recommendation_value,
+                400,
+            ),
+            "confidence": clean_text(
+                recommendation_confidence,
+                60,
+            ),
+        },
+    }
+
+
+def compact_finding(
+    finding: dict[str, Any],
+) -> dict[str, Any]:
+    """
+    Keep only security-relevant information from a finding.
+
+    Large scanner fields are intentionally ignored.
+
+    ML intelligence is included when it has already been
+    attached to the finding by the main pipeline.
+    """
+
+    if not isinstance(
+        finding,
+        dict,
+    ):
+        return {}
 
     extra = finding.get(
         "extra",
@@ -70,7 +488,6 @@ def compact_finding(
     ):
         extra = {}
 
-
     metadata = extra.get(
         "metadata",
         {},
@@ -81,7 +498,6 @@ def compact_finding(
         dict,
     ):
         metadata = {}
-
 
     start = finding.get(
         "start",
@@ -94,20 +510,23 @@ def compact_finding(
     ):
         start = {}
 
-
     vulnerability_type = (
         metadata.get(
             "vulnerability_class"
         )
+        or finding.get(
+            "vulnerability_type"
+        )
         or "Security Vulnerability"
     )
 
-
     cwe = metadata.get(
         "cwe",
-        "",
+        finding.get(
+            "cwe",
+            "",
+        ),
     )
-
 
     if isinstance(
         cwe,
@@ -118,8 +537,54 @@ def compact_finding(
             for item in cwe[:5]
         )
 
+    ml_intelligence = _compact_ml_intelligence(
+        finding
+    )
+
+    # --------------------------------------------------------
+    # Stable finding ID
+    # --------------------------------------------------------
+
+    finding_id = (
+        finding.get(
+            "finding_id"
+        )
+        or finding.get(
+            "findingId"
+        )
+        or finding.get(
+            "id"
+        )
+        or ""
+    )
+
+    # --------------------------------------------------------
+    # Official risk information
+    # --------------------------------------------------------
+
+    risk_score = (
+        finding.get(
+            "risk_score"
+        )
+        or finding.get(
+            "risk"
+        )
+        or ""
+    )
+
+    risk_level = (
+        finding.get(
+            "risk_level"
+        )
+        or ""
+    )
 
     return {
+        "finding_id": clean_text(
+            finding_id,
+            40,
+        ),
+
         "rule": clean_text(
             finding.get(
                 "check_id",
@@ -136,7 +601,10 @@ def compact_finding(
         "severity": clean_text(
             extra.get(
                 "severity",
-                "UNKNOWN",
+                finding.get(
+                    "severity",
+                    "UNKNOWN",
+                ),
             ),
             40,
         ),
@@ -157,10 +625,25 @@ def compact_finding(
         "message": clean_text(
             extra.get(
                 "message",
-                "",
+                finding.get(
+                    "message",
+                    "",
+                ),
             ),
             650,
         ),
+
+        "risk_score": clean_text(
+            risk_score,
+            60,
+        ),
+
+        "risk_level": clean_text(
+            risk_level,
+            60,
+        ),
+
+        "ml_intelligence": ml_intelligence,
     }
 
 
@@ -174,18 +657,14 @@ def clean_ai_response(
     if not response:
         return ""
 
-
     text = str(
         response
     ).strip()
 
-
     lines = text.splitlines()
-
 
     if not lines:
         return ""
-
 
     # --------------------------------------------------------
     # Remove accidental opening code fence.
@@ -196,7 +675,6 @@ def clean_ai_response(
     ):
         lines = lines[1:]
 
-
     # --------------------------------------------------------
     # Remove accidental closing code fence.
     # --------------------------------------------------------
@@ -204,11 +682,9 @@ def clean_ai_response(
     if lines and lines[-1].strip() == "```":
         lines = lines[:-1]
 
-
     cleaned = "\n".join(
         lines
     ).strip()
-
 
     # --------------------------------------------------------
     # Remove accidental FIXED_CODE prefix.
@@ -221,7 +697,6 @@ def clean_ai_response(
         cleaned = cleaned[
             len("FIXED_CODE:"):
         ].strip()
-
 
     return cleaned
 
@@ -244,8 +719,13 @@ def generate_fix(
     which represents all Semgrep findings belonging to the
     same source file.
 
-    This allows several security findings in one file to be
-    fixed with ONE Groq request.
+    ML intelligence can also be attached to each finding.
+    The ML information is supplied to Groq as supporting
+    security context.
+
+    Semgrep remains the primary detection source.
+    The deterministic Risk Engine remains the official risk
+    source.
     """
 
     if not isinstance(
@@ -256,7 +736,6 @@ def generate_fix(
             "Invalid vulnerability data."
         )
 
-
     if not isinstance(
         source_code,
         str,
@@ -265,12 +744,10 @@ def generate_fix(
             "Source code must be a string."
         )
 
-
     if not source_code.strip():
         raise ValueError(
             "Source code is empty."
         )
-
 
     # ========================================================
     # SOURCE SIZE
@@ -282,7 +759,6 @@ def generate_fix(
             "Source file is too large for the "
             "current Auto-Fix token limit."
         )
-
 
     # ========================================================
     # FILE INFORMATION
@@ -296,7 +772,6 @@ def generate_fix(
         400,
     )
 
-
     # ========================================================
     # RELATED FINDINGS
     # ========================================================
@@ -306,13 +781,11 @@ def generate_fix(
         [],
     )
 
-
     if not isinstance(
         related_findings,
         list,
     ):
         related_findings = []
-
 
     # If main.py sends no grouped findings,
     # fall back to the current finding.
@@ -322,9 +795,7 @@ def generate_fix(
             vulnerability
         ]
 
-
     compact_findings = []
-
 
     for finding in related_findings:
 
@@ -332,12 +803,10 @@ def generate_fix(
             finding
         )
 
-
         if compact:
             compact_findings.append(
                 compact
             )
-
 
     # ========================================================
     # FINDING TEXT
@@ -345,29 +814,79 @@ def generate_fix(
 
     finding_lines = []
 
-
     for index, finding in enumerate(
         compact_findings,
         start=1,
     ):
 
+        ml = finding.get(
+            "ml_intelligence",
+            {},
+        )
+
+        triage = ml.get(
+            "triage",
+            {},
+        )
+
+        classification = ml.get(
+            "classification",
+            {},
+        )
+
+        severity_prediction = ml.get(
+            "severity_prediction",
+            {},
+        )
+
+        priority = ml.get(
+            "priority",
+            {},
+        )
+
+        code_context = ml.get(
+            "code_context",
+            {},
+        )
+
+        fix_recommendation = ml.get(
+            "fix_recommendation",
+            {},
+        )
+
         finding_lines.append(
             f"""
 Finding {index}:
+Finding ID: {finding.get("finding_id", "not assigned")}
 Rule: {finding.get("rule", "unknown")}
 Type: {finding.get("type", "unknown")}
-Severity: {finding.get("severity", "unknown")}
+Official Severity: {finding.get("severity", "unknown")}
+Official Risk Level: {finding.get("risk_level", "not provided")}
+Official Risk Score: {finding.get("risk_score", "not provided")}
 CWE: {finding.get("cwe", "not specified")}
 Line: {finding.get("line", "unknown")}
 Message: {finding.get("message", "Security issue detected.")}
+
+ML Security Intelligence:
+- Triage Prediction: {triage.get("prediction", "not available")}
+- Triage Probability: {triage.get("probability", "not available")}
+- Triage Confidence: {triage.get("confidence", "not available")}
+- ML Vulnerability Classification: {classification.get("prediction", "not available")}
+- ML Classification Confidence: {classification.get("confidence", "not available")}
+- ML Severity Prediction: {severity_prediction.get("prediction", "not available")}
+- ML Severity Confidence: {severity_prediction.get("confidence", "not available")}
+- ML Priority Prediction: {priority.get("prediction", "not available")}
+- ML Priority Confidence: {priority.get("confidence", "not available")}
+- ML Code Context: {code_context.get("prediction", "not available")}
+- ML Code Context Confidence: {code_context.get("confidence", "not available")}
+- ML Fix Recommendation: {fix_recommendation.get("recommendation", "not available")}
+- ML Fix Recommendation Confidence: {fix_recommendation.get("confidence", "not available")}
 """
         )
-
 
     all_findings_text = "\n".join(
         finding_lines
     )
-
 
     # ========================================================
     # GROQ PROMPT
@@ -386,6 +905,20 @@ Source file:
 Detected security findings:
 {all_findings_text}
 
+IMPORTANT SECURITY INFORMATION:
+
+Semgrep is the primary security detection source.
+
+The official risk level and risk score come from the
+deterministic Risk Engine.
+
+The ML results are supporting intelligence only. They help
+you understand the vulnerability type, severity, priority,
+code context, and possible remediation.
+
+Do NOT treat an ML prediction as a replacement for the
+actual Semgrep finding or official risk assessment.
+
 IMPORTANT:
 Several Semgrep rules can report the same underlying
 security issue. Treat all supplied findings as one combined
@@ -396,21 +929,34 @@ Your task is to return the COMPLETE corrected source file.
 Requirements:
 
 1. Fix all listed security issues in this source file.
-2. Make the smallest practical security changes.
-3. Preserve existing application functionality.
-4. Preserve unrelated code.
-5. Do not remove working functionality.
-6. Do not introduce unnecessary dependencies.
-7. Prefer libraries already used by the project.
-8. Return the COMPLETE source file.
-9. Do not return a snippet.
-10. Do not return a diff.
-11. Do not return an explanation.
-12. Do not return Markdown code fences.
-13. Do not return a FIXED_CODE label.
-14. Return ONLY the corrected source code.
-15. Do not claim that the code was verified.
-16. Do not claim that another security scan was performed.
+2. Use the actual source code as the primary basis for the fix.
+3. Use the Semgrep findings as the primary vulnerability evidence.
+4. Use the ML results as supporting security context.
+5. Respect the official risk level and severity information.
+6. Use the ML fix recommendation when it is relevant and
+   consistent with the actual vulnerability.
+7. Make the smallest practical security changes.
+8. Preserve existing application functionality.
+9. Preserve unrelated code.
+10. Do not remove working functionality.
+11. Do not introduce unnecessary dependencies.
+12. Prefer libraries already used by the project.
+13. Return the COMPLETE source file.
+14. Do not return a snippet.
+15. Do not return a diff.
+16. Do not return an explanation.
+17. Do not return Markdown code fences.
+18. Do not return a FIXED_CODE label.
+19. Return ONLY the corrected source code.
+20. Do not claim that the code was verified.
+21. Do not claim that another security scan was performed.
+22. Do not claim that the vulnerability is definitely resolved.
+23. If the supplied ML information conflicts with the actual
+    source code, prioritize the actual source code and
+    Semgrep finding.
+24. If the security issue cannot be safely fixed with the
+    available source context, return the original source code
+    unchanged.
 
 Examples:
 
@@ -425,10 +971,6 @@ Other vulnerabilities:
 Apply the appropriate secure coding remediation based on
 the actual source code and the listed findings.
 
-If the security issue cannot be safely fixed with the
-available source context, return the original source code
-unchanged.
-
 ============================================================
 ORIGINAL SOURCE CODE
 ============================================================
@@ -442,7 +984,6 @@ FINAL RESPONSE
 Return ONLY the complete corrected source file.
 """
 
-
     # ========================================================
     # GROQ
     # ========================================================
@@ -451,23 +992,19 @@ Return ONLY the complete corrected source file.
         prompt
     )
 
-
     if not fixed_code:
         raise ValueError(
             "Auto-Fix Agent returned an empty response."
         )
 
-
     fixed_code = clean_ai_response(
         fixed_code
     )
-
 
     if not fixed_code:
         raise ValueError(
             "Auto-Fix Agent returned empty corrected code."
         )
-
 
     # ========================================================
     # INVALID RESPONSE CHECK
@@ -480,7 +1017,6 @@ Return ONLY the complete corrected source file.
         "NOT AVAILABLE",
     }
 
-
     if fixed_code.strip().upper() in (
         invalid_responses
     ):
@@ -488,6 +1024,5 @@ Return ONLY the complete corrected source file.
         raise ValueError(
             "Auto-Fix Agent could not safely generate a fix."
         )
-
 
     return fixed_code
