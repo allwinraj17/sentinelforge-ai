@@ -99,3 +99,222 @@ id,finding_1,finding_2,label
 98,"Production debug setting detected","Hardcoded secret detected",0
 99,"Sensitive error information exposed","SQL injection finding",0
 100,"Missing authorization check","Command injection finding",0
+id,finding_1,finding_2,label
+101,"SQL injection caused by unsanitized user input","SQL injection through unsafe user-controlled input",1
+102,"SQL query constructed using raw request parameter","Database query built directly from untrusted request data",1
+103,"Unsanitized input concatenated into SQL statement","User input directly concatenated into database query",1
+104,"SQL injection vulnerability in login query","Unsafe SQL construction in authentication query",1
+105,"Database query uses untrusted username directly","SQL statement receives unsanitized username input",1
+106,"SQL injection through string concatenation","SQL injection caused by concatenating request parameters",1
+107,"Raw HTTP parameter used in SQL query","Untrusted HTTP input used directly in database query",1
+108,"Unsafe database query with user input","SQL query constructed from unvalidated request data",1
+109,"SQL injection from search parameter","SQL injection caused by unsafe search parameter",1
+110,"SQL injection in product lookup","SQL injection in database lookup using raw input",1
+111,"SQL injection through request parameter","SQL injection through unvalidated request data",1
+112,"Unsafe SQL query construction","SQL query built using attacker-controlled input",1
+113,"SQL injection caused by string formatting","SQL injection caused by dynamic SQL string construction",1
+114,"Unescaped user input reaches SQL statement","Unescaped request data reaches database query",1
+115,"SQL query uses raw form data","Database statement uses unsanitized form input",1
+116,"SQL injection in authentication logic","Unsafe SQL query used for authentication",1
+117,"User-controlled value inserted into SQL","Attacker-controlled value inserted into database query",1
+118,"SQL injection through login parameter","SQL injection through username and password parameters",1
+119,"Unsafe query parameter handling","Improper handling of SQL query parameters",1
+120,"SQL injection in database search","Unsafe user input used in database search query",1
+
+121,"Cross-site scripting through unsanitized HTML","XSS caused by rendering untrusted HTML content",1
+122,"Stored XSS vulnerability","Stored cross-site scripting caused by untrusted content",1
+123,"Reflected XSS through URL parameter","Reflected cross-site scripting through attacker-controlled parameter",1
+124,"User input rendered without escaping","Unescaped user input rendered in web page",1
+125,"Unsafe HTML output","Untrusted data inserted directly into HTML output",1
+126,"Cross-site scripting in comment field","XSS vulnerability in user-controlled comment content",1
+127,"Script injected through request parameter","Malicious script injected through unvalidated request input",1
+128,"DOM-based XSS vulnerability","DOM manipulation allows attacker-controlled script execution",1
+129,"Unsanitized content inserted into page","Untrusted content inserted into page without encoding",1
+130,"XSS through search field","Cross-site scripting through unsafe search input",1
+
+131,"Command injection through user input","OS command injection using untrusted request data",1
+132,"Unsafe shell command construction","Shell command constructed using attacker-controlled input",1
+133,"User input passed directly to command execution","Untrusted input passed directly to operating system command",1
+134,"Command injection in file processing","OS command injection through unsafe file parameter",1
+135,"Shell command uses raw request value","Command execution uses unsanitized request value",1
+136,"Remote command injection vulnerability","Remote attacker-controlled input reaches shell command",1
+137,"Unsafe subprocess invocation","Subprocess command receives untrusted input",1
+138,"Command execution with user-controlled argument","OS command executed with attacker-controlled argument",1
+139,"Shell injection through request parameter","Shell injection caused by unsafe request parameter",1
+140,"Dynamic command execution vulnerability","Dynamic shell command execution with untrusted data",1
+
+141,"Path traversal through filename parameter","Directory traversal caused by attacker-controlled filename",1
+142,"Unsafe file path construction","File path constructed from untrusted user input",1
+143,"Path traversal vulnerability in download endpoint","Directory traversal in file download handler",1
+144,"User input used directly as file path","Untrusted input directly controls filesystem path",1
+145,"Traversal sequence accepted in filename","Relative path traversal accepted from user input",1
+146,"Unsafe file access using request path","File access uses attacker-controlled request path",1
+147,"Directory traversal in file reader","Path traversal vulnerability in file reading logic",1
+148,"Arbitrary file access through path parameter","Attacker-controlled path allows unintended file access",1
+149,"Path traversal through uploaded filename","Unsafe uploaded filename allows directory traversal",1
+150,"File path is not validated","Filesystem path constructed without proper validation",1
+
+151,"Hardcoded API key in source code","API credential stored directly inside application source",1
+152,"Hardcoded password in configuration","Plaintext password embedded in configuration file",1
+153,"Secret token committed to repository","Authentication token exposed in source repository",1
+154,"AWS credential stored in source code","Cloud access credential hardcoded in application code",1
+155,"Private API token exposed in code","Sensitive API token committed into source file",1
+156,"Hardcoded database password","Database credential directly embedded in source code",1
+157,"Authentication secret stored in plaintext","Secret authentication value exposed in configuration",1
+158,"Hardcoded encryption key","Cryptographic key embedded directly in source code",1
+159,"Cloud secret found in repository","Cloud service credential exposed in repository",1
+160,"Sensitive token stored in source file","Private token hardcoded into application source",1
+
+161,"Weak password hashing algorithm","Password stored using insecure hashing algorithm",1
+162,"MD5 used for password storage","Password hashing implemented using weak MD5 algorithm",1
+163,"SHA1 used for sensitive password hashing","Weak SHA-1 hashing used for password protection",1
+164,"Insecure cryptographic algorithm","Weak cryptographic algorithm used to protect sensitive data",1
+165,"DES encryption used for sensitive information","Sensitive data protected with obsolete DES encryption",1
+166,"Weak encryption configuration","Insecure cryptographic configuration used by application",1
+167,"Hardcoded encryption key with weak algorithm","Sensitive information protected using weak cryptography",1
+168,"Insecure random number generation","Predictable random generator used for security-sensitive value",1
+169,"Weak password encryption","Password protection uses insecure cryptographic method",1
+170,"Deprecated cryptographic function","Deprecated cryptographic primitive used for sensitive data",1
+
+171,"Authentication bypass vulnerability","Authentication control can be bypassed by unauthorized user",1
+172,"Missing authentication check","Protected endpoint does not properly verify authentication",1
+173,"Broken access control","Unauthorized user can access protected resource",1
+174,"Authorization check missing","Application fails to enforce authorization on sensitive operation",1
+175,"Privilege escalation through missing authorization","Missing access control allows privilege escalation",1
+176,"Session authentication weakness","Weak authentication mechanism allows unauthorized access",1
+177,"User authorization not verified","Application does not verify user permissions",1
+178,"Protected resource accessible without login","Sensitive resource accessible without authentication",1
+179,"Improper access control validation","Access permissions are not correctly enforced",1
+180,"Authentication token not validated","Application accepts invalid authentication token",1
+
+181,"Debug mode enabled in production","Production application runs with debug mode enabled",1
+182,"Verbose debugging enabled","Application exposes debug functionality in production",1
+183,"Development configuration used in production","Production deployment uses insecure development configuration",1
+184,"Debug endpoint exposed","Debug functionality is accessible to external users",1
+185,"Debug flag enabled","Application configuration enables debugging",1
+186,"Production debug configuration","Debug settings remain active in deployed application",1
+187,"Verbose error output enabled","Detailed debugging information exposed to users",1
+188,"Development mode enabled","Application is running in development mode",1
+189,"Debug configuration not disabled","Debug configuration remains enabled in production",1
+190,"Active debug code detected","Debug functionality remains active in deployed application",1
+
+191,"SQL injection vulnerability","SQL injection vulnerability in database query",1
+192,"XSS vulnerability","Cross-site scripting vulnerability in web output",1
+193,"Command injection vulnerability","OS command injection vulnerability",1
+194,"Path traversal vulnerability","Directory traversal vulnerability in file access",1
+195,"Hardcoded secret detected","Hardcoded credential found in source code",1
+196,"Weak cryptography detected","Insecure cryptographic algorithm identified",1
+197,"Authentication weakness","Broken authentication mechanism identified",1
+198,"Authorization failure","Broken access control vulnerability identified",1
+199,"Debug mode enabled","Active debug configuration detected",1
+200,"Unsafe SQL construction","Dynamic SQL query uses untrusted input",1
+
+201,"SQL injection vulnerability","Cross-site scripting vulnerability",0
+202,"SQL injection vulnerability","Command injection vulnerability",0
+203,"SQL injection vulnerability","Path traversal vulnerability",0
+204,"SQL injection vulnerability","Hardcoded API key",0
+205,"SQL injection vulnerability","Weak password hashing",0
+206,"SQL injection vulnerability","Authentication bypass",0
+207,"SQL injection vulnerability","Debug mode enabled",0
+208,"SQL injection vulnerability","Insecure TLS configuration",0
+209,"SQL injection vulnerability","Path traversal in file upload",0
+210,"SQL injection vulnerability","Hardcoded encryption key",0
+
+211,"Cross-site scripting vulnerability","SQL injection vulnerability",0
+212,"Cross-site scripting vulnerability","Command injection vulnerability",0
+213,"Cross-site scripting vulnerability","Path traversal vulnerability",0
+214,"Cross-site scripting vulnerability","Hardcoded password",0
+215,"Cross-site scripting vulnerability","Weak cryptography",0
+216,"Cross-site scripting vulnerability","Authentication bypass",0
+217,"Cross-site scripting vulnerability","Debug configuration",0
+218,"Cross-site scripting vulnerability","Directory traversal",0
+219,"Cross-site scripting vulnerability","Database injection",0
+220,"Cross-site scripting vulnerability","Hardcoded API token",0
+
+221,"Command injection vulnerability","SQL injection vulnerability",0
+222,"Command injection vulnerability","XSS vulnerability",0
+223,"Command injection vulnerability","Path traversal vulnerability",0
+224,"Command injection vulnerability","Hardcoded secret",0
+225,"Command injection vulnerability","Weak password hashing",0
+226,"Command injection vulnerability","Broken authentication",0
+227,"Command injection vulnerability","Debug mode",0
+228,"Command injection vulnerability","Insecure encryption",0
+229,"Command injection vulnerability","Unsafe database query",0
+230,"Command injection vulnerability","Missing authorization check",0
+
+231,"Path traversal vulnerability","SQL injection vulnerability",0
+232,"Path traversal vulnerability","Cross-site scripting vulnerability",0
+233,"Path traversal vulnerability","Command injection vulnerability",0
+234,"Path traversal vulnerability","Hardcoded credential",0
+235,"Path traversal vulnerability","Weak cryptographic algorithm",0
+236,"Path traversal vulnerability","Authentication bypass",0
+237,"Path traversal vulnerability","Debug mode enabled",0
+238,"Path traversal vulnerability","SQL query injection",0
+239,"Path traversal vulnerability","XSS through HTML output",0
+240,"Path traversal vulnerability","Hardcoded API token",0
+
+241,"Hardcoded secret","SQL injection",0
+242,"Hardcoded secret","Cross-site scripting",0
+243,"Hardcoded secret","Command injection",0
+244,"Hardcoded secret","Path traversal",0
+245,"Hardcoded secret","Weak password hashing",0
+246,"Hardcoded secret","Authentication bypass",0
+247,"Hardcoded secret","Debug mode enabled",0
+248,"Hardcoded secret","Insecure TLS validation",0
+249,"Hardcoded secret","Unsafe SQL query",0
+250,"Hardcoded secret","Directory traversal",0
+
+251,"Weak password hashing","SQL injection",0
+252,"Weak password hashing","XSS vulnerability",0
+253,"Weak password hashing","Command injection",0
+254,"Weak password hashing","Path traversal",0
+255,"Weak password hashing","Hardcoded API key",0
+256,"Weak password hashing","Authentication bypass",0
+257,"Weak password hashing","Debug mode enabled",0
+258,"Weak password hashing","Insecure file access",0
+259,"Weak password hashing","SQL query injection",0
+260,"Weak password hashing","Command execution",0
+
+261,"Authentication bypass","SQL injection",0
+262,"Authentication bypass","XSS",0
+263,"Authentication bypass","Command injection",0
+264,"Authentication bypass","Path traversal",0
+265,"Authentication bypass","Hardcoded password",0
+266,"Authentication bypass","Weak cryptography",0
+267,"Authentication bypass","Debug mode enabled",0
+268,"Authentication bypass","Unsafe file path",0
+269,"Authentication bypass","SQL query construction",0
+270,"Authentication bypass","Cross-site scripting",0
+
+271,"Debug mode enabled","SQL injection",0
+272,"Debug mode enabled","XSS vulnerability",0
+273,"Debug mode enabled","Command injection",0
+274,"Debug mode enabled","Path traversal",0
+275,"Debug mode enabled","Hardcoded secret",0
+276,"Debug mode enabled","Weak password hashing",0
+277,"Debug mode enabled","Authentication bypass",0
+278,"Debug mode enabled","Insecure cryptography",0
+279,"Debug mode enabled","Unsafe database query",0
+280,"Debug mode enabled","Directory traversal",0
+
+281,"Insecure cryptography","SQL injection",0
+282,"Insecure cryptography","XSS",0
+283,"Insecure cryptography","Command injection",0
+284,"Insecure cryptography","Path traversal",0
+285,"Insecure cryptography","Hardcoded API token",0
+286,"Insecure cryptography","Authentication bypass",0
+287,"Insecure cryptography","Debug mode",0
+288,"Insecure cryptography","Unsafe SQL query",0
+289,"Insecure cryptography","Command execution",0
+290,"Insecure cryptography","File path traversal",0
+
+291,"SQL injection through request parameter","XSS through HTML output",0
+292,"SQL injection through request parameter","Command injection through shell",0
+293,"SQL injection through request parameter","Path traversal through filename",0
+294,"SQL injection through request parameter","Hardcoded API credential",0
+295,"SQL injection through request parameter","Weak password hashing",0
+296,"SQL injection through request parameter","Authentication bypass",0
+297,"SQL injection through request parameter","Debug mode enabled",0
+298,"SQL injection through request parameter","Insecure encryption",0
+299,"SQL injection through request parameter","Unsafe file access",0
+300,"SQL injection through request parameter","Missing authorization check",0

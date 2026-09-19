@@ -1,103 +1,92 @@
 import os
-import joblib
 import pandas as pd
+import joblib
 
+from scipy.sparse import hstack
+from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    classification_report
+)
 
 
 # ---------------------------------------------------------
 # Paths
 # ---------------------------------------------------------
 
-BASE_DIR = os.path.dirname(__file__)
+DATASET_PATH = "app/ml/dataset/duplicate_similarity_dataset.csv"
 
-DATASET_PATH = os.path.join(
-    BASE_DIR,
-    "dataset",
-    "duplicate_similarity_dataset.csv"
-)
-
-MODEL_DIR = os.path.join(
-    BASE_DIR,
-    "models"
-)
+MODEL_DIR = "app/ml/models"
 
 MODEL_PATH = os.path.join(
     MODEL_DIR,
     "duplicate_similarity_model.pkl"
 )
 
-
-# ---------------------------------------------------------
-# Build Security Text
-# ---------------------------------------------------------
-
-def build_security_text(
-    finding_text,
-    vulnerability_type,
-    cwe,
-    source_type,
-    file_extension
-):
-    return (
-        str(finding_text)
-        + " "
-        + str(finding_text)
-        + " "
-        + str(vulnerability_type)
-        + " "
-        + str(vulnerability_type)
-        + " "
-        + str(cwe)
-        + " "
-        + str(cwe)
-        + " "
-        + str(source_type)
-        + " "
-        + str(file_extension)
-    )
+VECTORIZER_PATH = os.path.join(
+    MODEL_DIR,
+    "duplicate_similarity_vectorizer.pkl"
+)
 
 
 # ---------------------------------------------------------
 # Load Dataset
 # ---------------------------------------------------------
 
-print("Loading duplicate similarity dataset...")
+print("Loading dataset...")
 
 df = pd.read_csv(DATASET_PATH)
 
-print("Total rows:", len(df))
+df = df.fillna("")
+
+
+finding_1 = df["finding_1"].astype(str)
+
+finding_2 = df["finding_2"].astype(str)
+
+y = df["label"].astype(int)
+
+
+print("Total pairs:", len(df))
+
+print(
+    "Similar pairs:",
+    int((y == 1).sum())
+)
+
+print(
+    "Non-similar pairs:",
+    int((y == 0).sum())
+)
 
 
 # ---------------------------------------------------------
-# Handle Missing Values
+# Train/Test Split
 # ---------------------------------------------------------
 
-columns = [
-    "finding_1",
-    "finding_2",
-    "label"
-]
+indexes = list(range(len(df)))
 
-for column in columns:
-    df[column] = df[column].fillna("").astype(str)
+train_indexes, test_indexes = train_test_split(
+    indexes,
+    test_size=0.20,
+    random_state=42,
+    stratify=y
+)
 
 
-# ---------------------------------------------------------
-# Create Security Metadata
-#
-# Our dataset contains finding pairs only.
-# The finding text itself is used to build the TF-IDF
-# vocabulary. The actual agent will additionally use
-# vulnerability metadata when available.
-# ---------------------------------------------------------
+print(
+    "Training samples:",
+    len(train_indexes)
+)
 
-texts = pd.concat(
-    [
-        df["finding_1"],
-        df["finding_2"]
-    ],
-    ignore_index=True
+print(
+    "Testing samples:",
+    len(test_indexes)
 )
 
 
@@ -113,27 +102,179 @@ vectorizer = TfidfVectorizer(
 )
 
 
-print("\nBuilding TF-IDF vocabulary...")
+# Fit TF-IDF using both findings
+training_text = pd.concat(
+    [
+        finding_1.iloc[train_indexes],
+        finding_2.iloc[train_indexes]
+    ]
+)
 
-vectorizer.fit(texts)
+
+vectorizer.fit(training_text)
+
+
+# Transform Finding 1 and Finding 2 separately
+
+f1_train = vectorizer.transform(
+    finding_1.iloc[train_indexes]
+)
+
+f2_train = vectorizer.transform(
+    finding_2.iloc[train_indexes]
+)
+
+f1_test = vectorizer.transform(
+    finding_1.iloc[test_indexes]
+)
+
+f2_test = vectorizer.transform(
+    finding_2.iloc[test_indexes]
+)
 
 
 # ---------------------------------------------------------
-# Vocabulary Information
+# Build Pair Features
 # ---------------------------------------------------------
 
-vocabulary_size = len(
-    vectorizer.vocabulary_
+def build_pair_features(
+    vector_1,
+    vector_2
+):
+
+    difference = abs(
+        vector_1 - vector_2
+    )
+
+    product = vector_1.multiply(
+        vector_2
+    )
+
+    features = hstack(
+        [
+            vector_1,
+            vector_2,
+            difference,
+            product
+        ]
+    )
+
+    return features
+
+
+X_train = build_pair_features(
+    f1_train,
+    f2_train
+)
+
+X_test = build_pair_features(
+    f1_test,
+    f2_test
+)
+
+
+y_train = y.iloc[
+    train_indexes
+]
+
+y_test = y.iloc[
+    test_indexes
+]
+
+
+# ---------------------------------------------------------
+# Train Supervised ML Model
+# ---------------------------------------------------------
+
+print()
+print("Training Logistic Regression model...")
+
+
+model = LogisticRegression(
+    max_iter=2000,
+    random_state=42,
+    class_weight="balanced"
+)
+
+
+model.fit(
+    X_train,
+    y_train
+)
+
+
+# ---------------------------------------------------------
+# Evaluation
+# ---------------------------------------------------------
+
+predictions = model.predict(
+    X_test
+)
+
+
+accuracy = accuracy_score(
+    y_test,
+    predictions
+)
+
+precision = precision_score(
+    y_test,
+    predictions,
+    zero_division=0
+)
+
+recall = recall_score(
+    y_test,
+    predictions,
+    zero_division=0
+)
+
+f1 = f1_score(
+    y_test,
+    predictions,
+    zero_division=0
+)
+
+
+print()
+print(
+    "===== SUPERVISED SIMILARITY MODEL RESULTS ====="
 )
 
 print(
-    "Vocabulary size:",
-    vocabulary_size
+    "Accuracy :",
+    round(accuracy, 4)
+)
+
+print(
+    "Precision:",
+    round(precision, 4)
+)
+
+print(
+    "Recall   :",
+    round(recall, 4)
+)
+
+print(
+    "F1 Score :",
+    round(f1, 4)
+)
+
+
+print()
+print("Classification Report:")
+print(
+    classification_report(
+        y_test,
+        predictions,
+        zero_division=0
+    )
 )
 
 
 # ---------------------------------------------------------
-# Save Vectorizer
+# Save Model
 # ---------------------------------------------------------
 
 os.makedirs(
@@ -141,54 +282,23 @@ os.makedirs(
     exist_ok=True
 )
 
+
 joblib.dump(
-    vectorizer,
+    model,
     MODEL_PATH
 )
 
 
-# ---------------------------------------------------------
-# Dataset Statistics
-# ---------------------------------------------------------
-
-print("\nSimilarity pair distribution:")
-
-print(
-    df["label"]
-    .value_counts()
-    .sort_index()
+joblib.dump(
+    vectorizer,
+    VECTORIZER_PATH
 )
 
 
-print("\n====================================")
-print("DUPLICATE SIMILARITY MODEL")
-print("====================================")
-
-print(
-    "Method: TF-IDF + Cosine Similarity"
-)
-
-print(
-    "Training pairs:",
-    len(df)
-)
-
-print(
-    "Vectorizer vocabulary:",
-    vocabulary_size
-)
-
-print(
-    "\nThe dataset is used as the TF-IDF "
-    "security finding corpus."
-)
-
-print(
-    "Similarity labels are used for "
-    "evaluation/reference, not classifier training."
-)
-
-
-print("\nVectorizer saved successfully:")
-
+print()
+print("Model saved successfully:")
 print(MODEL_PATH)
+
+print()
+print("Vectorizer saved successfully:")
+print(VECTORIZER_PATH)
