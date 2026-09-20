@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import io
 import json
 import shutil
@@ -33,8 +32,7 @@ from app.agents.validation_agent import run_validation_agent
 from app.finding_id import assign_finding_id, assign_finding_ids, get_finding_id
 from app.database import Base, engine
 from app.risk_engine import assess_findings, calculate_overall_risk
-from app.scanner import extract_zip_to_temp, run_semgrep_scan
-
+from app.scanner import cleanup_temp, extract_zip_to_temp, run_semgrep_scan
 
 # ============================================================
 # APPLICATION CONFIGURATION
@@ -1050,9 +1048,7 @@ def run_scan_pipeline(
             "Securely extracting repository ZIP.",
         )
 
-        repository_path = extract_zip_to_temp(
-            io.BytesIO(zip_bytes)
-        )
+        repository_path = extract_zip_to_temp(zip_bytes)
 
         _complete_stage(
             scan_id,
@@ -2259,9 +2255,9 @@ async def start_scan(
     # Validate ZIP before starting background processing.
     try:
 
-        with zipfile.ZipFile(
-            io.BytesIO(zip_bytes)
-        ) as archive:
+       with zipfile.ZipFile(
+    io.BytesIO(zip_bytes)
+) as archive:
 
             bad_file = archive.testzip()
 
