@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Any
+from contextvars import ContextVar
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -136,6 +139,18 @@ MAX_UPLOAD_SIZE = 50 * 1024 * 1024
 MAX_AUTO_FIXES = 3
 
 MAX_SOURCE_FILE_SIZE = 10 * 1024 * 1024
+
+
+# ============================================================
+# REAL-TIME SCAN JOB STATE
+# ============================================================
+
+SCAN_JOBS: dict[str, dict[str, Any]] = {}
+
+CURRENT_SCAN_JOB = ContextVar(
+    "CURRENT_SCAN_JOB",
+    default=None,
+)
 
 
 # ============================================================
@@ -284,15 +299,33 @@ def build_stage(
     message: str = "",
 ) -> dict[str, str]:
     """
-    Build a frontend-friendly stage object.
+    Build a frontend-friendly stage object and, when a scan job
+    is active, publish the same stage state to that job.
     """
 
-    return {
+    stage = {
         "id": stage_id,
         "title": title,
         "status": status,
         "message": message,
     }
+
+    job_id = CURRENT_SCAN_JOB.get()
+
+    if job_id:
+        job = SCAN_JOBS.get(job_id)
+
+        if job is not None:
+            stages = job.get("stages", [])
+
+            for index, existing_stage in enumerate(stages):
+                if existing_stage.get("id") == stage_id:
+                    stages[index] = stage
+                    break
+
+            job["stages"] = stages
+
+    return stage
 
 
 def resolve_repository_path(
@@ -656,7 +689,129 @@ async def health():
 
 
 # ============================================================
-# MASTER AUTONOMOUS SCAN - PHASE 5
+# REAL-TIME SCAN JOB API
+# ============================================================
+
+@app.post("/scan/start-job")
+async def start_scan_job(
+    role: str = Form(...),
+    email: str = Form(...),
+    file: UploadFile = File(...),
+):
+    """
+    Start the existing security pipeline as a background job.
+
+    The client receives a job_id immediately and polls the status
+    endpoint. Stage status is published by the actual backend
+    pipeline, so the progress UI is not based on fixed timers.
+    """
+
+    if not file.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="Repository ZIP file is required.",
+        )
+
+    original_filename = Path(file.filename).name
+
+    if not original_filename.lower().endswith(".zip"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only ZIP repository files are supported.",
+        )
+
+    contents = await file.read()
+
+    if not contents:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded ZIP file is empty.",
+        )
+
+    if len(contents) > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="Repository ZIP exceeds the 50 MB upload limit.",
+        )
+
+    job_id = str(uuid.uuid4())
+
+    SCAN_JOBS[job_id] = {
+        "job_id": job_id,
+        "status": "starting",
+        "stages": [],
+        "result": None,
+        "error": None,
+    }
+
+    async def run_job():
+        token = CURRENT_SCAN_JOB.set(job_id)
+
+        try:
+            SCAN_JOBS[job_id]["status"] = "running"
+
+            background_file = UploadFile(
+                file=io.BytesIO(contents),
+                filename=original_filename,
+            )
+
+            result = await start_autonomous_scan(
+                role=role,
+                email=email,
+                file=background_file,
+            )
+
+            SCAN_JOBS[job_id]["result"] = result
+            SCAN_JOBS[job_id]["stages"] = result.get(
+                "stages",
+                SCAN_JOBS[job_id].get("stages", []),
+            )
+            SCAN_JOBS[job_id]["status"] = "completed"
+
+        except HTTPException as exc:
+            SCAN_JOBS[job_id]["status"] = "failed"
+            SCAN_JOBS[job_id]["error"] = str(exc.detail)
+
+        except Exception as exc:
+            SCAN_JOBS[job_id]["status"] = "failed"
+            SCAN_JOBS[job_id]["error"] = str(exc)
+
+        finally:
+            CURRENT_SCAN_JOB.reset(token)
+
+    asyncio.create_task(run_job())
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "message": "Security analysis started.",
+    }
+
+
+@app.get("/scan/status/{job_id}")
+async def get_scan_status(job_id: str):
+    """Return real-time backend stage state for a scan job."""
+
+    job = SCAN_JOBS.get(job_id)
+
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Scan job not found.",
+        )
+
+    return {
+        "success": True,
+        "job_id": job_id,
+        "status": job.get("status"),
+        "stages": job.get("stages", []),
+        "result": job.get("result"),
+        "error": job.get("error"),
+    }
+
+
+# ============================================================
+# MASTER AUTONOMOUS SCAN - PHASE 7
 # ============================================================
 
 @app.post("/scan/start")
@@ -831,6 +986,15 @@ async def start_autonomous_scan(
             "pending",
         ),
     ]
+
+    job_id = CURRENT_SCAN_JOB.get()
+
+    if job_id:
+        job = SCAN_JOBS.get(job_id)
+
+        if job is not None:
+            job["stages"] = stages
+            job["status"] = "running"
 
 
     extract_dir = None

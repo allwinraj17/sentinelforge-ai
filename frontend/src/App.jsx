@@ -29,76 +29,22 @@ const PROJECT_TITLE =
 // ============================================================
 
 const PIPELINE_STAGES = [
-  {
-    id: "repository",
-    title: "Repository Received",
-    message: "Repository uploaded successfully.",
-  },
-  {
-    id: "extract",
-    title: "Secure Extraction",
-    message: "Safely extracting and preparing repository files.",
-  },
-  {
-    id: "understanding",
-    title: "Repository Understanding",
-    message:
-      "Understanding repository structure, files and technologies.",
-  },
-  {
-    id: "semgrep",
-    title: "Semgrep Security Detection",
-    message:
-      "Scanning source code for security vulnerabilities.",
-  },
-  {
-    id: "secret",
-    title: "Secret Detection",
-    message:
-      "Checking for hardcoded secrets and sensitive credentials.",
-  },
-  {
-    id: "ml",
-    title: "ML Security Intelligence",
-    message:
-      "Running seven specialized machine-learning analysis agents.",
-  },
-  {
-    id: "risk",
-    title: "Risk Assessment",
-    message:
-      "Calculating deterministic security risk.",
-  },
-  {
-    id: "fix",
-    title: "AI Auto-Fix",
-    message:
-      "Generating secure remediation for supported findings.",
-  },
-  {
-    id: "validation",
-    title: "Validation Agent",
-    message:
-      "Checking generated remediation artifacts.",
-  },
-  {
-    id: "compliance",
-    title: "Compliance Mapping",
-    message:
-      "Mapping security findings to relevant OWASP categories.",
-  },
-  {
-    id: "report",
-    title: "Report Preparation",
-    message:
-      "Preparing the final security report.",
-  },
-  {
-    id: "email",
-    title: "Email Delivery",
-    message:
-      "Preparing automatic report delivery.",
-  },
+  { id: "repository", title: "Repository Received", message: "Repository ZIP received successfully." },
+  { id: "extract", title: "Repository Extraction", message: "Safely extracting repository contents." },
+  { id: "understanding", title: "Repository Understanding", message: "Analyzing repository structure, languages and important files." },
+  { id: "semgrep", title: "Security Detection", message: "Semgrep is scanning the repository for security vulnerabilities." },
+  { id: "secret", title: "Secret Detection", message: "Checking for hardcoded secrets and sensitive credentials." },
+  { id: "ml_triage", title: "ML Vulnerability Triage", message: "Classifying findings as likely vulnerabilities." },
+  { id: "ml_classification", title: "ML Vulnerability Classification", message: "Predicting vulnerability categories." },
+  { id: "ml_severity", title: "ML Severity Prediction", message: "Predicting finding severity." },
+  { id: "ml_priority", title: "ML Priority Prediction", message: "Predicting remediation priority." },
+  { id: "ml_code_context", title: "ML Code Context Analysis", message: "Analyzing the security context of affected code." },
+  { id: "ml_similarity", title: "ML Duplicate Similarity", message: "Comparing related security findings." },
+  { id: "ml_fix_recommendation", title: "ML Fix Recommendation", message: "Generating a security fix recommendation." },
+  { id: "risk", title: "Risk Assessment", message: "Calculating deterministic security risk." },
+  { id: "compliance", title: "Compliance Mapping", message: "Mapping findings to relevant OWASP categories." },
+  { id: "fix", title: "AI Auto-Fix", message: "Generating secure remediation for supported findings." },
+  { id: "validation", title: "Validation Agent", message: "Checking generated remediation artifacts." },
 ];
 
 // ============================================================
@@ -404,6 +350,15 @@ export default function App() {
   const [progressMessage, setProgressMessage] =
     useState("");
 
+  const [scanJobId, setScanJobId] =
+    useState("");
+
+  const [liveStages, setLiveStages] =
+    useState([]);
+
+  const progressPollRef =
+    useRef(null);
+
   // ==========================================================
   // DOWNLOAD / EMAIL
   // ==========================================================
@@ -435,10 +390,12 @@ export default function App() {
 
   useEffect(() => {
     return () => {
-      progressTimersRef.current.forEach(
-        (timer) =>
-          clearTimeout(timer)
-      );
+      clearProgressTimers();
+
+      if (progressPollRef.current) {
+        clearInterval(progressPollRef.current);
+        progressPollRef.current = null;
+      }
     };
   }, []);
 
@@ -462,6 +419,15 @@ export default function App() {
     setProgressStage(-1);
 
     setProgressMessage("");
+
+    setScanJobId("");
+
+    setLiveStages([]);
+
+    if (progressPollRef.current) {
+      clearInterval(progressPollRef.current);
+      progressPollRef.current = null;
+    }
 
     setPdfDownloaded(false);
 
@@ -504,281 +470,228 @@ export default function App() {
   async function startAutonomousAnalysis() {
 
     setError("");
-
     setCompleted(false);
-
     setScanData(null);
-
     setPdfDownloaded(false);
-
     setZipDownloaded(false);
-
     setPdfStatus("");
-
     setZipStatus("");
-
     setEmailStatus("");
-
+    setScanJobId("");
+    setLiveStages([]);
+    setProgressStage(-1);
+    setProgressMessage("");
     emailStartedRef.current = false;
 
-    // --------------------------------------------------------
-    // VALIDATION
-    // --------------------------------------------------------
-
     if (!role) {
-      setError(
-        "Please select your role."
-      );
+      setError("Please select your role.");
       return;
     }
 
     if (!email.trim()) {
-      setError(
-        "Please enter your email address."
-      );
+      setError("Please enter your email address.");
       return;
     }
 
     if (!email.includes("@")) {
-      setError(
-        "Please enter a valid email address."
-      );
+      setError("Please enter a valid email address.");
       return;
     }
 
     if (!selectedFile) {
-      setError(
-        "Please upload a repository ZIP file."
-      );
+      setError("Please upload a repository ZIP file.");
       return;
     }
 
-    if (
-      !selectedFile.name
-        .toLowerCase()
-        .endsWith(".zip")
-    ) {
-      setError(
-        "Only ZIP repository files are supported."
-      );
+    if (!selectedFile.name.toLowerCase().endsWith(".zip")) {
+      setError("Only ZIP repository files are supported.");
       return;
     }
 
-    // --------------------------------------------------------
-    // FILE SIZE
-    // --------------------------------------------------------
+    const maxSize = 50 * 1024 * 1024;
 
-    const maxSize =
-      50 * 1024 * 1024;
-
-    if (
-      selectedFile.size >
-      maxSize
-    ) {
-      setError(
-        "Repository ZIP must be smaller than 50 MB."
-      );
+    if (selectedFile.size > maxSize) {
+      setError("Repository ZIP must be smaller than 50 MB.");
       return;
     }
-
-    // --------------------------------------------------------
-    // START
-    // --------------------------------------------------------
 
     setRunning(true);
-
-    updateProgress(
-      0,
-      "Repository received. Starting autonomous security analysis..."
-    );
+    updateProgress(0, "Uploading repository and creating a security scan job...");
 
     try {
+      const formData = new FormData();
+      formData.append("role", role);
+      formData.append("email", email.trim());
+      formData.append("file", selectedFile);
 
-      const formData =
-        new FormData();
+      const startResponse = await fetch(`${API_URL}/scan/start-job`, {
+        method: "POST",
+        body: formData,
+      });
 
-      formData.append(
-        "role",
-        role
-      );
-
-      formData.append(
-        "email",
-        email.trim()
-      );
-
-      formData.append(
-        "file",
-        selectedFile
-      );
-
-      // ------------------------------------------------------
-      // FRONTEND PROGRESS FALLBACK
-      // ------------------------------------------------------
-
-      clearProgressTimers();
-
-      progressTimersRef.current = [
-
-        setTimeout(() => {
-          updateProgress(
-            1,
-            "Safely extracting repository files..."
-          );
-        }, 900),
-
-        setTimeout(() => {
-          updateProgress(
-            2,
-            "Repository Understanding Agent is analyzing structure, files and technologies..."
-          );
-        }, 1800),
-
-        setTimeout(() => {
-          updateProgress(
-            3,
-            "Semgrep Security Detection Agent is scanning the repository..."
-          );
-        }, 3000),
-
-        setTimeout(() => {
-          updateProgress(
-            4,
-            "Secret Detection Agent is checking for hardcoded credentials..."
-          );
-        }, 4300),
-
-        setTimeout(() => {
-          updateProgress(
-            5,
-            "ML Security Intelligence is running seven specialized ML agents..."
-          );
-        }, 5600),
-
-        setTimeout(() => {
-          updateProgress(
-            6,
-            "Risk Assessment Agent is calculating deterministic security risk..."
-          );
-        }, 7000),
-
-        setTimeout(() => {
-          updateProgress(
-            7,
-            "AI Auto-Fix Agent is generating remediation..."
-          );
-        }, 8500),
-
-        setTimeout(() => {
-          updateProgress(
-            8,
-            "Validation Agent is checking generated remediation artifacts..."
-          );
-        }, 10100),
-
-        setTimeout(() => {
-          updateProgress(
-            9,
-            "Compliance Agent is mapping findings to OWASP categories..."
-          );
-        }, 11400),
-
-        setTimeout(() => {
-          updateProgress(
-            10,
-            "Preparing the final security report..."
-          );
-        }, 12700),
-
-        setTimeout(() => {
-          updateProgress(
-            11,
-            "Preparing automatic email delivery..."
-          );
-        }, 14000),
-      ];
-
-      // ------------------------------------------------------
-      // BACKEND REQUEST
-      // ------------------------------------------------------
-
-      const response =
-        await fetch(
-          `${API_URL}/scan/start`,
-          {
-            method: "POST",
-            body: formData,
-          }
-        );
-
-      clearProgressTimers();
-
-      let data = null;
+      let startData = null;
 
       try {
-        data =
-          await response.json();
+        startData = await startResponse.json();
       } catch {
         throw new Error(
-          `Backend returned an invalid response (${response.status}).`
+          `Backend returned an invalid response (${startResponse.status}).`
         );
       }
 
-      if (!response.ok) {
+      if (!startResponse.ok || !startData?.success || !startData?.job_id) {
         throw new Error(
-          data?.detail ||
-            data?.message ||
-            `Analysis failed with status ${response.status}.`
+          startData?.detail ||
+          startData?.message ||
+          "Unable to start the security analysis job."
         );
       }
 
-      if (!data?.success) {
-        throw new Error(
-          data?.message ||
+      const jobId = startData.job_id;
+      setScanJobId(jobId);
+
+      const pollStatus = async () => {
+        const statusResponse = await fetch(
+          `${API_URL}/scan/status/${jobId}`
+        );
+
+        let statusData = null;
+
+        try {
+          statusData = await statusResponse.json();
+        } catch {
+          throw new Error(
+            `Status endpoint returned an invalid response (${statusResponse.status}).`
+          );
+        }
+
+        if (!statusResponse.ok || !statusData?.success) {
+          throw new Error(
+            statusData?.detail ||
+            statusData?.error ||
+            "Unable to read security scan status."
+          );
+        }
+
+        const stages = Array.isArray(statusData.stages)
+          ? statusData.stages
+          : [];
+
+        setLiveStages(stages);
+
+        const completedCount = stages.filter(
+          (stage) => stage?.status === "completed" || stage?.status === "skipped"
+        ).length;
+
+        const activeIndex = stages.findIndex(
+          (stage) => stage?.status === "running"
+        );
+
+        const pendingIndex = stages.findIndex(
+          (stage) => stage?.status === "pending"
+        );
+
+        const currentIndex =
+          activeIndex >= 0
+            ? activeIndex
+            : pendingIndex >= 0
+              ? pendingIndex
+              : Math.max(0, stages.length - 1);
+
+        setProgressStage(currentIndex);
+
+        const currentStage =
+          stages[activeIndex >= 0 ? activeIndex : currentIndex];
+
+        setProgressMessage(
+          currentStage?.message ||
+          (statusData.status === "completed"
+            ? "Security analysis completed successfully."
+            : "Security agents are processing the repository...")
+        );
+
+        if (statusData.status === "completed") {
+          if (progressPollRef.current) {
+            clearInterval(progressPollRef.current);
+            progressPollRef.current = null;
+          }
+
+          if (!statusData.result?.success) {
+            throw new Error(
+              statusData.result?.message ||
+              "Autonomous analysis failed."
+            );
+          }
+
+          setScanData(statusData.result);
+          setProgressStage(Math.max(0, stages.length - 1));
+          setProgressMessage("Autonomous analysis completed successfully.");
+
+          setTimeout(() => {
+            setCompleted(true);
+          }, 350);
+
+          return true;
+        }
+
+        if (statusData.status === "failed") {
+          throw new Error(
+            statusData.error ||
             "Autonomous analysis failed."
-        );
+          );
+        }
+
+        return false;
+      };
+
+      await pollStatus();
+
+      if (!progressPollRef.current) {
+        progressPollRef.current = setInterval(async () => {
+          try {
+            const finished = await pollStatus();
+
+            if (finished && progressPollRef.current) {
+              clearInterval(progressPollRef.current);
+              progressPollRef.current = null;
+            }
+          } catch (pollError) {
+            if (progressPollRef.current) {
+              clearInterval(progressPollRef.current);
+              progressPollRef.current = null;
+            }
+
+            console.error("Security scan polling error:", pollError);
+            setError(
+              pollError?.message ||
+              "Unable to monitor the security analysis."
+            );
+            setProgressStage(-1);
+            setProgressMessage("");
+            setRunning(false);
+          }
+        }, 700);
       }
-
-      // ------------------------------------------------------
-      // FINAL RESULT
-      // ------------------------------------------------------
-
-      setProgressStage(
-        PIPELINE_STAGES.length - 1
-      );
-
-      setProgressMessage(
-        "Autonomous analysis completed successfully."
-      );
-
-      setScanData(data);
-
-      setTimeout(() => {
-        setCompleted(true);
-      }, 350);
 
     } catch (requestError) {
-
       console.error(
         "Autonomous analysis error:",
         requestError
       );
 
-      clearProgressTimers();
+      if (progressPollRef.current) {
+        clearInterval(progressPollRef.current);
+        progressPollRef.current = null;
+      }
 
       setError(
         requestError?.message ||
-          "Something went wrong during analysis."
+        "Something went wrong during analysis."
       );
 
       setProgressMessage("");
-
       setProgressStage(-1);
-
-    } finally {
-
       setRunning(false);
-
     }
   }
 
@@ -2521,7 +2434,7 @@ export default function App() {
             <div className="progress-card">
 
               <span className="hero-label">
-                AUTONOMOUS ANALYSIS
+                LIVE SECURITY ANALYSIS
               </span>
 
               <h2>
@@ -2529,122 +2442,108 @@ export default function App() {
               </h2>
 
               <p>
-                Multiple security agents are
-                processing your repository.
+                Progress is reported directly by the backend security pipeline.
               </p>
 
-              <div className="progress-bar">
+              {(() => {
+                const stages =
+                  liveStages.length > 0
+                    ? liveStages
+                    : PIPELINE_STAGES.map((stage) => ({
+                        ...stage,
+                        status: stage.id === "repository" ? "completed" : "pending",
+                      }));
 
-                <div
-                  className="progress-fill"
-                  style={{
-                    width: `${
-                      Math.max(
-                        8,
-                        ((progressStage + 1) /
-                          PIPELINE_STAGES.length) *
-                          100
+                const completedCount = stages.filter(
+                  (stage) =>
+                    stage?.status === "completed" ||
+                    stage?.status === "skipped"
+                ).length;
+
+                const activeStage = stages.find(
+                  (stage) => stage?.status === "running"
+                );
+
+                const progressPercent =
+                  stages.length > 0
+                    ? Math.round(
+                        (completedCount / stages.length) * 100
                       )
-                    }%`,
-                  }}
-                />
+                    : 0;
 
-              </div>
-
-              <div className="progress-current">
-
-                <span className="progress-spinner" />
-
-                <span>
-                  {progressMessage}
-                </span>
-
-              </div>
-
-              <div className="progress-list">
-
-                {PIPELINE_STAGES.map(
-                  (
-                    stage,
-                    index
-                  ) => {
-
-                    let status =
-                      "pending";
-
-                    if (
-                      index <
-                      progressStage
-                    ) {
-
-                      status =
-                        "completed";
-
-                    } else if (
-                      index ===
-                      progressStage
-                    ) {
-
-                      status =
-                        "active";
-
-                    }
-
-                    return (
-
+                return (
+                  <>
+                    <div className="progress-bar">
                       <div
-                        className={
-                          `progress-stage ${status}`
-                        }
-                        key={stage.id}
-                      >
+                        className="progress-fill"
+                        style={{
+                          width: `${progressPercent}%`,
+                        }}
+                      />
+                    </div>
 
-                        <div className="progress-stage-icon">
+                    <div className="progress-current">
+                      <span className="progress-spinner" />
 
-                          {status ===
-                            "completed" && (
-                            <span>
-                              ✓
-                            </span>
-                          )}
+                      <span>
+                        {progressMessage ||
+                          activeStage?.message ||
+                          "Waiting for the backend pipeline..."}
+                      </span>
+                    </div>
 
-                          {status ===
-                            "active" && (
-                            <span className="mini-spinner" />
-                          )}
+                    <div className="progress-meta">
+                      {completedCount} of {stages.length} stages completed
+                      {scanJobId ? ` • Job ${scanJobId.slice(0, 8)}` : ""}
+                    </div>
 
-                          {status ===
-                            "pending" && (
-                            <span>
-                              {index + 1}
-                            </span>
-                          )}
+                    <div className="progress-list">
+                      {stages.map((stage, index) => {
+                        const status =
+                          stage?.status === "completed" ||
+                          stage?.status === "skipped"
+                            ? "completed"
+                            : stage?.status === "running"
+                              ? "active"
+                              : "pending";
 
-                        </div>
+                        return (
+                          <div
+                            className={`progress-stage ${status}`}
+                            key={stage?.id || index}
+                          >
+                            <div className="progress-stage-icon">
+                              {status === "completed" && (
+                                <span>✓</span>
+                              )}
 
-                        <div>
+                              {status === "active" && (
+                                <span className="mini-spinner" />
+                              )}
 
-                          <strong>
-                            {stage.title}
-                          </strong>
+                              {status === "pending" && (
+                                <span>{index + 1}</span>
+                              )}
+                            </div>
 
-                          {status ===
-                            "active" && (
-                            <small>
-                              {stage.message}
-                            </small>
-                          )}
+                            <div>
+                              <strong>
+                                {stage?.title || `Stage ${index + 1}`}
+                              </strong>
 
-                        </div>
-
-                      </div>
-
-                    );
-
-                  }
-                )}
-
-              </div>
+                              {status === "active" && (
+                                <small>
+                                  {stage?.message || "Processing..."}
+                                </small>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                );
+              })()}
 
             </div>
 
