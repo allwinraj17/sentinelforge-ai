@@ -34,6 +34,7 @@ const PIPELINE_STAGES = [
   { id: "understanding", title: "Repository Understanding", message: "Analyzing repository structure, languages and important files." },
   { id: "semgrep", title: "Security Detection", message: "Semgrep is scanning the repository for security vulnerabilities." },
   { id: "secret", title: "Secret Detection", message: "Checking for hardcoded secrets and sensitive credentials." },
+  { id: "dependency", title: "Dependency Vulnerability", message: "Checking repository dependencies for known vulnerabilities." },
   { id: "ml_triage", title: "ML Vulnerability Triage", message: "Classifying findings as likely vulnerabilities." },
   { id: "ml_classification", title: "ML Vulnerability Classification", message: "Predicting vulnerability categories." },
   { id: "ml_severity", title: "ML Severity Prediction", message: "Predicting finding severity." },
@@ -44,7 +45,8 @@ const PIPELINE_STAGES = [
   { id: "risk", title: "Risk Assessment", message: "Calculating deterministic security risk." },
   { id: "compliance", title: "Compliance Mapping", message: "Mapping findings to relevant OWASP categories." },
   { id: "fix", title: "AI Auto-Fix", message: "Generating secure remediation for supported findings." },
-  { id: "validation", title: "Validation Agent", message: "Checking generated remediation artifacts." },
+  { id: "validation", title: "Fix Validation", message: "Checking generated remediation artifacts." },
+  { id: "report", title: "Security Report", message: "Preparing the final security report." },
 ];
 
 // ============================================================
@@ -516,7 +518,10 @@ export default function App() {
     }
 
     setRunning(true);
-    updateProgress(0, "Uploading repository and creating a security scan job...");
+    updateProgress(
+      0,
+      "Uploading repository and starting the backend security pipeline..."
+    );
 
     try {
       const formData = new FormData();
@@ -524,10 +529,13 @@ export default function App() {
       formData.append("email", email.trim());
       formData.append("file", selectedFile);
 
-      const startResponse = await fetch(`${API_URL}/scan/start-job`, {
-        method: "POST",
-        body: formData,
-      });
+      const startResponse = await fetch(
+        `${API_URL}/scan/start`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
 
       let startData = null;
 
@@ -539,20 +547,28 @@ export default function App() {
         );
       }
 
-      if (!startResponse.ok || !startData?.success || !startData?.job_id) {
+      if (
+        !startResponse.ok ||
+        !startData?.success ||
+        !startData?.scan_id
+      ) {
         throw new Error(
           startData?.detail ||
           startData?.message ||
-          "Unable to start the security analysis job."
+          "Unable to start the security analysis."
         );
       }
 
-      const jobId = startData.job_id;
-      setScanJobId(jobId);
+      const scanId = startData.scan_id;
+      setScanJobId(scanId);
 
       const pollStatus = async () => {
         const statusResponse = await fetch(
-          `${API_URL}/scan/status/${jobId}`
+          `${API_URL}/scan/progress/${scanId}`,
+          {
+            method: "GET",
+            cache: "no-store",
+          }
         );
 
         let statusData = null;
@@ -561,26 +577,28 @@ export default function App() {
           statusData = await statusResponse.json();
         } catch {
           throw new Error(
-            `Status endpoint returned an invalid response (${statusResponse.status}).`
+            `Progress endpoint returned an invalid response (${statusResponse.status}).`
           );
         }
 
-        if (!statusResponse.ok || !statusData?.success) {
+        if (!statusResponse.ok) {
           throw new Error(
             statusData?.detail ||
             statusData?.error ||
-            "Unable to read security scan status."
+            "Unable to read security scan progress."
           );
         }
 
-        const stages = Array.isArray(statusData.stages)
+        const stages = Array.isArray(statusData?.stages)
           ? statusData.stages
           : [];
 
         setLiveStages(stages);
 
         const completedCount = stages.filter(
-          (stage) => stage?.status === "completed" || stage?.status === "skipped"
+          (stage) =>
+            stage?.status === "completed" ||
+            stage?.status === "skipped"
         ).length;
 
         const activeIndex = stages.findIndex(
@@ -601,31 +619,45 @@ export default function App() {
         setProgressStage(currentIndex);
 
         const currentStage =
-          stages[activeIndex >= 0 ? activeIndex : currentIndex];
+          stages[
+            activeIndex >= 0
+              ? activeIndex
+              : currentIndex
+          ];
 
         setProgressMessage(
           currentStage?.message ||
-          (statusData.status === "completed"
+          statusData?.message ||
+          (statusData?.status === "completed"
             ? "Security analysis completed successfully."
             : "Security agents are processing the repository...")
         );
 
-        if (statusData.status === "completed") {
+        if (statusData?.status === "completed") {
           if (progressPollRef.current) {
             clearInterval(progressPollRef.current);
             progressPollRef.current = null;
           }
 
-          if (!statusData.result?.success) {
+          const result = statusData?.data;
+
+          if (!result?.success) {
+            setRunning(false);
             throw new Error(
-              statusData.result?.message ||
+              result?.message ||
               "Autonomous analysis failed."
             );
           }
 
-          setScanData(statusData.result);
-          setProgressStage(Math.max(0, stages.length - 1));
-          setProgressMessage("Autonomous analysis completed successfully.");
+          setScanData(result);
+          setLiveStages(stages);
+          setProgressStage(
+            Math.max(0, stages.length - 1)
+          );
+          setProgressMessage(
+            "Autonomous analysis completed successfully."
+          );
+          setRunning(false);
 
           setTimeout(() => {
             setCompleted(true);
@@ -634,9 +666,9 @@ export default function App() {
           return true;
         }
 
-        if (statusData.status === "failed") {
+        if (statusData?.status === "error") {
           throw new Error(
-            statusData.error ||
+            statusData?.error ||
             "Autonomous analysis failed."
           );
         }
@@ -644,33 +676,47 @@ export default function App() {
         return false;
       };
 
-      await pollStatus();
+      const finishedImmediately =
+        await pollStatus();
 
-      if (!progressPollRef.current) {
-        progressPollRef.current = setInterval(async () => {
-          try {
-            const finished = await pollStatus();
+      if (!finishedImmediately) {
+        progressPollRef.current =
+          setInterval(async () => {
+            try {
+              const finished =
+                await pollStatus();
 
-            if (finished && progressPollRef.current) {
-              clearInterval(progressPollRef.current);
-              progressPollRef.current = null;
+              if (
+                finished &&
+                progressPollRef.current
+              ) {
+                clearInterval(
+                  progressPollRef.current
+                );
+                progressPollRef.current = null;
+              }
+            } catch (pollError) {
+              if (progressPollRef.current) {
+                clearInterval(
+                  progressPollRef.current
+                );
+                progressPollRef.current = null;
+              }
+
+              console.error(
+                "Security scan polling error:",
+                pollError
+              );
+
+              setError(
+                pollError?.message ||
+                "Unable to monitor the security analysis."
+              );
+              setProgressStage(-1);
+              setProgressMessage("");
+              setRunning(false);
             }
-          } catch (pollError) {
-            if (progressPollRef.current) {
-              clearInterval(progressPollRef.current);
-              progressPollRef.current = null;
-            }
-
-            console.error("Security scan polling error:", pollError);
-            setError(
-              pollError?.message ||
-              "Unable to monitor the security analysis."
-            );
-            setProgressStage(-1);
-            setProgressMessage("");
-            setRunning(false);
-          }
-        }, 700);
+          }, 700);
       }
 
     } catch (requestError) {
@@ -680,7 +726,9 @@ export default function App() {
       );
 
       if (progressPollRef.current) {
-        clearInterval(progressPollRef.current);
+        clearInterval(
+          progressPollRef.current
+        );
         progressPollRef.current = null;
       }
 
@@ -1246,7 +1294,7 @@ export default function App() {
     );
 
     writeText(
-      "Repository Upload → Secure Extraction → Repository Understanding → Semgrep Detection → Secret Detection → ML Security Intelligence → Risk Assessment → AI Auto-Fix → Validation → Compliance → PDF Report → Email"
+      "Repository Upload → Secure Extraction → Repository Understanding → Semgrep Detection → Secret Detection → Dependency Vulnerability → ML Triage → ML Classification → ML Severity → ML Priority → ML Code Context → ML Duplicate Similarity → ML Fix Recommendation → Risk Assessment → Compliance Mapping → AI Auto-Fix → Fix Validation → Security Report → Fixed ZIP / Email"
     );
 
     // ========================================================
@@ -2494,7 +2542,7 @@ export default function App() {
 
                     <div className="progress-meta">
                       {completedCount} of {stages.length} stages completed
-                      {scanJobId ? ` • Job ${scanJobId.slice(0, 8)}` : ""}
+                      {scanJobId ? ` • Scan ${scanJobId.slice(0, 8)}` : ""}
                     </div>
 
                     <div className="progress-list">
