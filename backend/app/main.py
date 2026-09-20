@@ -1,128 +1,66 @@
 from __future__ import annotations
 
-import asyncio
 import io
 import json
+import shutil
+import threading
 import uuid
 import zipfile
 from pathlib import Path
 from typing import Any
-from contextvars import ContextVar
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from app.agents.auto_fix_agent import generate_fix
-from app.agents.validation_agent import run_validation_agent
-
+from app.agents.compliance_agent import run_compliance_agent
+from app.agents.dependency_vulnerability_agent import (
+    run_dependency_vulnerability_agent,
+)
+from app.agents.ml_classification_agent import run_ml_classification
+from app.agents.ml_code_context_agent import run_ml_code_context
+from app.agents.ml_fix_recommendation_agent import run_ml_fix_recommendation
+from app.agents.ml_priority_agent import run_ml_priority
+from app.agents.ml_severity_agent import run_ml_severity
+from app.agents.ml_similarity_agent import run_ml_similarity
+from app.agents.ml_triage_agent import run_ml_triage
 from app.agents.repository_understanding_agent import (
     run_repository_understanding,
 )
-
-from app.agents.secret_detection_agent import (
-    run_secret_detection,
-)
-
-from app.agents.compliance_agent import (
-    run_compliance_agent,
-)
-
-from app.agents.ml_triage_agent import run_ml_triage
-from app.agents.ml_classification_agent import run_ml_classification
-from app.agents.ml_severity_agent import run_ml_severity
-from app.agents.ml_priority_agent import run_ml_priority
-from app.agents.ml_code_context_agent import run_ml_code_context
-from app.agents.ml_similarity_agent import run_ml_similarity
-from app.agents.ml_fix_recommendation_agent import run_ml_fix_recommendation
-
-from app.config import settings
+from app.agents.secret_detection_agent import run_secret_detection
+from app.agents.validation_agent import run_validation_agent
+from app.finding_id import assign_finding_id, assign_finding_ids, get_finding_id
 from app.database import Base, engine
-
-from app.risk_engine import (
-    assess_findings,
-    calculate_overall_risk,
-)
-
-from app.scanner import (
-    cleanup_temp,
-    extract_zip_to_temp,
-    run_semgrep_scan,
-)
-
-from app.services.code_context import get_code_context
+from app.risk_engine import assess_findings, calculate_overall_risk
+from app.scanner import extract_zip_to_temp, run_semgrep_scan
 
 
 # ============================================================
-# APPLICATION
+# APPLICATION CONFIGURATION
 # ============================================================
 
-APP_VERSION = "7.0.0"
+APP_VERSION = "7.2.1"
+
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024
+MAX_GROQ_FILES = 3
+MAX_SOURCE_FILE_SIZE = 10 * 1024 * 1024
+
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
-    title=(
-        "A Multi-Agent System for Automated "
-        "Software Repository Security Analysis"
-    ),
-    description=(
-        "Automated software repository security analysis "
-        "using specialized security agents, Semgrep, "
-        "risk assessment, AI-assisted remediation, "
-        "compliance mapping and validation."
-    ),
+    title="SentinelForge AI",
     version=APP_VERSION,
+    description="Multi-agent software repository security analysis backend",
 )
-
-
-# ============================================================
-# DATABASE
-# ============================================================
-
-try:
-    Base.metadata.create_all(
-        bind=engine
-    )
-except Exception as exc:
-    print(
-        f"Database initialization warning: {exc}"
-    )
-
-
-# ============================================================
-# CORS
-# ============================================================
-
-default_origins = [
-    "https://sentinelforge-ai.vercel.app",
-    "http://localhost:5173",
-    "http://localhost:3000",
-]
-
-configured_origins = getattr(
-    settings,
-    "cors_origins",
-    None,
-)
-
-if isinstance(
-    configured_origins,
-    list,
-):
-    allowed_origins = list(
-        dict.fromkeys(
-            default_origins
-            + configured_origins
-        )
-    )
-else:
-    allowed_origins = default_origins
-
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_origin_regex=(
-        r"https://sentinelforge-.*\.vercel\.app"
-    ),
+    allow_origins=[
+        "https://sentinelforge-ai.vercel.app",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -130,1896 +68,1779 @@ app.add_middleware(
 
 
 # ============================================================
-# LIMITS
+# IN-MEMORY SCAN STORAGE
 # ============================================================
 
-MAX_UPLOAD_SIZE = 50 * 1024 * 1024
+SCAN_PROGRESS: dict[str, dict[str, Any]] = {}
+SCAN_PROGRESS_LOCK = threading.Lock()
 
-# Maximum number of UNIQUE source files sent to Groq.
-MAX_AUTO_FIXES = 3
-
-MAX_SOURCE_FILE_SIZE = 10 * 1024 * 1024
-
-
-# ============================================================
-# REAL-TIME SCAN JOB STATE
-# ============================================================
-
-SCAN_JOBS: dict[str, dict[str, Any]] = {}
-
-CURRENT_SCAN_JOB = ContextVar(
-    "CURRENT_SCAN_JOB",
-    default=None,
-)
+SCAN_ARTIFACTS: dict[str, dict[str, Any]] = {}
+SCAN_ARTIFACTS_LOCK = threading.Lock()
 
 
 # ============================================================
-# HELPERS
+# GENERAL HELPERS
 # ============================================================
 
-def normalize_role(
-    role: str,
-) -> str:
-    """
-    Validate and normalize user role.
-    """
+def normalize_role(role: str | None) -> str:
+    value = (role or "student").strip().lower()
 
-    value = str(
-        role or ""
-    ).strip().lower()
-
-    if value not in {
-        "student",
-        "developer",
-    }:
-        raise ValueError(
-            "Role must be either 'student' or 'developer'."
-        )
+    if value not in {"student", "developer", "admin"}:
+        return "student"
 
     return value
 
 
-def validate_email(
-    email: str,
-) -> str:
-    """
-    Basic email validation.
-    """
+def validate_email(email: str | None) -> bool:
+    if not email:
+        return False
 
-    value = str(
-        email or ""
-    ).strip()
+    email = email.strip()
 
-    if not value:
-        raise ValueError(
-            "Email address is required."
-        )
+    if "@" not in email:
+        return False
 
-    if "@" not in value:
-        raise ValueError(
-            "Invalid email address."
-        )
+    domain = email.split("@")[-1]
 
-    return value
+    return "." in domain
 
 
-def get_finding_line(
-    finding: dict[str, Any],
-) -> int | None:
-    """
-    Safely get finding line number.
-    """
+def safe_json(value: Any) -> Any:
+    try:
+        return json.loads(json.dumps(value, default=str))
+    except Exception:
+        return str(value)
 
-    start = finding.get(
-        "start",
-        {},
-    )
 
-    if isinstance(
-        start,
-        dict,
-    ):
-        line = start.get(
-            "line"
-        )
-
-        if isinstance(
-            line,
-            int,
-        ):
-            return line
-
-        try:
-            return int(line)
-        except (
-            TypeError,
-            ValueError,
-        ):
-            pass
-
-    line = finding.get(
-        "line"
-    )
-
-    if isinstance(
-        line,
-        int,
-    ):
-        return line
+def safe_finding_copy(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
 
     try:
-        return int(line)
-    except (
-        TypeError,
-        ValueError,
-    ):
+        return json.loads(json.dumps(value, default=str))
+    except Exception:
+        return dict(value)
+
+
+def get_finding_line(finding: dict[str, Any]) -> int | None:
+    start = finding.get("start")
+
+    if isinstance(start, dict) and start.get("line") is not None:
+        value = start.get("line")
+    else:
+        value = (
+            finding.get("line")
+            or finding.get("start_line")
+        )
+
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
         return None
 
 
-def safe_finding_copy(
-    finding: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Convert finding into JSON-safe data.
-    """
-
-    try:
-        return json.loads(
-            json.dumps(
-                finding,
-                default=str,
-            )
-        )
-
-    except Exception:
-        return {
-            "check_id": finding.get(
-                "check_id",
-                "unknown",
-            ),
-            "path": finding.get(
-                "path",
-                "unknown",
-            ),
-            "start": finding.get(
-                "start",
-                {},
-            ),
-            "extra": finding.get(
-                "extra",
-                {},
-            ),
-        }
-
+# ============================================================
+# STAGE / PROGRESS HELPERS
+# ============================================================
 
 def build_stage(
     stage_id: str,
-    title: str,
-    status: str,
+    name: str,
+    status: str = "pending",
+    progress: float = 0,
     message: str = "",
-) -> dict[str, str]:
-    """
-    Build a frontend-friendly stage object and, when a scan job
-    is active, publish the same stage state to that job.
-    """
-
-    stage = {
+) -> dict[str, Any]:
+    return {
         "id": stage_id,
-        "title": title,
+        "name": name,
         "status": status,
+        "progress": progress,
         "message": message,
     }
 
-    job_id = CURRENT_SCAN_JOB.get()
 
-    if job_id:
-        job = SCAN_JOBS.get(job_id)
+def build_initial_stages() -> list[dict[str, Any]]:
+    definitions = [
+        ("repository", "Repository Upload"),
+        ("extract", "Secure Extraction"),
+        ("understanding", "Repository Understanding"),
+        ("semgrep", "Semgrep Detection"),
+        ("secret", "Secret Detection"),
+        ("dependency", "Dependency Vulnerability"),
+        ("ml_triage", "ML Vulnerability Triage"),
+        ("ml_classification", "ML Classification"),
+        ("ml_severity", "ML Severity Prediction"),
+        ("ml_priority", "ML Priority Prediction"),
+        ("ml_code_context", "ML Code Context"),
+        ("ml_similarity", "ML Duplicate Similarity"),
+        ("ml_fix_recommendation", "ML Fix Recommendation"),
+        ("risk", "Risk Assessment"),
+        ("compliance", "Compliance Mapping"),
+        ("fix", "AI Auto-Fix"),
+        ("validation", "Fix Validation"),
+        ("report", "Security Report"),
+    ]
 
-        if job is not None:
-            stages = job.get("stages", [])
+    return [
+        build_stage(stage_id, name)
+        for stage_id, name in definitions
+    ]
 
-            for index, existing_stage in enumerate(stages):
-                if existing_stage.get("id") == stage_id:
-                    stages[index] = stage
+
+def _update_progress(
+    scan_id: str,
+    *,
+    stage_id: str | None = None,
+    status: str | None = None,
+    progress: float | None = None,
+    message: str | None = None,
+    data: dict[str, Any] | None = None,
+    error: str | None = None,
+) -> None:
+    with SCAN_PROGRESS_LOCK:
+        state = SCAN_PROGRESS.get(scan_id)
+
+        if not state:
+            return
+
+        stages = state.get("stages", [])
+
+        if stage_id:
+            for stage in stages:
+                if stage.get("id") == stage_id:
+                    if status is not None:
+                        stage["status"] = status
+
+                    if progress is not None:
+                        stage["progress"] = progress
+
+                    if message is not None:
+                        stage["message"] = message
+
                     break
 
-            job["stages"] = stages
-
-    return stage
-
-
-def resolve_repository_path(
-    extract_dir: str | Path,
-    source_path: str,
-) -> Path:
-    """
-    Resolve relative or absolute Semgrep path safely.
-
-    Supports:
-
-        project/app.py
-
-    and:
-
-        /tmp/.../extracted/project/app.py
-    """
-
-    root = Path(
-        extract_dir
-    ).resolve()
-
-    raw_path = Path(
-        str(source_path)
-    )
-
-    if raw_path.is_absolute():
-        target = raw_path.resolve()
-    else:
-        target = (
-            root / raw_path
-        ).resolve()
-
-    try:
-        target.relative_to(
-            root
+        completed_count = sum(
+            1
+            for stage in stages
+            if stage.get("status") == "completed"
         )
 
-    except ValueError as exc:
-        raise ValueError(
-            "Source path is outside the extracted repository."
-        ) from exc
+        running_count = sum(
+            1
+            for stage in stages
+            if stage.get("status") == "running"
+        )
 
-    return target
+        total_count = max(len(stages), 1)
+
+        overall = (
+            completed_count
+            + (0.5 if running_count else 0)
+        ) / total_count * 100
+
+        state["progress"] = round(
+            min(overall, 100),
+            2,
+        )
+
+        if message is not None:
+            state["message"] = message
+
+        if data is not None:
+            state["data"] = safe_json(data)
+
+        if error is not None:
+            state["error"] = str(error)
+            state["status"] = "error"
 
 
-def normalize_repository_path(
-    extract_dir: str | Path,
-    source_path: str,
-) -> str:
-    """
-    Convert Semgrep absolute path into
-    repository-relative path.
-    """
-
-    root = Path(
-        extract_dir
-    ).resolve()
-
-    target = resolve_repository_path(
-        extract_dir,
-        source_path,
+def _start_stage(
+    scan_id: str,
+    stage_id: str,
+    message: str,
+) -> None:
+    _update_progress(
+        scan_id,
+        stage_id=stage_id,
+        status="running",
+        progress=0,
+        message=message,
     )
 
-    relative = target.relative_to(
-        root
+
+def _complete_stage(
+    scan_id: str,
+    stage_id: str,
+    message: str,
+    data: dict[str, Any] | None = None,
+) -> None:
+    _update_progress(
+        scan_id,
+        stage_id=stage_id,
+        status="completed",
+        progress=100,
+        message=message,
+        data=data,
     )
 
-    return relative.as_posix()
 
+def _fail_scan(
+    scan_id: str,
+    error_message: str,
+) -> None:
+    with SCAN_PROGRESS_LOCK:
+        state = SCAN_PROGRESS.get(scan_id)
+
+        if not state:
+            return
+
+        state["status"] = "error"
+        state["error"] = str(error_message)
+        state["message"] = "Security analysis failed."
+
+        for stage in state.get("stages", []):
+            if stage.get("status") == "running":
+                stage["status"] = "failed"
+                stage["progress"] = 0
+                stage["message"] = str(error_message)
+
+
+def _get_stage_snapshot(
+    scan_id: str,
+) -> list[dict[str, Any]]:
+    with SCAN_PROGRESS_LOCK:
+        state = SCAN_PROGRESS.get(scan_id)
+
+        if not state:
+            return []
+
+        return safe_json(
+            state.get("stages", [])
+        )
+
+
+# ============================================================
+# SOURCE FILE HELPERS
+# ============================================================
 
 def read_complete_source_file(
-    extract_dir: str | Path,
-    repository_path: str,
+    repository_path: Path,
+    relative_path: str,
 ) -> str:
-    """
-    Read complete source file for Auto-Fix.
-    """
-
-    target = resolve_repository_path(
-        extract_dir,
-        repository_path,
+    safe_relative = Path(
+        str(relative_path).replace("\\", "/")
     )
 
-    if not target.exists():
-        raise FileNotFoundError(
-            f"Source file not found: {repository_path}"
+    if safe_relative.is_absolute():
+        return ""
+
+    if ".." in safe_relative.parts:
+        return ""
+
+    candidate = (
+        repository_path / safe_relative
+    ).resolve()
+
+    root = repository_path.resolve()
+
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return ""
+
+    if not candidate.is_file():
+        return ""
+
+    try:
+        if candidate.stat().st_size > MAX_SOURCE_FILE_SIZE:
+            return ""
+
+        return candidate.read_text(
+            encoding="utf-8",
+            errors="replace",
         )
 
-    if not target.is_file():
-        raise ValueError(
-            f"Source path is not a file: {repository_path}"
-        )
-
-    if (
-        target.stat().st_size
-        > MAX_SOURCE_FILE_SIZE
-    ):
-        raise ValueError(
-            "Source file is too large for AI Auto-Fix."
-        )
-
-    return target.read_text(
-        encoding="utf-8",
-        errors="replace",
-    )
+    except Exception:
+        return ""
 
 
 def group_findings_by_file(
     findings: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    """
-    Group security findings by repository file.
-
-    Multiple findings in the same source file are
-    combined into one AI Auto-Fix request.
-
-    This prevents unnecessary repeated Groq calls.
-    """
-
-    groups: dict[
-        str,
-        list[dict[str, Any]]
-    ] = {}
-
-    path_order: list[str] = []
+) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {}
 
     for finding in findings:
-
-        path = str(
-            finding.get(
-                "path",
-                "",
-            )
-        ).strip()
-
-        if not path:
-            continue
-
-        normalized_path = (
-            path.replace(
-                "\\",
-                "/",
-            )
+        path = (
+            finding.get("path")
+            or finding.get("file")
+            or finding.get("filename")
+            or "unknown"
         )
 
-        key = normalized_path.lower()
+        path = str(path).replace("\\", "/")
 
-        if key not in groups:
-            groups[key] = []
-
-            path_order.append(
-                key
-            )
-
-        groups[key].append(
-            finding
-        )
-
-    grouped = []
-
-    for key in path_order:
-
-        file_findings = groups[key]
-
-        primary = safe_finding_copy(
-            file_findings[0]
-        )
-
-        primary[
-            "related_findings"
-        ] = [
-            safe_finding_copy(
-                item
-            )
-            for item in file_findings
-        ]
-
-        primary[
-            "finding_count_for_file"
-        ] = len(
-            file_findings
-        )
-
-        grouped.append(
-            primary
-        )
+        grouped.setdefault(
+            path,
+            [],
+        ).append(finding)
 
     return grouped
 
 
+# ============================================================
+# ML HELPERS
+# ============================================================
+
 def build_ml_finding(
     finding: dict[str, Any],
+    index: int,
 ) -> dict[str, Any]:
-    """
-    Convert a Semgrep finding into the common flat structure
-    expected by the ML agents.
+    extra = finding.get("extra")
 
-    The original Semgrep finding is never replaced; this is only
-    a separate ML input representation.
-    """
-
-    extra = finding.get("extra", {})
     if not isinstance(extra, dict):
         extra = {}
 
-    metadata = extra.get("metadata", {})
+    metadata = extra.get("metadata")
+
     if not isinstance(metadata, dict):
         metadata = {}
 
-    message = (
-        extra.get("message")
-        or finding.get("message")
-        or finding.get("check_id")
-        or "Security finding"
-    )
-
-    severity = (
-        extra.get("severity")
-        or metadata.get("severity")
-        or finding.get("severity")
-        or "INFO"
-    )
-
-    cwe = metadata.get("cwe", finding.get("cwe", ""))
-    if isinstance(cwe, list):
-        cwe = ", ".join(str(item) for item in cwe)
-
-    source_type = (
-        metadata.get("source")
-        or finding.get("source_type")
-        or "semgrep"
-    )
-
-    vulnerability_type = (
-        metadata.get("vulnerability_class")
-        or finding.get("vulnerability_type")
-        or "Other"
-    )
-
     return {
-        "message": str(message),
-        "finding_text": str(message),
-        "vulnerability_type": str(vulnerability_type),
-        "cwe": str(cwe),
-        "source_type": str(source_type),
-        "path": str(finding.get("path", "")),
-        "severity": str(severity),
-        "user_input": int(finding.get("user_input", 0) or 0),
-        "dangerous_api": int(finding.get("dangerous_api", 0) or 0),
-        "production_context": int(finding.get("production_context", 0) or 0),
-        "exposure": int(finding.get("exposure", 0) or 0),
-        "exploitability": int(finding.get("exploitability", 0) or 0),
+        "finding_id": get_finding_id(finding),
+        "finding_index": index,
+        "check_id": (
+            finding.get("check_id")
+            or finding.get("rule_id")
+        ),
+        "rule_id": (
+            finding.get("rule_id")
+            or finding.get("check_id")
+        ),
+        "path": (
+            finding.get("path")
+            or finding.get("file")
+        ),
+        "line": get_finding_line(finding),
+        "message": (
+            extra.get("message")
+            or finding.get("message")
+        ),
+        "severity": (
+            extra.get("severity")
+            or finding.get("severity")
+        ),
+        "cwe": (
+            metadata.get("cwe")
+            or finding.get("cwe")
+        ),
+        "owasp": (
+            metadata.get("owasp")
+            or finding.get("owasp")
+        ),
+        "source_code": finding.get(
+            "source_code",
+            "",
+        ),
+        "code_context": finding.get(
+            "code_context",
+            "",
+        ),
     }
 
 
 def build_ml_error(
-    agent_name: str,
-    model_name: str,
-    total: int,
-    error: str,
+    name: str,
+    error: Exception,
 ) -> dict[str, Any]:
-    """Build a consistent non-fatal ML agent error response."""
-
     return {
-        "agent": agent_name,
+        "agent": name,
         "success": False,
-        "model": model_name,
-        "total_findings": total,
+        "error": str(error),
         "results": [],
-        "error": error,
     }
 
 
-def clean_fix_result_for_response(
-    fix: dict[str, Any],
-) -> dict[str, Any]:
-    """
-    Keep Auto-Fix response JSON-safe.
-    """
+def _result_items(
+    result: Any,
+) -> list[dict[str, Any]]:
+    if isinstance(result, dict):
+        items = result.get("results")
 
-    return {
-        "success": bool(
-            fix.get(
-                "success",
-                False,
-            )
-        ),
-        "finding_index": fix.get(
-            "finding_index",
-            0,
-        ),
-        "original_path": fix.get(
-            "original_path",
-            "",
-        ),
-        "filename": fix.get(
-            "filename",
-            None,
-        ),
-        "fixed_code": fix.get(
-            "fixed_code",
-            None,
-        ),
-        "error": fix.get(
-            "error",
-            None,
-        ),
-    }
+        if isinstance(items, list):
+            return [
+                item
+                for item in items
+                if isinstance(item, dict)
+            ]
+
+    if isinstance(result, list):
+        return [
+            item
+            for item in result
+            if isinstance(item, dict)
+        ]
+
+    return []
 
 
-# ============================================================
-# ROOT
-# ============================================================
+def _result_map(
+    result: Any,
+) -> tuple[
+    dict[str, dict[str, Any]],
+    dict[int, dict[str, Any]],
+]:
+    by_id: dict[str, dict[str, Any]] = {}
+    by_index: dict[int, dict[str, Any]] = {}
 
-@app.get("/")
-async def root():
-
-    return {
-        "success": True,
-
-        "service": (
-            "A Multi-Agent System for Automated "
-            "Software Repository Security Analysis"
-        ),
-
-        "version": APP_VERSION,
-
-        "phase": "Phase 7 - ML Security Intelligence",
-
-        "message": (
-            "Security analysis backend is running."
-        ),
-    }
-
-
-# ============================================================
-# HEALTH
-# ============================================================
-
-@app.get("/health")
-async def health():
-
-    return {
-        "status": "ok",
-
-        "service": (
-            "sentinelforge-ai-backend"
-        ),
-
-        "environment": getattr(
-            settings,
-            "environment",
-            "development",
-        ),
-
-        "version": APP_VERSION,
-
-        "phase": "Phase 7 - ML Security Intelligence",
-    }
-
-
-# ============================================================
-# REAL-TIME SCAN JOB API
-# ============================================================
-
-@app.post("/scan/start-job")
-async def start_scan_job(
-    role: str = Form(...),
-    email: str = Form(...),
-    file: UploadFile = File(...),
-):
-    """
-    Start the existing security pipeline as a background job.
-
-    The client receives a job_id immediately and polls the status
-    endpoint. Stage status is published by the actual backend
-    pipeline, so the progress UI is not based on fixed timers.
-    """
-
-    if not file.filename:
-        raise HTTPException(
-            status_code=400,
-            detail="Repository ZIP file is required.",
+    for item in _result_items(result):
+        finding_id = (
+            item.get("finding_id")
+            or item.get("findingId")
+            or item.get("id")
         )
 
-    original_filename = Path(file.filename).name
+        if finding_id:
+            by_id[str(finding_id)] = item
 
-    if not original_filename.lower().endswith(".zip"):
-        raise HTTPException(
-            status_code=400,
-            detail="Only ZIP repository files are supported.",
-        )
+        index = item.get("finding_index")
 
-    contents = await file.read()
+        if index is not None:
+            try:
+                by_index[int(index)] = item
+            except (TypeError, ValueError):
+                pass
 
-    if not contents:
-        raise HTTPException(
-            status_code=400,
-            detail="Uploaded ZIP file is empty.",
-        )
+    return by_id, by_index
 
-    if len(contents) > MAX_UPLOAD_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail="Repository ZIP exceeds the 50 MB upload limit.",
-        )
 
-    job_id = str(uuid.uuid4())
+def _lookup_result(
+    result: Any,
+    finding: dict[str, Any],
+    fallback_index: int | None = None,
+) -> dict[str, Any] | None:
+    by_id, by_index = _result_map(result)
 
-    SCAN_JOBS[job_id] = {
-        "job_id": job_id,
-        "status": "starting",
-        "stages": [],
-        "result": None,
-        "error": None,
-    }
+    finding_id = get_finding_id(finding)
 
-    async def run_job():
-        token = CURRENT_SCAN_JOB.set(job_id)
+    if finding_id and finding_id in by_id:
+        return by_id[finding_id]
 
+    index = finding.get("finding_index")
+
+    if index is not None:
         try:
-            SCAN_JOBS[job_id]["status"] = "running"
+            if int(index) in by_index:
+                return by_index[int(index)]
+        except (TypeError, ValueError):
+            pass
 
-            background_file = UploadFile(
-                file=io.BytesIO(contents),
-                filename=original_filename,
+    if fallback_index is not None:
+        if fallback_index in by_index:
+            return by_index[fallback_index]
+
+    return None
+
+
+def attach_ml_intelligence(
+    findings: list[dict[str, Any]],
+    ml_results: dict[str, Any],
+    risk_assessments: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    risk_by_id: dict[str, dict[str, Any]] = {}
+
+    for assessment in risk_assessments:
+        if not isinstance(assessment, dict):
+            continue
+
+        finding_id = (
+            assessment.get("finding_id")
+            or assessment.get("findingId")
+            or assessment.get("id")
+        )
+
+        if finding_id:
+            risk_by_id[str(finding_id)] = assessment
+
+    output: list[dict[str, Any]] = []
+
+    for index, original in enumerate(findings):
+        finding = safe_finding_copy(original)
+
+        finding_id = get_finding_id(finding)
+
+        if not finding_id:
+            assign_finding_id(
+                finding,
+                index + 1,
             )
 
-            result = await start_autonomous_scan(
-                role=role,
-                email=email,
-                file=background_file,
+            finding_id = get_finding_id(
+                finding
             )
 
-            SCAN_JOBS[job_id]["result"] = result
-            SCAN_JOBS[job_id]["stages"] = result.get(
-                "stages",
-                SCAN_JOBS[job_id].get("stages", []),
-            )
-            SCAN_JOBS[job_id]["status"] = "completed"
+        finding["finding_index"] = index
 
-        except HTTPException as exc:
-            SCAN_JOBS[job_id]["status"] = "failed"
-            SCAN_JOBS[job_id]["error"] = str(exc.detail)
+        ml_bundle: dict[str, Any] = {}
 
-        except Exception as exc:
-            SCAN_JOBS[job_id]["status"] = "failed"
-            SCAN_JOBS[job_id]["error"] = str(exc)
+        for key, result in ml_results.items():
+            if not key.startswith("ml_"):
+                continue
 
-        finally:
-            CURRENT_SCAN_JOB.reset(token)
+            if key == "ml_similarity":
+                continue
 
-    asyncio.create_task(run_job())
-
-    return {
-        "success": True,
-        "job_id": job_id,
-        "message": "Security analysis started.",
-    }
-
-
-@app.get("/scan/status/{job_id}")
-async def get_scan_status(job_id: str):
-    """Return real-time backend stage state for a scan job."""
-
-    job = SCAN_JOBS.get(job_id)
-
-    if job is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Scan job not found.",
-        )
-
-    return {
-        "success": True,
-        "job_id": job_id,
-        "status": job.get("status"),
-        "stages": job.get("stages", []),
-        "result": job.get("result"),
-        "error": job.get("error"),
-    }
-
-
-# ============================================================
-# MASTER AUTONOMOUS SCAN - PHASE 7
-# ============================================================
-
-@app.post("/scan/start")
-async def start_autonomous_scan(
-    role: str = Form(...),
-    email: str = Form(...),
-    file: UploadFile = File(...),
-):
-    """
-    PHASE 5 AUTONOMOUS SECURITY PIPELINE
-
-        Repository ZIP
-              ↓
-        Safe Extraction
-              ↓
-        Repository Understanding Agent
-              ↓
-        Semgrep Security Detection
-              ↓
-        Secret Detection Agent
-              ↓
-        ML Security Intelligence
-        ├── Vulnerability Triage
-        ├── Vulnerability Classification
-        ├── Severity Prediction
-        ├── Priority Prediction
-        ├── Code Context Analysis
-        ├── Duplicate Similarity
-        └── Fix Recommendation
-              ↓
-        Combined Security Findings
-              ↓
-        Risk Assessment
-              ↓
-        Compliance Agent
-              ↓
-        OWASP Top 10 Mapping
-              ↓
-        AI Auto-Fix
-              ↓
-        Validation Agent
-              ↓
-        Final Results
-
-    Groq is used ONLY for AI Auto-Fix.
-
-    Multiple findings belonging to the same source
-    file are combined into one Auto-Fix request.
-
-    Maximum UNIQUE source files sent to Groq = 3.
-
-    No second Semgrep scan is performed.
-
-    Original uploaded repository is not modified.
-    """
-
-    # ========================================================
-    # VALIDATE INPUT
-    # ========================================================
-
-    try:
-
-        normalized_role = normalize_role(
-            role
-        )
-
-        normalized_email = validate_email(
-            email
-        )
-
-    except ValueError as exc:
-
-        raise HTTPException(
-            status_code=400,
-            detail=str(exc),
-        ) from exc
-
-
-    if not file.filename:
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Repository ZIP file is required."
-            ),
-        )
-
-
-    original_filename = Path(
-        file.filename
-    ).name
-
-
-    if not original_filename.lower().endswith(
-        ".zip"
-    ):
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Only ZIP repository files are supported."
-            ),
-        )
-
-
-    # ========================================================
-    # PHASE 5 PIPELINE STAGES
-    # ========================================================
-
-    stages = [
-
-        build_stage(
-            "repository",
-            "Repository Received",
-            "completed",
-            "Repository ZIP received successfully.",
-        ),
-
-        build_stage(
-            "extract",
-            "Repository Extraction",
-            "pending",
-        ),
-
-        build_stage(
-            "understanding",
-            "Repository Understanding",
-            "pending",
-        ),
-
-        build_stage(
-            "semgrep",
-            "Security Detection",
-            "pending",
-        ),
-
-        build_stage(
-            "secret",
-            "Secret Detection",
-            "pending",
-        ),
-
-        build_stage("ml_triage", "ML Vulnerability Triage", "pending"),
-        build_stage("ml_classification", "ML Vulnerability Classification", "pending"),
-        build_stage("ml_severity", "ML Severity Prediction", "pending"),
-        build_stage("ml_priority", "ML Priority Prediction", "pending"),
-        build_stage("ml_code_context", "ML Code Context Analysis", "pending"),
-        build_stage("ml_similarity", "ML Duplicate Similarity", "pending"),
-        build_stage("ml_fix_recommendation", "ML Fix Recommendation", "pending"),
-
-        build_stage(
-            "risk",
-            "Risk Assessment",
-            "pending",
-        ),
-
-        build_stage(
-            "compliance",
-            "Compliance Mapping",
-            "pending",
-        ),
-
-        build_stage(
-            "fix",
-            "AI Auto-Fix",
-            "pending",
-        ),
-
-        build_stage(
-            "validation",
-            "Validation Agent",
-            "pending",
-        ),
-    ]
-
-    job_id = CURRENT_SCAN_JOB.get()
-
-    if job_id:
-        job = SCAN_JOBS.get(job_id)
-
-        if job is not None:
-            job["stages"] = stages
-            job["status"] = "running"
-
-
-    extract_dir = None
-
-
-    # ========================================================
-    # INITIALIZE RESULTS
-    # ========================================================
-
-    repository_understanding = {
-        "agent": (
-            "Repository Understanding Agent"
-        ),
-        "success": False,
-        "total_files": 0,
-        "source_files": 0,
-        "languages": {},
-        "dependency_files": [],
-        "configuration_files": [],
-        "authentication_related_files": [],
-        "database_related_files": [],
-        "repository_structure": [],
-    }
-
-
-    secret_detection = {
-        "agent": (
-            "Secret Detection Agent"
-        ),
-        "success": False,
-        "findings_count": 0,
-        "findings": [],
-    }
-
-
-    compliance_result = {
-        "agent": "Compliance Agent",
-        "success": False,
-        "framework": "OWASP Top 10 2021",
-        "findings_mapped": 0,
-        "mappings": [],
-        "category_counts": {},
-    }
-
-
-    ml_triage_result = build_ml_error(
-        "ML Vulnerability Triage Agent",
-        "TF-IDF + Logistic Regression",
-        0,
-        "Not executed yet.",
-    )
-    ml_classification_result = build_ml_error(
-        "ML Vulnerability Classification Agent",
-        "TF-IDF + Linear SVM",
-        0,
-        "Not executed yet.",
-    )
-    ml_severity_result = build_ml_error(
-        "ML Severity Prediction Agent",
-        "TF-IDF + One-Hot Encoding + Random Forest",
-        0,
-        "Not executed yet.",
-    )
-    ml_priority_result = build_ml_error(
-        "ML Priority Prediction Agent",
-        "TF-IDF + One-Hot Encoding + Random Forest",
-        0,
-        "Not executed yet.",
-    )
-    ml_code_context_result = build_ml_error(
-        "ML Code Context Analysis Agent",
-        "TF-IDF + Linear SVM",
-        0,
-        "Not executed yet.",
-    )
-    ml_similarity_result = {
-        "agent": "ML Duplicate Vulnerability Similarity Agent",
-        "success": False,
-        "model": "TF-IDF + Cosine Similarity",
-        "total_pairs": 0,
-        "results": [],
-        "error": "Not executed yet.",
-    }
-    ml_fix_recommendation_result = build_ml_error(
-        "ML Fix Recommendation Agent",
-        "TF-IDF + Logistic Regression",
-        0,
-        "Not executed yet.",
-    )
-
-    findings = []
-
-    secret_findings = []
-
-    all_security_findings = []
-
-    risk_assessments = []
-
-    overall_risk = {}
-
-    fixes = []
-
-    validation_result = {}
-
-    successful_fixes = 0
-
-
-    try:
-
-        # ====================================================
-        # READ UPLOAD
-        # ====================================================
-
-        contents = await file.read()
-
-
-        if not contents:
-
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Uploaded ZIP file is empty."
-                ),
+            item = _lookup_result(
+                result,
+                finding,
+                index,
             )
 
+            if item:
+                copied_item = safe_finding_copy(item)
 
-        if len(contents) > MAX_UPLOAD_SIZE:
+                ml_bundle[key] = copied_item
+                finding[key] = copied_item
 
-            raise HTTPException(
-                status_code=413,
-                detail=(
-                    "Repository ZIP exceeds the "
-                    "50 MB upload limit."
-                ),
-            )
-
-
-        # ====================================================
-        # ZIP VALIDATION
-        # ====================================================
-
-        try:
-
-            with zipfile.ZipFile(
-                io.BytesIO(contents)
-            ) as archive:
-
-                if archive.testzip() is not None:
-
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            "Uploaded ZIP archive "
-                            "is corrupted."
-                        ),
-                    )
-
-        except zipfile.BadZipFile as exc:
-
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Uploaded file is not a valid ZIP archive."
-                ),
-            ) from exc
-
-
-        # ====================================================
-        # EXTRACTION
-        # ====================================================
-
-        stages[1] = build_stage(
-            "extract",
-            "Repository Extraction",
-            "running",
-            (
-                "Safely extracting repository contents."
-            ),
-        )
-
-
-        extract_dir = extract_zip_to_temp(
-            contents
-        )
-
-
-        stages[1] = build_stage(
-            "extract",
-            "Repository Extraction",
-            "completed",
-            (
-                "Repository extracted successfully."
-            ),
-        )
-
-
-        # ====================================================
-        # REPOSITORY UNDERSTANDING AGENT
-        # ====================================================
-
-        stages[2] = build_stage(
-            "understanding",
-            "Repository Understanding",
-            "running",
-            (
-                "Analyzing repository structure, "
-                "languages and important files."
-            ),
-        )
-
-
-        try:
-
-            repository_understanding = (
-                run_repository_understanding(
-                    extract_dir
+        if finding_id and finding_id in risk_by_id:
+            finding["risk_assessment"] = (
+                safe_finding_copy(
+                    risk_by_id[finding_id]
                 )
             )
 
-        except Exception as exc:
-
-            print(
-                "Repository Understanding Agent error:",
-                exc,
+            finding["official_risk"] = (
+                safe_finding_copy(
+                    risk_by_id[finding_id]
+                )
             )
 
-            repository_understanding = {
-                "agent": (
-                    "Repository Understanding Agent"
+        finding["ml_results"] = ml_bundle
+
+        output.append(finding)
+
+    return output
+
+
+def build_ml_results_summary(
+    ml_results: dict[str, Any],
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+
+    for name, result in ml_results.items():
+        if not isinstance(result, dict):
+            summary[name] = result
+            continue
+
+        items = _result_items(result)
+
+        summary[name] = {
+            "success": result.get(
+                "success",
+                True,
+            ),
+            "count": len(items),
+            "results": items,
+            "error": result.get("error"),
+        }
+
+    return summary
+
+
+# ============================================================
+# SIMILARITY HELPERS
+# ============================================================
+
+def build_similarity_pairs(
+    findings: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    pairs: list[dict[str, Any]] = []
+
+    for first_index in range(len(findings)):
+        for second_index in range(
+            first_index + 1,
+            len(findings),
+        ):
+            pairs.append(
+                {
+                    "finding_1": safe_finding_copy(
+                        findings[first_index]
+                    ),
+                    "finding_2": safe_finding_copy(
+                        findings[second_index]
+                    ),
+                    "finding_1_index": first_index,
+                    "finding_2_index": second_index,
+                }
+            )
+
+    return pairs
+
+
+def label_similarity_pairs(
+    similarity_result: Any,
+    findings: list[dict[str, Any]],
+) -> Any:
+    if not isinstance(similarity_result, dict):
+        return similarity_result
+
+    output = safe_finding_copy(
+        similarity_result
+    )
+
+    results = output.get("results")
+
+    if not isinstance(results, list):
+        return output
+
+    labeled: list[dict[str, Any]] = []
+
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+
+        row = safe_finding_copy(item)
+
+        first_index = row.get(
+            "finding_1_index"
+        )
+
+        second_index = row.get(
+            "finding_2_index"
+        )
+
+        try:
+            first_index = int(first_index)
+        except (TypeError, ValueError):
+            first_index = None
+
+        try:
+            second_index = int(second_index)
+        except (TypeError, ValueError):
+            second_index = None
+
+        if (
+            first_index is not None
+            and 0 <= first_index < len(findings)
+        ):
+            row["finding_1_id"] = (
+                get_finding_id(
+                    findings[first_index]
+                )
+            )
+
+        if (
+            second_index is not None
+            and 0 <= second_index < len(findings)
+        ):
+            row["finding_2_id"] = (
+                get_finding_id(
+                    findings[second_index]
+                )
+            )
+
+        if "similarity_probability" in row:
+            try:
+                row["similarity_percentage"] = round(
+                    float(
+                        row["similarity_probability"]
+                    ) * 100,
+                    2,
+                )
+            except (TypeError, ValueError):
+                pass
+
+        if "prediction" in row:
+            value = row["prediction"]
+
+            if isinstance(value, str):
+                row["duplicate"] = (
+                    value.strip().lower()
+                    in {
+                        "true",
+                        "1",
+                        "yes",
+                        "duplicate",
+                    }
+                )
+            else:
+                row["duplicate"] = bool(value)
+
+        labeled.append(row)
+
+    output["results"] = labeled
+
+    return output
+
+
+# ============================================================
+# FIXED ZIP HELPERS
+# ============================================================
+
+def _safe_zip_path(
+    path_value: Any,
+) -> str | None:
+    if not path_value:
+        return None
+
+    value = str(path_value).replace(
+        "\\",
+        "/",
+    ).strip()
+
+    if not value:
+        return None
+
+    path = Path(value)
+
+    if path.is_absolute():
+        return None
+
+    if ".." in path.parts:
+        return None
+
+    return str(path).replace(
+        "\\",
+        "/",
+    )
+
+
+def apply_fixes_to_zip(
+    original_zip_bytes: bytes,
+    fixes: list[dict[str, Any]],
+    report_result: dict[str, Any],
+) -> bytes:
+    output_buffer = io.BytesIO()
+
+    fixed_files: dict[str, str] = {}
+
+    for fix in fixes:
+        if not isinstance(fix, dict):
+            continue
+
+        if not fix.get("success"):
+            continue
+
+        fixed_code = fix.get("fixed_code")
+
+        if not isinstance(fixed_code, str):
+            continue
+
+        original_path = (
+            fix.get("original_path")
+            or fix.get("path")
+            or fix.get("file")
+        )
+
+        safe_path = _safe_zip_path(
+            original_path
+        )
+
+        if safe_path:
+            fixed_files[safe_path] = fixed_code
+
+    with zipfile.ZipFile(
+        io.BytesIO(original_zip_bytes),
+        "r",
+    ) as source_zip:
+
+        with zipfile.ZipFile(
+            output_buffer,
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as output_zip:
+
+            existing_names: set[str] = set()
+
+            for info in source_zip.infolist():
+                safe_name = _safe_zip_path(
+                    info.filename
+                )
+
+                if not safe_name:
+                    continue
+
+                existing_names.add(safe_name)
+
+                if info.is_dir():
+                    output_zip.writestr(
+                        info,
+                        b"",
+                    )
+                    continue
+
+                if safe_name in fixed_files:
+                    output_zip.writestr(
+                        safe_name,
+                        fixed_files[safe_name].encode(
+                            "utf-8"
+                        ),
+                    )
+                else:
+                    output_zip.writestr(
+                        info,
+                        source_zip.read(
+                            info.filename
+                        ),
+                    )
+
+            for path, content in fixed_files.items():
+                if path not in existing_names:
+                    output_zip.writestr(
+                        path,
+                        content.encode(
+                            "utf-8"
+                        ),
+                    )
+
+            manifest = {
+                "application": "SentinelForge AI",
+                "app_version": APP_VERSION,
+                "description": (
+                    "Security analysis and AI-assisted "
+                    "remediation manifest."
                 ),
-                "success": False,
-                "error": str(exc),
-                "total_files": 0,
-                "source_files": 0,
-                "languages": {},
-                "dependency_files": [],
-                "configuration_files": [],
-                "authentication_related_files": [],
-                "database_related_files": [],
-                "repository_structure": [],
+                "successful_fixes": [
+                    {
+                        "finding_id": fix.get(
+                            "finding_id"
+                        ),
+                        "original_path": fix.get(
+                            "original_path"
+                        ),
+                        "success": True,
+                        "fixed_code_length": (
+                            len(
+                                fix.get(
+                                    "fixed_code",
+                                    "",
+                                )
+                            )
+                            if isinstance(
+                                fix.get(
+                                    "fixed_code"
+                                ),
+                                str,
+                            )
+                            else 0
+                        ),
+                    }
+                    for fix in fixes
+                    if (
+                        isinstance(fix, dict)
+                        and fix.get("success")
+                    )
+                ],
+                "validation": safe_json(
+                    report_result.get(
+                        "validation",
+                        {},
+                    )
+                ),
+                "overall_risk": report_result.get(
+                    "overall_risk"
+                ),
+                "findings_count": report_result.get(
+                    "findings_count",
+                    0,
+                ),
+                "secret_count": report_result.get(
+                    "secret_count",
+                    0,
+                ),
+                "dependency_count": report_result.get(
+                    "dependency_count",
+                    0,
+                ),
             }
 
-
-        understanding_file_count = (
-            repository_understanding.get(
-                "total_files",
-                0,
+            output_zip.writestr(
+                "security-analysis-manifest.json",
+                json.dumps(
+                    manifest,
+                    indent=2,
+                    ensure_ascii=False,
+                ).encode("utf-8"),
             )
+
+    output_buffer.seek(0)
+
+    return output_buffer.getvalue()
+
+
+# ============================================================
+# MAIN SCAN PIPELINE
+# ============================================================
+
+def run_scan_pipeline(
+    scan_id: str,
+    zip_bytes: bytes,
+    filename: str,
+    role: str,
+    email: str,
+) -> None:
+
+    repository_path: Path | None = None
+
+    findings: list[dict[str, Any]] = []
+    secret_findings: list[dict[str, Any]] = []
+
+    dependency_analysis: Any = {
+        "success": True,
+        "vulnerabilities": [],
+        "count": 0,
+    }
+
+    secret_analysis: Any = {
+        "success": True,
+        "secrets": [],
+        "count": 0,
+    }
+
+    ml_results: dict[str, Any] = {}
+
+    risk_assessments: list[dict[str, Any]] = []
+
+    compliance_result: Any = {
+        "success": True,
+        "results": [],
+    }
+
+    fixes: list[dict[str, Any]] = []
+
+    validation_results: Any = {
+        "success": True,
+        "results": [],
+    }
+
+    repository_understanding: Any = {}
+
+    overall_risk = "LOW"
+
+    groq_auto_fix_attempted = False
+
+    try:
+
+        # ====================================================
+        # 1. REPOSITORY
+        # ====================================================
+
+        _start_stage(
+            scan_id,
+            "repository",
+            "Repository received and scan initialized.",
         )
 
+        _complete_stage(
+            scan_id,
+            "repository",
+            "Repository upload validated.",
+            {
+                "filename": filename,
+                "role": role,
+            },
+        )
 
-        stages[2] = build_stage(
+        # ====================================================
+        # 2. EXTRACTION
+        # ====================================================
+
+        _start_stage(
+            scan_id,
+            "extract",
+            "Securely extracting repository ZIP.",
+        )
+
+        repository_path = extract_zip_to_temp(
+            io.BytesIO(zip_bytes)
+        )
+
+        _complete_stage(
+            scan_id,
+            "extract",
+            "Repository extracted securely.",
+        )
+
+        # ====================================================
+        # 3. REPOSITORY UNDERSTANDING
+        # ====================================================
+
+        _start_stage(
+            scan_id,
             "understanding",
-            "Repository Understanding",
-            "completed",
-            (
-                f"{understanding_file_count} "
-                "repository file(s) analyzed."
-            ),
+            "Understanding repository structure.",
         )
 
+        try:
+            repository_understanding = safe_json(
+                run_repository_understanding(
+                    repository_path
+                )
+            )
+        except Exception as exc:
+            repository_understanding = {
+                "success": False,
+                "error": str(exc),
+            }
+
+        _complete_stage(
+            scan_id,
+            "understanding",
+            "Repository understanding completed.",
+            {
+                "repository_understanding":
+                    repository_understanding
+            },
+        )
 
         # ====================================================
-        # SEMGREP SECURITY DETECTION
+        # 4. SEMGREP
         # ====================================================
 
-        stages[3] = build_stage(
+        _start_stage(
+            scan_id,
             "semgrep",
-            "Security Detection",
-            "running",
-            (
-                "Semgrep is scanning the repository "
-                "for security vulnerabilities."
-            ),
+            "Running Semgrep security detection.",
         )
-
 
         raw_findings = run_semgrep_scan(
-            extract_dir
+            repository_path
         )
-
-
-        if not isinstance(
-            raw_findings,
-            list,
-        ):
-
-            raw_findings = []
-
 
         findings = []
 
-
-        # ====================================================
-        # NORMALIZE SEMGREP FINDING PATHS
-        # ====================================================
-
-        for raw_finding in raw_findings:
-
-            if not isinstance(
-                raw_finding,
-                dict,
-            ):
-                continue
-
-
+        for index, raw_finding in enumerate(
+            raw_findings or [],
+            start=1,
+        ):
             finding = safe_finding_copy(
                 raw_finding
             )
 
-
-            raw_path = str(
-                finding.get(
-                    "path",
-                    "",
-                )
-            ).strip()
-
-
-            if raw_path:
-
-                try:
-
-                    repository_path = (
-                        normalize_repository_path(
-                            extract_dir,
-                            raw_path,
-                        )
-                    )
-
-                    finding[
-                        "path"
-                    ] = repository_path
-
-                except Exception as exc:
-
-                    print(
-                        "Path normalization warning:",
-                        exc,
-                    )
-
-                    finding[
-                        "path"
-                    ] = ""
-
-
-            findings.append(
-                finding
+            path_value = (
+                finding.get("path")
+                or finding.get("file")
             )
 
-
-        # ====================================================
-        # ADD SOURCE CONTEXT
-        # ====================================================
-
-        for finding in findings:
-
-            repository_path = str(
-                finding.get(
-                    "path",
-                    "",
+            if path_value:
+                finding["path"] = str(
+                    path_value
+                ).replace(
+                    "\\",
+                    "/",
                 )
-            ).strip()
 
+            assign_finding_id(
+                finding,
+                index,
+            )
+
+            finding["finding_index"] = (
+                index - 1
+            )
 
             line = get_finding_line(
                 finding
             )
 
+            if line is not None:
+                finding["line"] = line
 
-            source_context = ""
+            if not finding.get("source_code"):
+                path_value = finding.get(
+                    "path"
+                )
 
-
-            if repository_path and line:
-
-                try:
-
-                    source_context = (
-                        get_code_context(
-                            extract_dir,
+                if path_value:
+                    finding["source_code"] = (
+                        read_complete_source_file(
                             repository_path,
-                            line,
+                            str(path_value),
                         )
                     )
 
-                except Exception as exc:
+            findings.append(finding)
 
-                    print(
-                        "Source context warning:",
-                        exc,
-                    )
-
-
-            finding[
-                "source_code"
-            ] = source_context
-
-
-        stages[3] = build_stage(
+        _complete_stage(
+            scan_id,
             "semgrep",
-            "Security Detection",
-            "completed",
             (
-                f"{len(findings)} "
-                "Semgrep security finding(s) detected."
+                "Semgrep detection completed with "
+                f"{len(findings)} finding(s)."
             ),
+            {
+                "findings_count": len(findings),
+                "findings": findings,
+            },
         )
 
-
         # ====================================================
-        # SECRET DETECTION AGENT
+        # 5. SECRET DETECTION
         # ====================================================
 
-        stages[4] = build_stage(
+        _start_stage(
+            scan_id,
             "secret",
-            "Secret Detection",
-            "running",
-            (
-                "Scanning repository files for "
-                "potential exposed secrets."
-            ),
+            "Scanning for exposed secrets and credentials.",
         )
-
 
         try:
-
-            secret_detection = (
+            secret_analysis = safe_json(
                 run_secret_detection(
-                    extract_dir
+                    repository_path
                 )
             )
-
         except Exception as exc:
-
-            print(
-                "Secret Detection Agent error:",
-                exc,
-            )
-
-            secret_detection = {
-                "agent": (
-                    "Secret Detection Agent"
-                ),
+            secret_analysis = {
                 "success": False,
-                "findings_count": 0,
-                "findings": [],
                 "error": str(exc),
+                "secrets": [],
+                "count": 0,
             }
 
-
-        secret_findings = (
-            secret_detection.get(
-                "findings",
-                [],
+        if isinstance(
+            secret_analysis,
+            dict,
+        ):
+            secret_findings = (
+                secret_analysis.get("secrets")
+                or secret_analysis.get("findings")
+                or []
             )
-        )
 
-
-        if not isinstance(
-            secret_findings,
+        elif isinstance(
+            secret_analysis,
             list,
         ):
+            secret_findings = secret_analysis
 
+        else:
             secret_findings = []
 
-
-        stages[4] = build_stage(
-            "secret",
-            "Secret Detection",
-            "completed",
-            (
-                f"{len(secret_findings)} "
-                "potential secret finding(s) detected."
-            ),
-        )
-
-
-        # ====================================================
-        # ML SECURITY INTELLIGENCE
-        # ====================================================
-        # ML receives normalized Semgrep findings only.
-        # Secret findings remain in the existing security workflow.
-
-        ml_findings = [
-            build_ml_finding(item)
-            for item in findings
+        secret_findings = [
+            safe_finding_copy(item)
+            for item in secret_findings
             if isinstance(item, dict)
         ]
 
-        # ---------------- ML TRIAGE ----------------
-        stages[5] = build_stage(
-            "ml_triage",
-            "ML Vulnerability Triage",
-            "running",
-            "Estimating whether detected findings are likely vulnerabilities.",
-        )
-        try:
-            ml_triage_result = run_ml_triage(ml_findings)
-            if not isinstance(ml_triage_result, dict):
-                ml_triage_result = build_ml_error(
-                    "ML Vulnerability Triage Agent",
-                    "TF-IDF + Logistic Regression",
-                    len(ml_findings),
-                    "Invalid ML triage response.",
-                )
-        except Exception as exc:
-            ml_triage_result = build_ml_error(
-                "ML Vulnerability Triage Agent",
-                "TF-IDF + Logistic Regression",
-                len(ml_findings),
-                str(exc),
-            )
-        stages[5] = build_stage(
-            "ml_triage",
-            "ML Vulnerability Triage",
-            "completed" if ml_triage_result.get("success") else "attention",
-            f"{len(ml_triage_result.get('results', []))} finding(s) analyzed.",
+        assign_finding_ids(
+            secret_findings,
+            start_index=len(findings) + 1,
         )
 
-        # ---------------- ML CLASSIFICATION ----------------
-        stages[6] = build_stage(
-            "ml_classification",
-            "ML Vulnerability Classification",
-            "running",
-            "Predicting the vulnerability category of detected findings.",
-        )
-        try:
-            ml_classification_result = run_ml_classification(ml_findings)
-            if not isinstance(ml_classification_result, dict):
-                ml_classification_result = build_ml_error(
-                    "ML Vulnerability Classification Agent",
-                    "TF-IDF + Linear SVM",
-                    len(ml_findings),
-                    "Invalid ML classification response.",
-                )
-        except Exception as exc:
-            ml_classification_result = build_ml_error(
-                "ML Vulnerability Classification Agent",
-                "TF-IDF + Linear SVM",
-                len(ml_findings),
-                str(exc),
-            )
-        stages[6] = build_stage(
-            "ml_classification",
-            "ML Vulnerability Classification",
-            "completed" if ml_classification_result.get("success") else "attention",
-            f"{len(ml_classification_result.get('results', []))} finding(s) classified.",
-        )
-
-        # ---------------- ML SEVERITY ----------------
-        stages[7] = build_stage(
-            "ml_severity",
-            "ML Severity Prediction",
-            "running",
-            "Predicting supporting severity labels from security context.",
-        )
-        try:
-            ml_severity_result = run_ml_severity(ml_findings)
-            if not isinstance(ml_severity_result, dict):
-                ml_severity_result = build_ml_error(
-                    "ML Severity Prediction Agent",
-                    "TF-IDF + One-Hot Encoding + Random Forest",
-                    len(ml_findings),
-                    "Invalid ML severity response.",
-                )
-        except Exception as exc:
-            ml_severity_result = build_ml_error(
-                "ML Severity Prediction Agent",
-                "TF-IDF + One-Hot Encoding + Random Forest",
-                len(ml_findings),
-                str(exc),
-            )
-        stages[7] = build_stage(
-            "ml_severity",
-            "ML Severity Prediction",
-            "completed" if ml_severity_result.get("success") else "attention",
-            f"{len(ml_severity_result.get('results', []))} finding(s) scored by the ML model.",
-        )
-
-        # ---------------- ML PRIORITY ----------------
-        stages[8] = build_stage(
-            "ml_priority",
-            "ML Priority Prediction",
-            "running",
-            "Predicting remediation investigation priority.",
-        )
-        try:
-            ml_priority_result = run_ml_priority(ml_findings)
-            if not isinstance(ml_priority_result, dict):
-                ml_priority_result = build_ml_error(
-                    "ML Priority Prediction Agent",
-                    "TF-IDF + One-Hot Encoding + Random Forest",
-                    len(ml_findings),
-                    "Invalid ML priority response.",
-                )
-        except Exception as exc:
-            ml_priority_result = build_ml_error(
-                "ML Priority Prediction Agent",
-                "TF-IDF + One-Hot Encoding + Random Forest",
-                len(ml_findings),
-                str(exc),
-            )
-        stages[8] = build_stage(
-            "ml_priority",
-            "ML Priority Prediction",
-            "completed" if ml_priority_result.get("success") else "attention",
-            f"{len(ml_priority_result.get('results', []))} finding(s) prioritized.",
-        )
-
-        # ---------------- ML CODE CONTEXT ----------------
-        stages[9] = build_stage(
-            "ml_code_context",
-            "ML Code Context Analysis",
-            "running",
-            "Analyzing the source context associated with detected findings.",
-        )
-        try:
-            ml_code_context_result = run_ml_code_context(ml_findings)
-            if not isinstance(ml_code_context_result, dict):
-                ml_code_context_result = build_ml_error(
-                    "ML Code Context Analysis Agent",
-                    "TF-IDF + Linear SVM",
-                    len(ml_findings),
-                    "Invalid ML code context response.",
-                )
-        except Exception as exc:
-            ml_code_context_result = build_ml_error(
-                "ML Code Context Analysis Agent",
-                "TF-IDF + Linear SVM",
-                len(ml_findings),
-                str(exc),
-            )
-        stages[9] = build_stage(
-            "ml_code_context",
-            "ML Code Context Analysis",
-            "completed" if ml_code_context_result.get("success") else "attention",
-            f"{len(ml_code_context_result.get('results', []))} finding(s) contextualized.",
-        )
-
-        # ---------------- ML SIMILARITY ----------------
-        stages[10] = build_stage(
-            "ml_similarity",
-            "ML Duplicate Similarity",
-            "running",
-            "Comparing findings to identify related or duplicate vulnerabilities.",
-        )
-        try:
-            similarity_pairs = []
-            for first_index in range(len(ml_findings)):
-                for second_index in range(first_index + 1, len(ml_findings)):
-                    similarity_pairs.append({
-                        "finding_1": ml_findings[first_index],
-                        "finding_2": ml_findings[second_index],
-                    })
-            ml_similarity_result = run_ml_similarity(similarity_pairs)
-            if not isinstance(ml_similarity_result, dict):
-                ml_similarity_result = {
-                    "agent": "ML Duplicate Vulnerability Similarity Agent",
-                    "success": False,
-                    "model": "TF-IDF + Cosine Similarity",
-                    "total_pairs": len(similarity_pairs),
-                    "results": [],
-                    "error": "Invalid ML similarity response.",
-                }
-        except Exception as exc:
-            ml_similarity_result = {
-                "agent": "ML Duplicate Vulnerability Similarity Agent",
-                "success": False,
-                "model": "TF-IDF + Cosine Similarity",
-                "total_pairs": 0,
-                "results": [],
-                "error": str(exc),
-            }
-        stages[10] = build_stage(
-            "ml_similarity",
-            "ML Duplicate Similarity",
-            "completed" if ml_similarity_result.get("success") else "attention",
-            f"{len(ml_similarity_result.get('results', []))} finding pair(s) compared.",
-        )
-
-        # ---------------- ML FIX RECOMMENDATION ----------------
-        stages[11] = build_stage(
-            "ml_fix_recommendation",
-            "ML Fix Recommendation",
-            "running",
-            "Recommending security remediation strategies.",
-        )
-        try:
-            ml_fix_recommendation_result = run_ml_fix_recommendation(ml_findings)
-            if not isinstance(ml_fix_recommendation_result, dict):
-                ml_fix_recommendation_result = build_ml_error(
-                    "ML Fix Recommendation Agent",
-                    "TF-IDF + Logistic Regression",
-                    len(ml_findings),
-                    "Invalid ML fix recommendation response.",
-                )
-        except Exception as exc:
-            ml_fix_recommendation_result = build_ml_error(
-                "ML Fix Recommendation Agent",
-                "TF-IDF + Logistic Regression",
-                len(ml_findings),
-                str(exc),
-            )
-        stages[11] = build_stage(
-            "ml_fix_recommendation",
-            "ML Fix Recommendation",
-            "completed" if ml_fix_recommendation_result.get("success") else "attention",
-            f"{len(ml_fix_recommendation_result.get('results', []))} remediation recommendation(s) generated.",
-        )
-
-        # ====================================================
-        # COMBINE SECURITY FINDINGS
-        # ====================================================
-
-        all_security_findings = (
-            findings
-            + secret_findings
-        )
-
-
-        # ====================================================
-        # RISK ASSESSMENT
-        # ====================================================
-
-        stages[12] = build_stage(
-            "risk",
-            "Risk Assessment",
-            "running",
-            (
-                "Calculating vulnerability severity "
-                "and overall risk."
-            ),
-        )
-
-
-        try:
-
-            risk_assessments = (
-                assess_findings(
-                    all_security_findings
-                )
-            )
-
-        except Exception as exc:
-
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Risk assessment failed: "
-                    f"{exc}"
-                ),
-            ) from exc
-
-
-        try:
-
-            overall_risk = (
-                calculate_overall_risk(
-                    risk_assessments
-                )
-            )
-
-        except Exception as exc:
-
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Overall risk calculation failed: "
-                    f"{exc}"
-                ),
-            ) from exc
-
-
-        if not isinstance(
-            risk_assessments,
-            list,
+        for index, finding in enumerate(
+            secret_findings
         ):
+            finding["finding_index"] = (
+                len(findings) + index
+            )
 
-            risk_assessments = []
-
-
-        if not isinstance(
-            overall_risk,
+        if isinstance(
+            secret_analysis,
             dict,
         ):
-
-            overall_risk = {}
-
-
-        stages[12] = build_stage(
-            "risk",
-            "Risk Assessment",
-            "completed",
-            (
-                "Risk assessment completed."
-            ),
-        )
-
-
-        # ====================================================
-        # COMPLIANCE / OWASP AGENT
-        # ====================================================
-
-        stages[13] = build_stage(
-            "compliance",
-            "Compliance Mapping",
-            "running",
-            (
-                "Mapping security findings "
-                "to OWASP Top 10 2021 categories."
-            ),
-        )
-
-
-        try:
-
-            compliance_result = (
-                run_compliance_agent(
-                    all_security_findings
-                )
+            secret_analysis["secrets"] = (
+                secret_findings
             )
 
-        except Exception as exc:
+            secret_analysis["count"] = (
+                len(secret_findings)
+            )
 
-            print(
-                "Compliance Agent error:",
+        _complete_stage(
+            scan_id,
+            "secret",
+            (
+                "Secret detection completed with "
+                f"{len(secret_findings)} finding(s)."
+            ),
+            {
+                "secret_analysis":
+                    secret_analysis
+            },
+        )
+
+        # ====================================================
+        # 6. DEPENDENCY VULNERABILITY
+        # ====================================================
+
+        _start_stage(
+            scan_id,
+            "dependency",
+            (
+                "Checking project dependencies for "
+                "known vulnerabilities."
+            ),
+        )
+
+        try:
+            dependency_analysis = safe_json(
+                run_dependency_vulnerability_agent(
+                    repository_path
+                )
+            )
+        except Exception as exc:
+            dependency_analysis = {
+                "success": False,
+                "error": str(exc),
+                "vulnerabilities": [],
+                "count": 0,
+            }
+
+        _complete_stage(
+            scan_id,
+            "dependency",
+            "Dependency vulnerability analysis completed.",
+            {
+                "dependency_analysis":
+                    dependency_analysis
+            },
+        )
+
+        # ====================================================
+        # ML INPUT
+        # ====================================================
+
+        ml_findings = [
+            build_ml_finding(
+                finding,
+                index,
+            )
+            for index, finding in enumerate(
+                findings
+            )
+        ]
+
+        # ====================================================
+        # 7. ML TRIAGE
+        # ====================================================
+
+        _start_stage(
+            scan_id,
+            "ml_triage",
+            "Running ML vulnerability triage.",
+        )
+
+        try:
+            ml_results["ml_triage"] = safe_json(
+                run_ml_triage(
+                    ml_findings
+                )
+            )
+        except Exception as exc:
+            ml_results["ml_triage"] = build_ml_error(
+                "ml_triage",
                 exc,
             )
 
-            compliance_result = {
-                "agent": "Compliance Agent",
+        _complete_stage(
+            scan_id,
+            "ml_triage",
+            "ML triage completed.",
+        )
+
+        # ====================================================
+        # 8. ML CLASSIFICATION
+        # ====================================================
+
+        _start_stage(
+            scan_id,
+            "ml_classification",
+            "Classifying vulnerability types.",
+        )
+
+        try:
+            ml_results["ml_classification"] = safe_json(
+                run_ml_classification(
+                    ml_findings
+                )
+            )
+        except Exception as exc:
+            ml_results["ml_classification"] = build_ml_error(
+                "ml_classification",
+                exc,
+            )
+
+        _complete_stage(
+            scan_id,
+            "ml_classification",
+            "ML classification completed.",
+        )
+
+        # ====================================================
+        # 9. ML SEVERITY
+        # ====================================================
+
+        _start_stage(
+            scan_id,
+            "ml_severity",
+            "Predicting vulnerability severity.",
+        )
+
+        try:
+            ml_results["ml_severity"] = safe_json(
+                run_ml_severity(
+                    ml_findings
+                )
+            )
+        except Exception as exc:
+            ml_results["ml_severity"] = build_ml_error(
+                "ml_severity",
+                exc,
+            )
+
+        _complete_stage(
+            scan_id,
+            "ml_severity",
+            "ML severity prediction completed.",
+        )
+
+        # ====================================================
+        # 10. ML PRIORITY
+        # ====================================================
+
+        _start_stage(
+            scan_id,
+            "ml_priority",
+            "Predicting remediation priority.",
+        )
+
+        try:
+            ml_results["ml_priority"] = safe_json(
+                run_ml_priority(
+                    ml_findings
+                )
+            )
+        except Exception as exc:
+            ml_results["ml_priority"] = build_ml_error(
+                "ml_priority",
+                exc,
+            )
+
+        _complete_stage(
+            scan_id,
+            "ml_priority",
+            "ML priority prediction completed.",
+        )
+
+        # ====================================================
+        # 11. ML CODE CONTEXT
+        # ====================================================
+
+        _start_stage(
+            scan_id,
+            "ml_code_context",
+            "Analyzing vulnerable code context.",
+        )
+
+        try:
+            ml_results["ml_code_context"] = safe_json(
+                run_ml_code_context(
+                    ml_findings
+                )
+            )
+        except Exception as exc:
+            ml_results["ml_code_context"] = build_ml_error(
+                "ml_code_context",
+                exc,
+            )
+
+        _complete_stage(
+            scan_id,
+            "ml_code_context",
+            "ML code-context analysis completed.",
+        )
+
+        # ====================================================
+        # 12. ML SIMILARITY
+        # ====================================================
+
+        _start_stage(
+            scan_id,
+            "ml_similarity",
+            "Checking for duplicate or similar findings.",
+        )
+
+        try:
+            similarity_pairs = build_similarity_pairs(
+                ml_findings
+            )
+
+            similarity_result = safe_json(
+                run_ml_similarity(
+                    similarity_pairs
+                )
+            )
+
+            similarity_result = label_similarity_pairs(
+                similarity_result,
+                findings,
+            )
+
+            ml_results["ml_similarity"] = (
+                similarity_result
+            )
+
+        except Exception as exc:
+            similarity_result = build_ml_error(
+                "ml_similarity",
+                exc,
+            )
+
+            ml_results["ml_similarity"] = (
+                similarity_result
+            )
+
+        _complete_stage(
+            scan_id,
+            "ml_similarity",
+            "Duplicate similarity analysis completed.",
+            {
+                "ml_similarity":
+                    similarity_result
+            },
+        )
+
+        # ====================================================
+        # 13. ML FIX RECOMMENDATION
+        # ====================================================
+
+        _start_stage(
+            scan_id,
+            "ml_fix_recommendation",
+            "Generating ML remediation recommendations.",
+        )
+
+        try:
+            ml_results[
+                "ml_fix_recommendation"
+            ] = safe_json(
+                run_ml_fix_recommendation(
+                    ml_findings
+                )
+            )
+
+        except Exception as exc:
+            ml_results[
+                "ml_fix_recommendation"
+            ] = build_ml_error(
+                "ml_fix_recommendation",
+                exc,
+            )
+
+        _complete_stage(
+            scan_id,
+            "ml_fix_recommendation",
+            "ML fix recommendations completed.",
+        )
+
+        # ====================================================
+        # 14. OFFICIAL RISK ASSESSMENT
+        # ====================================================
+
+        all_security_findings = (
+            findings + secret_findings
+        )
+
+        _start_stage(
+            scan_id,
+            "risk",
+            "Calculating official security risk.",
+        )
+
+        try:
+            risk_result = safe_json(
+                assess_risk(
+                    all_security_findings
+                )
+            )
+
+            if isinstance(
+                risk_result,
+                dict,
+            ):
+                risk_assessments = (
+                    risk_result.get(
+                        "assessments"
+                    )
+                    or risk_result.get(
+                        "risk_assessments"
+                    )
+                    or risk_result.get(
+                        "results"
+                    )
+                    or []
+                )
+
+                overall_risk = (
+                    risk_result.get(
+                        "overall_risk"
+                    )
+                    or risk_result.get(
+                        "risk_level"
+                    )
+                    or "LOW"
+                )
+
+            elif isinstance(
+                risk_result,
+                list,
+            ):
+                risk_assessments = risk_result
+                overall_risk = "LOW"
+
+        except Exception as exc:
+            risk_assessments = []
+
+            overall_risk = "LOW"
+
+            # Keep scan running rather than killing the entire
+            # repository analysis because of risk-agent failure.
+            risk_error = {
                 "success": False,
-                "framework": (
-                    "OWASP Top 10 2021"
-                ),
-                "findings_mapped": 0,
-                "mappings": [],
-                "category_counts": {},
                 "error": str(exc),
             }
 
-
-        mapped_count = (
-            compliance_result.get(
-                "findings_mapped",
-                0,
-            )
+        # Attach ML and official risk before Auto-Fix.
+        findings = attach_ml_intelligence(
+            findings,
+            ml_results,
+            risk_assessments,
         )
 
+        secret_findings = attach_ml_intelligence(
+            secret_findings,
+            {},
+            risk_assessments,
+        )
 
-        stages[13] = build_stage(
+        all_security_findings = (
+            findings + secret_findings
+        )
+
+        risk_stage_data: dict[str, Any] = {
+            "overall_risk": overall_risk,
+            "risk_assessments": risk_assessments,
+        }
+
+        if "risk_error" in locals():
+            risk_stage_data["error"] = risk_error
+
+        _complete_stage(
+            scan_id,
+            "risk",
+            (
+                "Risk assessment completed. "
+                f"Overall risk: {overall_risk}."
+            ),
+            risk_stage_data,
+        )
+
+        # ====================================================
+        # 15. COMPLIANCE
+        # ====================================================
+
+        _start_stage(
+            scan_id,
             "compliance",
-            "Compliance Mapping",
-            "completed",
-            (
-                f"{mapped_count} "
-                "finding(s) mapped to OWASP categories."
-            ),
+            "Mapping findings to security compliance references.",
         )
 
+        try:
+            try:
+                compliance_result = safe_json(
+                    run_compliance_agent(
+                        findings=all_security_findings,
+                        risk_assessments=risk_assessments,
+                    )
+                )
+            except TypeError:
+                compliance_result = safe_json(
+                    run_compliance_agent(
+                        all_security_findings,
+                        risk_assessments,
+                    )
+                )
 
-        # ====================================================
-        # GROUP FINDINGS BY SOURCE FILE
-        # ====================================================
+        except Exception as exc:
+            compliance_result = {
+                "success": False,
+                "error": str(exc),
+                "results": [],
+            }
 
-        grouped_findings = (
-            group_findings_by_file(
-                all_security_findings
-            )
+        _complete_stage(
+            scan_id,
+            "compliance",
+            "Compliance mapping completed.",
+            {
+                "compliance":
+                    compliance_result
+            },
         )
 
-
         # ====================================================
-        # GROQ AI AUTO-FIX
+        # 16. AI AUTO-FIX
         # ====================================================
 
-        stages[14] = build_stage(
+        _start_stage(
+            scan_id,
             "fix",
-            "AI Auto-Fix",
-            "running",
-            (
-                "Preparing corrected copies for "
-                "vulnerable source files."
-            ),
+            "Generating AI-assisted fixes for eligible findings.",
         )
 
+        grouped_findings = group_findings_by_file(
+            all_security_findings
+        )
 
-        fixes = []
+        eligible_files = [
+            path
+            for path in grouped_findings
+            if path and path != "unknown"
+        ][:MAX_GROQ_FILES]
 
+        if not eligible_files:
 
-        if not grouped_findings:
-
-            stages[14] = build_stage(
+            _complete_stage(
+                scan_id,
                 "fix",
-                "AI Auto-Fix",
-                "skipped",
-                (
-                    "No vulnerable source files "
-                    "require remediation."
-                ),
+                "No eligible findings were available for AI Auto-Fix.",
+                {
+                    "fixes": [],
+                    "groq_auto_fix_attempted": False,
+                },
             )
 
         else:
 
-            # =================================================
-            # MAXIMUM UNIQUE FILE LIMIT
-            # =================================================
+            for path in eligible_files:
 
-            files_to_fix = (
-                grouped_findings[
-                    :MAX_AUTO_FIXES
-                ]
-            )
+                file_findings = grouped_findings[path]
 
-
-            for index, grouped_finding in enumerate(
-                files_to_fix
-            ):
-
-                repository_path = str(
-                    grouped_finding.get(
-                        "path",
-                        "",
-                    )
-                ).strip()
-
-
-                fix_result = {
-                    "success": False,
-
-                    "finding_index": index,
-
-                    "original_path": (
-                        repository_path
-                    ),
-
-                    "filename": (
-                        Path(
-                            repository_path
-                        ).name
-                        if repository_path
-                        else None
-                    ),
-
-                    "fixed_code": None,
-
-                    "error": None,
-                }
-
-
-                # =============================================
-                # INVALID PATH
-                # =============================================
-
-                if not repository_path:
-
-                    fix_result[
-                        "error"
-                    ] = (
-                        "Finding does not contain "
-                        "a valid repository path."
-                    )
-
-                    fixes.append(
-                        clean_fix_result_for_response(
-                            fix_result
-                        )
-                    )
-
-                    continue
-
-
-                # =============================================
-                # READ COMPLETE SOURCE FILE
-                # =============================================
-
-                try:
-
-                    full_source_code = (
-                        read_complete_source_file(
-                            extract_dir,
-                            repository_path,
-                        )
-                    )
-
-                except Exception as exc:
-
-                    print(
-                        f"Source read error for "
-                        f"{repository_path}:",
-                        exc,
-                    )
-
-                    fix_result[
-                        "error"
-                    ] = str(exc)
-
-                    fixes.append(
-                        clean_fix_result_for_response(
-                            fix_result
-                        )
-                    )
-
-                    continue
-
-
-                # =============================================
-                # PREPARE VULNERABILITY DATA
-                # =============================================
-
-                vulnerability_for_ai = (
-                    safe_finding_copy(
-                        grouped_finding
-                    )
+                full_source_code = read_complete_source_file(
+                    repository_path,
+                    path,
                 )
 
+                if not full_source_code:
+
+                    fixes.append(
+                        {
+                            "success": False,
+                            "finding_id": (
+                                get_finding_id(
+                                    file_findings[0]
+                                )
+                                if file_findings
+                                else None
+                            ),
+                            "original_path": path,
+                            "error": (
+                                "Source file could not be read."
+                            ),
+                        }
+                    )
+
+                    continue
+
+                primary_finding = file_findings[0]
+
+                primary_id = get_finding_id(
+                    primary_finding
+                )
+
+                vulnerability_for_ai = safe_finding_copy(
+                    primary_finding
+                )
+
+                ml_bundle: dict[str, Any] = {}
+
+                for ml_key, ml_result in ml_results.items():
+
+                    if ml_key == "ml_similarity":
+                        continue
+
+                    item = _lookup_result(
+                        ml_result,
+                        primary_finding,
+                    )
+
+                    if item:
+                        copied_item = safe_finding_copy(
+                            item
+                        )
+
+                        vulnerability_for_ai[
+                            ml_key
+                        ] = copied_item
+
+                        ml_bundle[
+                            ml_key
+                        ] = copied_item
+
+                vulnerability_for_ai[
+                    "ml_results"
+                ] = ml_bundle
+
+                for assessment in risk_assessments:
+
+                    if not isinstance(
+                        assessment,
+                        dict,
+                    ):
+                        continue
+
+                    assessment_id = (
+                        assessment.get(
+                            "finding_id"
+                        )
+                        or assessment.get(
+                            "findingId"
+                        )
+                        or assessment.get(
+                            "id"
+                        )
+                    )
+
+                    if (
+                        primary_id
+                        and assessment_id
+                        and str(
+                            assessment_id
+                        )
+                        == str(
+                            primary_id
+                        )
+                    ):
+                        vulnerability_for_ai[
+                            "risk_assessment"
+                        ] = safe_finding_copy(
+                            assessment
+                        )
+
+                        vulnerability_for_ai[
+                            "official_risk"
+                        ] = safe_finding_copy(
+                            assessment
+                        )
+
+                        break
+
+                vulnerability_for_ai[
+                    "related_findings"
+                ] = [
+                    safe_finding_copy(item)
+                    for item in file_findings
+                ]
 
                 vulnerability_for_ai[
                     "path"
-                ] = repository_path
+                ] = path
 
+                vulnerability_for_ai[
+                    "source_code"
+                ] = full_source_code
 
-                # =============================================
-                # ONE GROQ CALL PER UNIQUE FILE
-                # =============================================
+                groq_auto_fix_attempted = True
 
                 try:
 
@@ -2032,757 +1853,745 @@ async def start_autonomous_scan(
                         ),
                     )
 
-
-                    if not isinstance(
+                    if isinstance(
                         fixed_code,
-                        str,
+                        dict,
                     ):
-
-                        raise ValueError(
-                            "AI Auto-Fix returned invalid code."
+                        fix_result = safe_finding_copy(
+                            fixed_code
                         )
+                    else:
+                        fix_result = {
+                            "success": bool(
+                                fixed_code
+                            ),
+                            "fixed_code": (
+                                fixed_code
+                                if isinstance(
+                                    fixed_code,
+                                    str,
+                                )
+                                else ""
+                            ),
+                        }
 
-
-                    fixed_code = (
-                        fixed_code.strip()
+                    fix_result.setdefault(
+                        "original_path",
+                        path,
                     )
 
-
-                    if not fixed_code:
-
-                        raise ValueError(
-                            "AI Auto-Fix returned empty code."
-                        )
-
-
-                    fix_result[
-                        "success"
-                    ] = True
-
-
-                    fix_result[
-                        "fixed_code"
-                    ] = fixed_code
-
-
-                except Exception as exc:
-
-                    print(
-                        f"Auto-Fix error for "
-                        f"{repository_path}:",
-                        exc,
+                    fix_result.setdefault(
+                        "finding_id",
+                        primary_id,
                     )
 
-                    fix_result[
-                        "error"
-                    ] = str(exc)
+                    fix_result.setdefault(
+                        "original_code",
+                        full_source_code,
+                    )
 
+                    fix_result.setdefault(
+                        "path",
+                        path,
+                    )
 
-                fixes.append(
-                    clean_fix_result_for_response(
+                    fixes.append(
                         fix_result
                     )
-                )
 
-
-            # =================================================
-            # MARK REMAINING UNIQUE FILES AS SKIPPED
-            # =================================================
-
-            if (
-                len(grouped_findings)
-                > MAX_AUTO_FIXES
-            ):
-
-                for skipped_group in (
-                    grouped_findings[
-                        MAX_AUTO_FIXES:
-                    ]
-                ):
-
-                    skipped_path = str(
-                        skipped_group.get(
-                            "path",
-                            "",
-                        )
-                    ).strip()
-
+                except Exception as exc:
 
                     fixes.append(
                         {
                             "success": False,
-
-                            "finding_index": -1,
-
-                            "original_path": (
-                                skipped_path
-                            ),
-
-                            "filename": (
-                                Path(
-                                    skipped_path
-                                ).name
-                                if skipped_path
-                                else None
-                            ),
-
-                            "fixed_code": None,
-
-                            "error": (
-                                "Auto-Fix skipped because "
-                                f"the maximum of {MAX_AUTO_FIXES} "
-                                "unique files was reached."
-                            ),
+                            "finding_id": primary_id,
+                            "original_path": path,
+                            "path": path,
+                            "error": str(exc),
                         }
                     )
 
-
-            successful_fixes = sum(
+            successful_fix_count = sum(
                 1
-                for fix in fixes
-                if fix.get(
-                    "success",
-                    False,
+                for item in fixes
+                if (
+                    isinstance(item, dict)
+                    and item.get("success")
                 )
             )
 
-
-            unavailable_fixes = (
-                len(fixes)
-                - successful_fixes
-            )
-
-
-            stages[14] = build_stage(
+            _complete_stage(
+                scan_id,
                 "fix",
-                "AI Auto-Fix",
-                "completed",
                 (
-                    f"{successful_fixes} unique file(s) "
-                    f"fixed; {unavailable_fixes} unavailable."
+                    "AI Auto-Fix completed with "
+                    f"{successful_fix_count} successful fix(es)."
                 ),
+                {
+                    "fixes": fixes,
+                    "groq_auto_fix_attempted":
+                        groq_auto_fix_attempted,
+                },
             )
 
-
         # ====================================================
-        # VALIDATION AGENT
+        # 17. VALIDATION
         # ====================================================
 
-        stages[15] = build_stage(
+        _start_stage(
+            scan_id,
             "validation",
-            "Validation Agent",
-            "running",
-            (
-                "Checking generated remediation artifacts."
-            ),
+            "Validating generated fixes.",
         )
-
 
         try:
 
-            validation_result = (
-                run_validation_agent(
-                    fixes
+            try:
+                validation_results = safe_json(
+                    run_validation_agent(
+                        repository_path=repository_path,
+                        fixes=fixes,
+                    )
                 )
-            )
+
+            except TypeError:
+                validation_results = safe_json(
+                    run_validation_agent(
+                        fixes
+                    )
+                )
 
         except Exception as exc:
 
-            print(
-                "Validation Agent error:",
-                exc,
-            )
-
-
-            validation_result = {
+            validation_results = {
                 "success": False,
-
-                "status": "attention",
-
-                "message": (
-                    "Validation Agent could not "
-                    "complete artifact checks."
-                ),
-
+                "error": str(exc),
                 "results": [],
-
-                "total_artifacts": len(
-                    fixes
-                ),
-
-                "ready_artifacts": 0,
-
-                "attention_artifacts": len(
-                    fixes
-                ),
-
-                "security_scan_performed": False,
-
-                "second_semgrep_scan": False,
-
-                "findings_modified": False,
-
-                "risk_modified": False,
-
-                "security_verified": False,
             }
 
-
-        if not isinstance(
-            validation_result,
-            dict,
-        ):
-
-            validation_result = {
-                "success": False,
-
-                "status": "attention",
-
-                "message": (
-                    "Validation Agent returned "
-                    "an invalid response."
-                ),
-
-                "results": [],
-
-                "total_artifacts": len(
-                    fixes
-                ),
-
-                "ready_artifacts": 0,
-
-                "attention_artifacts": len(
-                    fixes
-                ),
-
-                "security_scan_performed": False,
-
-                "second_semgrep_scan": False,
-
-                "findings_modified": False,
-
-                "risk_modified": False,
-
-                "security_verified": False,
-            }
-
-
-        ready_artifacts = (
-            validation_result.get(
-                "ready_artifacts",
-                0,
-            )
-        )
-
-
-        validation_status = (
-            "Validation Agent completed "
-            "remediation artifact checks."
-        )
-
-
-        stages[15] = build_stage(
+        _complete_stage(
+            scan_id,
             "validation",
-            "Validation Agent",
-            "completed",
-            (
-                f"{ready_artifacts} remediation "
-                "artifact(s) ready for output."
-            ),
+            "Fix validation completed.",
+            {
+                "validation":
+                    validation_results
+            },
         )
 
-
         # ====================================================
-        # FINAL RESPONSE
+        # 18. FINAL SECURITY REPORT
         # ====================================================
 
-        return {
+        _start_stage(
+            scan_id,
+            "report",
+            "Preparing final security report data.",
+        )
 
+        successful_fixes = sum(
+            1
+            for item in fixes
+            if (
+                isinstance(item, dict)
+                and item.get("success")
+            )
+        )
+
+        # IMPORTANT:
+        # Capture the actual completed stages instead of
+        # returning a new list containing only "pending" stages.
+        current_pipeline = _get_stage_snapshot(
+            scan_id
+        )
+
+        report_result = {
             "success": True,
-
-            "filename": original_filename,
-
-            "role": normalized_role,
-
-            "email": normalized_email,
-
-
-            # =================================================
-            # SECURITY FINDINGS
-            # =================================================
-
-            "findings_count": len(
-                all_security_findings
-            ),
-
-            "findings": (
-                all_security_findings
-            ),
-
-            "semgrep_findings_count": (
-                len(findings)
-            ),
-
-            "secret_findings_count": (
-                len(secret_findings)
-            ),
-
-
-            # =================================================
-            # PHASE 5 AGENTS
-            # =================================================
-
-            "repository_understanding": (
-                repository_understanding
-            ),
-
-            "secret_detection": (
-                secret_detection
-            ),
-
-            # =================================================
-            # ML SECURITY INTELLIGENCE
-            # =================================================
-
-            "ml_triage": ml_triage_result,
-            "ml_classification": ml_classification_result,
-            "ml_severity": ml_severity_result,
-            "ml_priority": ml_priority_result,
-            "ml_code_context": ml_code_context_result,
-            "ml_similarity": ml_similarity_result,
-            "ml_fix_recommendation": ml_fix_recommendation_result,
-
-            "compliance": (
-                compliance_result
-            ),
-
-
-            # =================================================
-            # RISK
-            # =================================================
-
-            "risk_assessments": (
-                risk_assessments
-            ),
-
-            "overall_risk": (
-                overall_risk
-            ),
-
-
-            # =================================================
-            # AI
-            # =================================================
-
-            "ai_analysis": "",
-
-            "fixes": fixes,
-
-
-            # =================================================
-            # VALIDATION
-            # =================================================
-
-            "validation": (
-                validation_result
-            ),
-
-            "validation_status": (
-                validation_status
-            ),
-
-
-            # =================================================
-            # PIPELINE
-            # =================================================
-
-            "pipeline_status": (
-                "completed"
-            ),
-
-            "stages": stages,
-
-
-            # =================================================
-            # AUTO-FIX INFORMATION
-            # =================================================
-
-            "max_auto_fixes": (
-                MAX_AUTO_FIXES
-            ),
-
-            "unique_vulnerable_files": (
-                len(grouped_findings)
-            ),
-
-            "auto_fix_files_attempted": min(
-                len(grouped_findings),
-                MAX_AUTO_FIXES,
-            ),
-
-            "auto_fix_successful": (
-                successful_fixes
-            ),
-
-
-            # =================================================
-            # GROQ INFORMATION
-            # =================================================
-
-            "groq_used_for_report": False,
-
-            "groq_used_for_auto_fix": True,
-
-
-            # =================================================
-            # SECURITY / PRIVACY
-            # =================================================
-
-            "second_scan_after_fix": False,
-
-            "original_repository_modified": False,
-
-
-            # =================================================
-            # MESSAGE
-            # =================================================
+            "status": "completed",
 
             "message": (
-                "Autonomous Phase 7 repository security analysis completed."
+                "Security analysis completed successfully."
             ),
-        }
-
-
-    except HTTPException:
-
-        raise
-
-
-    except Exception as exc:
-
-        print(
-            "Autonomous scan error:",
-            exc,
-        )
-
-
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Autonomous security analysis failed: "
-                f"{exc}"
-            ),
-        ) from exc
-
-
-    finally:
-
-        # ====================================================
-        # CLEAN TEMPORARY FILES
-        # ====================================================
-
-        if extract_dir:
-
-            try:
-
-                cleanup_temp(
-                    extract_dir
-                )
-
-            except Exception as exc:
-
-                print(
-                    "Cleanup warning:",
-                    exc,
-                )
-
-
-# ============================================================
-# LEGACY SCAN ENDPOINT
-# ============================================================
-
-@app.post("/scan/upload")
-async def upload_and_scan(
-    file: UploadFile = File(...),
-):
-
-    if not file.filename:
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Repository ZIP file is required."
-            ),
-        )
-
-
-    filename = Path(
-        file.filename
-    ).name
-
-
-    if not filename.lower().endswith(
-        ".zip"
-    ):
-
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Only ZIP repository files are supported."
-            ),
-        )
-
-
-    extract_dir = None
-
-
-    try:
-
-        contents = await file.read()
-
-
-        if not contents:
-
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Uploaded ZIP file is empty."
-                ),
-            )
-
-
-        if len(contents) > MAX_UPLOAD_SIZE:
-
-            raise HTTPException(
-                status_code=413,
-                detail=(
-                    "Repository ZIP exceeds the "
-                    "50 MB upload limit."
-                ),
-            )
-
-
-        extract_dir = extract_zip_to_temp(
-            contents
-        )
-
-
-        raw_findings = run_semgrep_scan(
-            extract_dir
-        )
-
-
-        if not isinstance(
-            raw_findings,
-            list,
-        ):
-
-            raw_findings = []
-
-
-        findings = []
-
-
-        for raw_finding in raw_findings:
-
-            if not isinstance(
-                raw_finding,
-                dict,
-            ):
-
-                continue
-
-
-            current = safe_finding_copy(
-                raw_finding
-            )
-
-
-            raw_path = str(
-                current.get(
-                    "path",
-                    "",
-                )
-            ).strip()
-
-
-            if raw_path:
-
-                try:
-
-                    current[
-                        "path"
-                    ] = normalize_repository_path(
-                        extract_dir,
-                        raw_path,
-                    )
-
-                except Exception:
-
-                    current[
-                        "path"
-                    ] = ""
-
-
-            findings.append(
-                current
-            )
-
-
-        risk_assessments = (
-            assess_findings(
-                findings
-            )
-        )
-
-
-        overall_risk = (
-            calculate_overall_risk(
-                risk_assessments
-            )
-        )
-
-
-        return {
-
-            "success": True,
 
             "filename": filename,
+            "role": role,
+            "email": email,
 
-            "findings_count": len(
-                findings
+            "repository_understanding":
+                repository_understanding,
+
+            "findings_count":
+                len(findings),
+
+            "secret_count":
+                len(secret_findings),
+
+            "dependency_count": (
+                dependency_analysis.get(
+                    "count",
+                    0,
+                )
+                if isinstance(
+                    dependency_analysis,
+                    dict,
+                )
+                else 0
             ),
 
-            "findings": findings,
+            "overall_risk":
+                overall_risk,
 
-            "risk_assessments": (
-                risk_assessments
-            ),
+            "findings":
+                findings,
 
-            "overall_risk": (
-                overall_risk
-            ),
+            "secrets":
+                secret_findings,
+
+            "secret_analysis":
+                secret_analysis,
+
+            "dependency_analysis":
+                dependency_analysis,
+
+            "ml_results":
+                build_ml_results_summary(
+                    ml_results
+                ),
+
+            "risk_assessments":
+                risk_assessments,
+
+            "compliance":
+                compliance_result,
+
+            "fixes":
+                fixes,
+
+            "successful_fixes":
+                successful_fixes,
+
+            "validation":
+                validation_results,
+
+            "groq_auto_fix_attempted":
+                groq_auto_fix_attempted,
+
+            "pipeline":
+                current_pipeline,
+
+            "app_version":
+                APP_VERSION,
         }
 
+        # Mark report stage as completed and put the final
+        # report into the progress object.
+        _complete_stage(
+            scan_id,
+            "report",
+            "Security report is ready.",
+            report_result,
+        )
 
-    except HTTPException:
+        # Refresh pipeline after report completion.
+        report_result["pipeline"] = (
+            _get_stage_snapshot(
+                scan_id
+            )
+        )
 
-        raise
+        # ====================================================
+        # STORE DOWNLOAD ARTIFACT
+        # ====================================================
 
+        with SCAN_ARTIFACTS_LOCK:
+            SCAN_ARTIFACTS[scan_id] = {
+                "original_zip":
+                    zip_bytes,
+
+                "report":
+                    safe_json(
+                        report_result
+                    ),
+
+                "fixes":
+                    safe_json(
+                        fixes
+                    ),
+            }
+
+        # ====================================================
+        # FINAL STATE
+        # ====================================================
+
+        with SCAN_PROGRESS_LOCK:
+
+            state = SCAN_PROGRESS.get(
+                scan_id
+            )
+
+            if state:
+
+                state["status"] = "completed"
+
+                state["progress"] = 100
+
+                state["message"] = (
+                    "Security analysis completed successfully."
+                )
+
+                state["error"] = None
+
+                state["data"] = safe_json(
+                    report_result
+                )
+
+                # Ensure final pipeline shown by frontend
+                # contains actual completed statuses.
+                state["stages"] = safe_json(
+                    report_result["pipeline"]
+                )
 
     except Exception as exc:
 
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "Repository scan failed: "
-                f"{exc}"
-            ),
-        ) from exc
-
+        _fail_scan(
+            scan_id,
+            str(exc),
+        )
 
     finally:
 
-        if extract_dir:
+        if repository_path:
 
             try:
-
-                cleanup_temp(
-                    extract_dir
+                shutil.rmtree(
+                    repository_path,
+                    ignore_errors=True,
                 )
-
             except Exception:
-
                 pass
 
 
 # ============================================================
-# PHASE 5 INFORMATION
+# BASIC API
 # ============================================================
 
-@app.get("/phase5")
-async def phase5_info():
+@app.get("/")
+def root() -> dict[str, Any]:
+    return {
+        "success": True,
+        "name": "SentinelForge AI",
+        "version": APP_VERSION,
+        "message": (
+            "Multi-agent repository security "
+            "analysis API is running."
+        ),
+    }
+
+
+@app.get("/health")
+def health() -> dict[str, Any]:
+    return {
+        "success": True,
+        "status": "healthy",
+        "version": APP_VERSION,
+    }
+
+
+# ============================================================
+# START ASYNC SCAN
+# ============================================================
+
+@app.post("/scan/start")
+async def start_scan(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    role: str = Form("student"),
+    email: str = Form(""),
+) -> dict[str, Any]:
+
+    normalized_role = normalize_role(
+        role
+    )
+
+    if not email or not validate_email(
+        email
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "A valid email address is required."
+            ),
+        )
+
+    filename = (
+        file.filename
+        or "repository.zip"
+    )
+
+    if not filename.lower().endswith(
+        ".zip"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Please upload a ZIP repository."
+            ),
+        )
+
+    zip_bytes = await file.read()
+
+    if not zip_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded ZIP is empty.",
+        )
+
+    if len(zip_bytes) > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                "ZIP exceeds the "
+                f"{MAX_UPLOAD_SIZE // (1024 * 1024)} MB "
+                "upload limit."
+            ),
+        )
+
+    # Validate ZIP before starting background processing.
+    try:
+
+        with zipfile.ZipFile(
+            io.BytesIO(zip_bytes)
+        ) as archive:
+
+            bad_file = archive.testzip()
+
+            if bad_file:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Corrupted ZIP entry detected: "
+                        f"{bad_file}"
+                    ),
+                )
+
+    except zipfile.BadZipFile:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "The uploaded file is not a valid ZIP."
+            ),
+        )
+
+    scan_id = uuid.uuid4().hex
+
+    with SCAN_PROGRESS_LOCK:
+
+        SCAN_PROGRESS[scan_id] = {
+            "scan_id": scan_id,
+            "status": "queued",
+            "progress": 0,
+            "message": "Scan queued.",
+            "stages":
+                build_initial_stages(),
+            "data": None,
+            "error": None,
+        }
+
+    # IMPORTANT:
+    # This is the only async scan architecture used by
+    # the current App.jsx.
+    background_tasks.add_task(
+        run_scan_pipeline,
+        scan_id,
+        zip_bytes,
+        filename,
+        normalized_role,
+        email.strip(),
+    )
 
     return {
-
         "success": True,
-
-        "title": (
-            "A Multi-Agent System for Automated "
-            "Software Repository Security Analysis"
+        "scan_id": scan_id,
+        "status": "queued",
+        "message": (
+            "Security analysis started."
         ),
-
-        "version": APP_VERSION,
-
-        "phase": "Phase 7 - ML Security Intelligence",
+    }
 
 
-        "architecture": [
+# ============================================================
+# SCAN PROGRESS
+# ============================================================
 
-            "Repository Upload",
+@app.get("/scan/progress/{scan_id}")
+def get_scan_progress(
+    scan_id: str,
+) -> dict[str, Any]:
 
-            "Safe ZIP Extraction",
+    with SCAN_PROGRESS_LOCK:
 
-            "Repository Understanding Agent",
+        state = SCAN_PROGRESS.get(
+            scan_id
+        )
 
-            "Semgrep Security Detection",
+        if not state:
 
-            "Secret Detection Agent",
+            raise HTTPException(
+                status_code=404,
+                detail="Scan not found.",
+            )
 
-            "Combined Security Findings",
-
-            "Risk Assessment",
-
-            "Compliance Agent - OWASP Top 10",
-
-            "AI Auto-Fix",
-
-            "Validation Agent",
-
-            "Role-Based Reporting",
-
-            "Automatic Email Delivery",
-
-            "Manual Security Report Download",
-
-            "Manual Fixed Repository Download",
-        ],
+        return safe_json(state)
 
 
-        "agents": {
+# ============================================================
+# DOWNLOAD FIXED REPOSITORY
+# ============================================================
 
-            "repository_understanding": True,
+@app.get("/scan/download-fixed/{scan_id}")
+def download_fixed_repository(
+    scan_id: str,
+) -> StreamingResponse:
 
-            "secret_detection": True,
+    with SCAN_ARTIFACTS_LOCK:
 
-            "compliance_mapping": True,
+        artifact = SCAN_ARTIFACTS.get(
+            scan_id
+        )
 
-            "risk_assessment": True,
+    if not artifact:
 
-            "ai_auto_fix": True,
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Fixed repository is not available. "
+                "Run a scan first and wait for completion."
+            ),
+        )
 
-            "validation": True,
-            "ml_triage": True,
-            "ml_classification": True,
-            "ml_severity": True,
-            "ml_priority": True,
-            "ml_code_context": True,
-            "ml_similarity": True,
-            "ml_fix_recommendation": True,
+    original_zip = artifact.get(
+        "original_zip"
+    )
+
+    fixes = artifact.get(
+        "fixes",
+        [],
+    )
+
+    report = artifact.get(
+        "report",
+        {},
+    )
+
+    if not isinstance(
+        original_zip,
+        bytes,
+    ):
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Original repository artifact is unavailable."
+            ),
+        )
+
+    try:
+
+        fixed_zip = apply_fixes_to_zip(
+            original_zip_bytes=original_zip,
+            fixes=(
+                fixes
+                if isinstance(
+                    fixes,
+                    list,
+                )
+                else []
+            ),
+            report_result=(
+                report
+                if isinstance(
+                    report,
+                    dict,
+                )
+                else {}
+            ),
+        )
+
+    except Exception as exc:
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Could not create fixed repository ZIP: "
+                f"{exc}"
+            ),
+        )
+
+    base_name = "repository"
+
+    original_filename = (
+        report.get("filename")
+        if isinstance(
+            report,
+            dict,
+        )
+        else None
+    )
+
+    if original_filename:
+
+        base_name = Path(
+            str(original_filename)
+        ).stem
+
+    download_name = (
+        f"{base_name}_fixed.zip"
+    )
+
+    return StreamingResponse(
+        io.BytesIO(fixed_zip),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="{download_name}"'
+            )
         },
+    )
 
 
-        "groq_used_for_report": False,
+# ============================================================
+# MANIFEST
+# ============================================================
 
-        "groq_used_for_auto_fix": True,
+@app.get("/scan/manifest/{scan_id}")
+def get_scan_manifest(
+    scan_id: str,
+) -> dict[str, Any]:
 
-        "max_unique_files_for_auto_fix": (
-            MAX_AUTO_FIXES
-        ),
+    with SCAN_ARTIFACTS_LOCK:
 
-        "second_scan_after_fix": False,
+        artifact = SCAN_ARTIFACTS.get(
+            scan_id
+        )
 
-        "original_repository_modified": False,
+    if not artifact:
+
+        raise HTTPException(
+            status_code=404,
+            detail="Scan artifact not found.",
+        )
+
+    report = artifact.get(
+        "report",
+        {},
+    )
+
+    fixes = artifact.get(
+        "fixes",
+        [],
+    )
+
+    if not isinstance(
+        report,
+        dict,
+    ):
+        report = {}
+
+    successful_fixes: list[dict[str, Any]] = []
+
+    if isinstance(
+        fixes,
+        list,
+    ):
+
+        for fix in fixes:
+
+            if (
+                isinstance(
+                    fix,
+                    dict,
+                )
+                and fix.get("success")
+            ):
+
+                successful_fixes.append(
+                    {
+                        "finding_id":
+                            fix.get(
+                                "finding_id"
+                            ),
+
+                        "original_path":
+                            fix.get(
+                                "original_path"
+                            ),
+
+                        "success":
+                            True,
+
+                        "fixed_code_length":
+                            (
+                                len(
+                                    fix.get(
+                                        "fixed_code",
+                                        "",
+                                    )
+                                )
+                                if isinstance(
+                                    fix.get(
+                                        "fixed_code"
+                                    ),
+                                    str,
+                                )
+                                else 0
+                            ),
+                    }
+                )
+
+    return {
+        "application":
+            "SentinelForge AI",
+
+        "app_version":
+            APP_VERSION,
+
+        "scan_id":
+            scan_id,
+
+        "overall_risk":
+            report.get(
+                "overall_risk"
+            ),
+
+        "findings_count":
+            report.get(
+                "findings_count",
+                0,
+            ),
+
+        "secret_count":
+            report.get(
+                "secret_count",
+                0,
+            ),
+
+        "dependency_count":
+            report.get(
+                "dependency_count",
+                0,
+            ),
+
+        "successful_fixes":
+            successful_fixes,
+
+        "validation":
+            safe_json(
+                report.get(
+                    "validation",
+                    {},
+                )
+            ),
     }
 
 
@@ -2790,63 +2599,209 @@ async def phase5_info():
 # BACKWARD COMPATIBILITY
 # ============================================================
 
-@app.get("/phase4")
-async def phase4_info():
+@app.post("/scan/upload")
+async def legacy_scan_upload(
+    file: UploadFile = File(...),
+    role: str = Form("student"),
+    email: str = Form(""),
+) -> dict[str, Any]:
 
-    return {
+    normalized_role = normalize_role(
+        role
+    )
 
-        "success": True,
+    if not email or not validate_email(
+        email
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "A valid email address is required."
+            ),
+        )
 
-        "message": (
-            "Phase 4 architecture is preserved "
-            "inside the Phase 7 implementation."
-        ),
+    filename = (
+        file.filename
+        or "repository.zip"
+    )
 
-        "current_phase": "Phase 7 - ML Security Intelligence",
+    if not filename.lower().endswith(
+        ".zip"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Please upload a ZIP repository."
+            ),
+        )
 
-        "phase4_core_pipeline": [
+    zip_bytes = await file.read()
 
-            "Repository Upload",
+    if not zip_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded ZIP is empty.",
+        )
 
-            "Safe ZIP Extraction",
+    if len(zip_bytes) > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                "ZIP exceeds the upload limit."
+            ),
+        )
 
-            "Semgrep Security Detection",
+    scan_id = uuid.uuid4().hex
 
-            "Risk Assessment",
+    with SCAN_PROGRESS_LOCK:
 
-            "AI Auto-Fix",
+        SCAN_PROGRESS[scan_id] = {
+            "scan_id": scan_id,
+            "status": "running",
+            "progress": 0,
+            "message":
+                "Security analysis started.",
+            "stages":
+                build_initial_stages(),
+            "data": None,
+            "error": None,
+        }
 
-            "Validation Agent",
+    run_scan_pipeline(
+        scan_id,
+        zip_bytes,
+        filename,
+        normalized_role,
+        email.strip(),
+    )
 
-            "Role-Based Reporting",
+    with SCAN_PROGRESS_LOCK:
 
-            "Automatic Email Delivery",
+        result = SCAN_PROGRESS.get(
+            scan_id
+        )
 
-            "Manual Security Report Download",
+    if not result:
 
-            "Manual Fixed Repository Download",
-        ],
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Scan result was lost."
+            ),
+        )
 
-        "phase5_additions": [
+    if result.get("status") == "error":
 
-            "Repository Understanding Agent",
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                result.get("error")
+                or "Security analysis failed."
+            ),
+        )
 
-            "Secret Detection Agent",
+    return result.get(
+        "data"
+    ) or {}
 
-            "Compliance Agent",
 
-            "OWASP Top 10 Mapping",
-        ],
+# ============================================================
+# PHASE 5 COMPATIBILITY
+# ============================================================
 
-        "groq_used_for_report": False,
+@app.post("/phase5")
+async def phase5_compatibility(
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
 
-        "groq_used_for_auto_fix": True,
+    filename = (
+        file.filename
+        or "repository.zip"
+    )
 
-        "max_unique_files_for_auto_fix": (
-            MAX_AUTO_FIXES
-        ),
+    zip_bytes = await file.read()
 
-        "second_scan_after_fix": False,
+    if not filename.lower().endswith(
+        ".zip"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Please upload a ZIP repository."
+            ),
+        )
 
-        "original_repository_modified": False,
-    }
+    if not zip_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail="Uploaded ZIP is empty.",
+        )
+
+    if len(zip_bytes) > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                "ZIP exceeds the upload limit."
+            ),
+        )
+
+    scan_id = uuid.uuid4().hex
+
+    with SCAN_PROGRESS_LOCK:
+
+        SCAN_PROGRESS[scan_id] = {
+            "scan_id": scan_id,
+            "status": "running",
+            "progress": 0,
+            "message":
+                "Compatibility scan started.",
+            "stages":
+                build_initial_stages(),
+            "data": None,
+            "error": None,
+        }
+
+    run_scan_pipeline(
+        scan_id,
+        zip_bytes,
+        filename,
+        "student",
+        "compatibility@example.com",
+    )
+
+    with SCAN_PROGRESS_LOCK:
+
+        result = SCAN_PROGRESS.get(
+            scan_id
+        )
+
+    if not result:
+        return {}
+
+    if result.get("status") == "error":
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                result.get("error")
+                or "Compatibility scan failed."
+            ),
+        )
+
+    return (
+        result.get("data")
+        or {}
+    )
+
+
+# ============================================================
+# PHASE 4 COMPATIBILITY
+# ============================================================
+
+@app.post("/phase4")
+async def phase4_compatibility(
+    file: UploadFile = File(...),
+) -> dict[str, Any]:
+
+    return await phase5_compatibility(
+        file
+    )
