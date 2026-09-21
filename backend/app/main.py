@@ -2463,9 +2463,93 @@ def run_scan_pipeline(
                 dependency_analysis,
 
             "ml_results":
-                build_ml_results_summary(
-                    ml_results
-                ),
+    build_ml_results_summary(
+        ml_results
+    ),
+
+"ml_triage":
+    safe_json(
+        ml_results.get(
+            "ml_triage",
+            {
+                "success": False,
+                "results": [],
+                "error": "ML triage output unavailable.",
+            },
+        )
+    ),
+
+"ml_classification":
+    safe_json(
+        ml_results.get(
+            "ml_classification",
+            {
+                "success": False,
+                "results": [],
+                "error": "ML classification output unavailable.",
+            },
+        )
+    ),
+
+"ml_severity":
+    safe_json(
+        ml_results.get(
+            "ml_severity",
+            {
+                "success": False,
+                "results": [],
+                "error": "ML severity output unavailable.",
+            },
+        )
+    ),
+
+"ml_priority":
+    safe_json(
+        ml_results.get(
+            "ml_priority",
+            {
+                "success": False,
+                "results": [],
+                "error": "ML priority output unavailable.",
+            },
+        )
+    ),
+
+"ml_code_context":
+    safe_json(
+        ml_results.get(
+            "ml_code_context",
+            {
+                "success": False,
+                "results": [],
+                "error": "ML code-context output unavailable.",
+            },
+        )
+    ),
+
+"ml_similarity":
+    safe_json(
+        ml_results.get(
+            "ml_similarity",
+            {
+                "success": False,
+                "results": [],
+                "error": "ML similarity output unavailable.",
+            },
+        )
+    ),
+
+"ml_fix_recommendation":
+    safe_json(
+        ml_results.get(
+            "ml_fix_recommendation",
+            {
+                "success": False,
+                "results": [],
+                "error": "ML fix-recommendation output unavailable.",
+            },
+        )
+    ),
 
             "risk_assessments":
                 risk_assessments,
