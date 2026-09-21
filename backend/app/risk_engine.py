@@ -109,9 +109,25 @@ def identify_vulnerability(finding: Dict[str, Any]) -> str:
         return "eval"
 
     # Also inspect the Semgrep message
-    message = finding.get("extra", {}).get(
-        "message",
-        ""
+    extra = finding.get(
+        "extra",
+        {},
+    )
+
+    if not isinstance(
+        extra,
+        dict,
+    ):
+        extra = {}
+
+    message = (
+        finding.get("message")
+        or extra.get("message")
+        or ""
+    )
+
+    message = str(
+        message
     ).lower()
 
     if "sql injection" in message:
@@ -135,23 +151,47 @@ def identify_vulnerability(finding: Dict[str, Any]) -> str:
 
 def normalize_severity(finding: Dict[str, Any]) -> str:
     """
-    Convert Semgrep severity into SentinelForge severity.
+    Normalize Semgrep, secret-detection, dependency and other
+    severities into the official SentinelForge severity scale.
     """
 
-    extra = finding.get("extra", {})
+    extra = finding.get(
+        "extra",
+        {},
+    )
 
-    severity = extra.get("severity")
+    if not isinstance(
+        extra,
+        dict,
+    ):
+        extra = {}
 
-    if not severity:
-        severity = extra.get(
-            "metadata",
-            {}
-        ).get("severity")
+    metadata = extra.get(
+        "metadata",
+        {},
+    )
+
+    if not isinstance(
+        metadata,
+        dict,
+    ):
+        metadata = {}
+
+    # Prefer the finding's top-level severity because
+    # Secret Detection and other non-Semgrep agents may
+    # provide severity there rather than inside extra.
+    severity = (
+        finding.get("severity")
+        or extra.get("severity")
+        or metadata.get("severity")
+    )
 
     if not severity:
         return "MEDIUM"
 
-    severity = severity.upper()
+    severity = str(
+        severity
+    ).upper().strip()
 
     if severity == "ERROR":
         return "HIGH"
@@ -359,10 +399,23 @@ def assess_finding(
         "line": finding.get("start", {}).get(
             "line"
         ),
-        "cwe": finding.get("extra", {}).get(
-            "metadata",
-            {}
-        ).get("cwe"),
+        "cwe": (
+            finding.get("cwe")
+            or (
+                finding.get(
+                    "extra",
+                    {},
+                ).get(
+                    "metadata",
+                    {},
+                ).get("cwe")
+                if isinstance(
+                    finding.get("extra", {}),
+                    dict,
+                )
+                else None
+            )
+        ),
     }
 
 

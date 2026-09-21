@@ -43,6 +43,7 @@ APP_VERSION = "7.2.1"
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024
 MAX_GROQ_FILES = 3
 MAX_SOURCE_FILE_SIZE = 10 * 1024 * 1024
+DUPLICATE_SIMILARITY_THRESHOLD = 0.75
 
 Base.metadata.create_all(bind=engine)
 
@@ -320,7 +321,46 @@ def _get_stage_snapshot(
 # ============================================================
 # SOURCE FILE HELPERS
 # ============================================================
+def normalize_repository_path(
+    repository_path: Path,
+    file_path: str,
+) -> str:
+    if not file_path:
+        return ""
 
+    raw_path = Path(
+        str(file_path).replace("\\", "/")
+    )
+
+    root = repository_path.resolve()
+
+    try:
+        if raw_path.is_absolute():
+            resolved = raw_path.resolve()
+
+            try:
+                return resolved.relative_to(
+                    root
+                ).as_posix()
+            except ValueError:
+                return ""
+
+        candidate = (
+            repository_path / raw_path
+        ).resolve()
+
+        try:
+            return candidate.relative_to(
+                root
+            ).as_posix()
+        except ValueError:
+            return raw_path.as_posix()
+
+    except Exception:
+        return str(file_path).replace(
+            "\\",
+            "/",
+        )
 def read_complete_source_file(
     repository_path: Path,
     relative_path: str,
@@ -393,6 +433,7 @@ def build_ml_finding(
     finding: dict[str, Any],
     index: int,
 ) -> dict[str, Any]:
+
     extra = finding.get("extra")
 
     if not isinstance(extra, dict):
@@ -403,48 +444,170 @@ def build_ml_finding(
     if not isinstance(metadata, dict):
         metadata = {}
 
+    message = (
+        extra.get("message")
+        or finding.get("message")
+        or ""
+    )
+
+    path = (
+        finding.get("path")
+        or finding.get("file")
+        or ""
+    )
+
+    cwe = (
+        metadata.get("cwe")
+        or finding.get("cwe")
+        or ""
+    )
+
+    vulnerability_type = (
+        finding.get("vulnerability_type")
+        or metadata.get("vulnerability_class")
+        or finding.get("check_id")
+        or finding.get("rule_id")
+        or "Other"
+    )
+
+    source_text = str(
+        finding.get("source_code", "")
+    ).lower()
+
+    message_lower = str(
+        message
+    ).lower()
+
+    combined = (
+        message_lower
+        + " "
+        + source_text
+    )
+
+    user_input = int(
+        any(
+            term in combined
+            for term in [
+                "user input",
+                "request.",
+                "request[",
+                "input(",
+                "query parameter",
+                "form data",
+            ]
+        )
+    )
+
+    dangerous_api = int(
+        any(
+            term in combined
+            for term in [
+                "eval(",
+                "exec(",
+                "system(",
+                "popen(",
+                "subprocess",
+                "shell=true",
+            ]
+        )
+    )
+
+    production_context = int(
+        any(
+            term in combined
+            for term in [
+                "production",
+                "debug=true",
+                "debug = true",
+            ]
+        )
+    )
+
+    file_extension = (
+        Path(str(path)).suffix
+        if path
+        else ""
+    )
+
     return {
-        "finding_id": get_finding_id(finding),
+        "finding_id": get_finding_id(
+            finding
+        ),
+
         "finding_index": index,
+
         "check_id": (
             finding.get("check_id")
             or finding.get("rule_id")
         ),
+
         "rule_id": (
             finding.get("rule_id")
             or finding.get("check_id")
         ),
-        "path": (
-            finding.get("path")
-            or finding.get("file")
+
+        "path": path,
+
+        "file_extension": file_extension,
+
+        "line": get_finding_line(
+            finding
         ),
-        "line": get_finding_line(finding),
-        "message": (
-            extra.get("message")
-            or finding.get("message")
-        ),
+
+        "message": message,
+
+        "finding_text": message,
+
         "severity": (
-            extra.get("severity")
-            or finding.get("severity")
+            finding.get("severity")
+            or extra.get("severity")
         ),
-        "cwe": (
-            metadata.get("cwe")
-            or finding.get("cwe")
-        ),
+
+        "vulnerability_type":
+            str(vulnerability_type),
+
+        "cwe": cwe,
+
         "owasp": (
             metadata.get("owasp")
             or finding.get("owasp")
         ),
+
+        "source_type": (
+            finding.get("source_type")
+            or "semgrep"
+        ),
+
+        "user_input": user_input,
+
+        "dangerous_api": dangerous_api,
+
+        "production_context": production_context,
+
+        "exposure": int(
+            finding.get(
+                "exposure",
+                0,
+            )
+        ),
+
+        "exploitability": int(
+            finding.get(
+                "exploitability",
+                0,
+            )
+        ),
+
         "source_code": finding.get(
             "source_code",
             "",
         ),
+
         "code_context": finding.get(
             "code_context",
             "",
         ),
     }
-
 
 def build_ml_error(
     name: str,
@@ -536,6 +699,14 @@ def _lookup_result(
         if fallback_index in by_index:
             return by_index[fallback_index]
 
+        items = _result_items(result)
+
+        if 0 <= fallback_index < len(items):
+            candidate = items[fallback_index]
+
+            if isinstance(candidate, dict):
+                return candidate
+
     return None
 
 
@@ -576,7 +747,8 @@ def attach_ml_intelligence(
                 finding
             )
 
-        finding["finding_index"] = index
+        if finding.get("finding_index") is None:
+            finding["finding_index"] = index
 
         ml_bundle: dict[str, Any] = {}
 
@@ -747,11 +919,21 @@ def label_similarity_pairs(
             except (TypeError, ValueError):
                 pass
 
+        probability = None
+
+        if "similarity_probability" in row:
+            try:
+                probability = float(
+                    row["similarity_probability"]
+                )
+            except (TypeError, ValueError):
+                probability = None
+
         if "prediction" in row:
             value = row["prediction"]
 
             if isinstance(value, str):
-                row["duplicate"] = (
+                predicted_duplicate = (
                     value.strip().lower()
                     in {
                         "true",
@@ -761,7 +943,19 @@ def label_similarity_pairs(
                     }
                 )
             else:
-                row["duplicate"] = bool(value)
+                predicted_duplicate = bool(value)
+
+            row["duplicate"] = bool(
+                predicted_duplicate
+                and probability is not None
+                and probability >= DUPLICATE_SIMILARITY_THRESHOLD
+            )
+
+            row["duplicate_status"] = (
+                "Likely Duplicate"
+                if row["duplicate"]
+                else "Not Confirmed"
+            )
 
         labeled.append(row)
 
@@ -968,7 +1162,6 @@ def apply_fixes_to_zip(
 # ============================================================
 # MAIN SCAN PIPELINE
 # ============================================================
-
 def run_scan_pipeline(
     scan_id: str,
     zip_bytes: bytes,
@@ -981,6 +1174,7 @@ def run_scan_pipeline(
 
     findings: list[dict[str, Any]] = []
     secret_findings: list[dict[str, Any]] = []
+    dependency_findings: list[dict[str, Any]] = []
 
     dependency_analysis: Any = {
         "success": True,
@@ -1118,11 +1312,9 @@ def run_scan_pipeline(
             )
 
             if path_value:
-                finding["path"] = str(
-                    path_value
-                ).replace(
-                    "\\",
-                    "/",
+                finding["path"] = normalize_repository_path(
+                    repository_path,
+                    str(path_value),
                 )
 
             assign_finding_id(
@@ -1218,6 +1410,26 @@ def run_scan_pipeline(
             if isinstance(item, dict)
         ]
 
+        for secret_finding in secret_findings:
+            extra = secret_finding.get("extra")
+
+            if not isinstance(extra, dict):
+                extra = {}
+
+            severity = (
+                secret_finding.get("severity")
+                or extra.get("severity")
+                or "HIGH"
+            )
+
+            severity = str(
+                severity
+            ).upper().strip()
+
+            secret_finding["severity"] = severity
+            extra["severity"] = severity
+            secret_finding["extra"] = extra
+
         assign_finding_ids(
             secret_findings,
             start_index=len(findings) + 1,
@@ -1282,13 +1494,175 @@ def run_scan_pipeline(
                 "count": 0,
             }
 
+        dependency_findings = []
+
+        if isinstance(
+            dependency_analysis,
+            dict,
+        ):
+            raw_dependency_findings = (
+                dependency_analysis.get(
+                    "vulnerabilities"
+                )
+                or []
+            )
+
+            for dependency_item in raw_dependency_findings:
+
+                if not isinstance(
+                    dependency_item,
+                    dict,
+                ):
+                    continue
+
+                severity = str(
+                    dependency_item.get(
+                        "severity",
+                        "MEDIUM",
+                    )
+                ).upper().strip()
+
+                if severity not in {
+                    "CRITICAL",
+                    "HIGH",
+                    "MEDIUM",
+                    "LOW",
+                    "INFO",
+                }:
+                    severity = "MEDIUM"
+
+                dependency_finding = {
+                    "source_type": "dependency",
+
+                    "dependency_name":
+                        dependency_item.get(
+                            "dependency_name"
+                        ) or dependency_item.get(
+                            "package_name"
+                        ),
+
+                    "dependency_version":
+                        dependency_item.get(
+                            "dependency_version"
+                        ) or dependency_item.get(
+                            "version"
+                        ),
+
+                    "ecosystem":
+                        dependency_item.get(
+                            "ecosystem"
+                        ),
+
+                    "path":
+                        dependency_item.get(
+                            "source_file"
+                        )
+                        or dependency_item.get(
+                            "path"
+                        )
+                        or dependency_item.get(
+                            "manifest"
+                        )
+                        or "dependency",
+
+                    "line": None,
+
+                    "message":
+                        dependency_item.get(
+                            "summary"
+                        )
+                        or dependency_item.get(
+                            "message"
+                        )
+                        or dependency_item.get(
+                            "details"
+                        )
+                        or "Dependency vulnerability detected.",
+
+                    "severity": severity,
+
+                    "vulnerability_type":
+                        "Dependency Vulnerability",
+
+                    "cwe": (
+                        dependency_item.get("cwe")
+                        or ""
+                    ),
+
+                    "owasp": (
+                        dependency_item.get("owasp")
+                        or ""
+                    ),
+
+                    "extra": {
+                        "severity": severity,
+                        "message": (
+                            dependency_item.get(
+                                "summary"
+                            )
+                            or dependency_item.get(
+                                "message"
+                            )
+                            or dependency_item.get(
+                                "details"
+                            )
+                            or "Dependency vulnerability detected."
+                        ),
+                        "metadata": {},
+                    },
+
+                    "dependency_vulnerability":
+                        dependency_item,
+                }
+
+                dependency_findings.append(
+                    dependency_finding
+                )
+
+        assign_finding_ids(
+            dependency_findings,
+            start_index=(
+                len(findings)
+                + len(secret_findings)
+                + 1
+            ),
+        )
+
+        for dependency_index, finding in enumerate(
+            dependency_findings
+        ):
+            finding["finding_index"] = (
+                len(findings)
+                + len(secret_findings)
+                + dependency_index
+            )
+
+        if isinstance(
+            dependency_analysis,
+            dict,
+        ):
+            dependency_analysis["vulnerabilities"] = (
+                dependency_findings
+            )
+            dependency_analysis["count"] = (
+                len(dependency_findings)
+            )
+            dependency_analysis[
+                "total_vulnerabilities"
+            ] = len(dependency_findings)
+
         _complete_stage(
             scan_id,
             "dependency",
-            "Dependency vulnerability analysis completed.",
+            (
+                "Dependency vulnerability analysis completed with "
+                f"{len(dependency_findings)} finding(s)."
+            ),
             {
                 "dependency_analysis":
-                    dependency_analysis
+                    dependency_analysis,
+                "dependency_findings":
+                    dependency_findings,
             },
         )
 
@@ -1534,7 +1908,9 @@ def run_scan_pipeline(
         # ====================================================
 
         all_security_findings = (
-            findings + secret_findings
+            findings
+            + secret_findings
+            + dependency_findings
         )
 
         _start_stage(
@@ -1543,54 +1919,73 @@ def run_scan_pipeline(
             "Calculating official security risk.",
         )
 
+        overall_risk_result: dict[str, Any] = {}
+        risk_error: dict[str, Any] | None = None
+
         try:
-            risk_result = safe_json(
-                assess_risk(
+            risk_assessments = safe_json(
+                assess_findings(
                     all_security_findings
                 )
             )
 
-            if isinstance(
-                risk_result,
-                dict,
-            ):
-                risk_assessments = (
-                    risk_result.get(
-                        "assessments"
-                    )
-                    or risk_result.get(
-                        "risk_assessments"
-                    )
-                    or risk_result.get(
-                        "results"
-                    )
-                    or []
-                )
-
-                overall_risk = (
-                    risk_result.get(
-                        "overall_risk"
-                    )
-                    or risk_result.get(
-                        "risk_level"
-                    )
-                    or "LOW"
-                )
-
-            elif isinstance(
-                risk_result,
+            if not isinstance(
+                risk_assessments,
                 list,
             ):
-                risk_assessments = risk_result
-                overall_risk = "LOW"
+                risk_assessments = []
+
+            for risk_index, assessment in enumerate(
+                risk_assessments
+            ):
+                if (
+                    not isinstance(
+                        assessment,
+                        dict,
+                    )
+                    or risk_index >= len(
+                        all_security_findings
+                    )
+                ):
+                    continue
+
+                source_finding = (
+                    all_security_findings[
+                        risk_index
+                    ]
+                )
+
+                assessment["finding_id"] = (
+                    get_finding_id(
+                        source_finding
+                    )
+                )
+
+                assessment["finding_index"] = (
+                    risk_index
+                )
+
+            overall_risk_result = safe_json(
+                calculate_overall_risk(
+                    risk_assessments
+                )
+            )
+
+            overall_risk = (
+                overall_risk_result.get(
+                    "overall_level",
+                    "LOW"
+                )
+                if isinstance(overall_risk_result, dict)
+                else "LOW"
+            )
 
         except Exception as exc:
             risk_assessments = []
+            overall_risk = "UNKNOWN"
 
-            overall_risk = "LOW"
-
-            # Keep scan running rather than killing the entire
-            # repository analysis because of risk-agent failure.
+            # Keep the scan running but expose the risk failure
+            # explicitly instead of reporting a false LOW risk.
             risk_error = {
                 "success": False,
                 "error": str(exc),
@@ -1609,16 +2004,26 @@ def run_scan_pipeline(
             risk_assessments,
         )
 
-        all_security_findings = (
-            findings + secret_findings
+        dependency_findings = attach_ml_intelligence(
+            dependency_findings,
+            {},
+            risk_assessments,
         )
 
-        risk_stage_data: dict[str, Any] = {
+        all_security_findings = (
+            findings
+            + secret_findings
+            + dependency_findings
+        )
+
+        risk_stage_data = {
             "overall_risk": overall_risk,
             "risk_assessments": risk_assessments,
+            "overall_risk_summary":
+                overall_risk_result,
         }
 
-        if "risk_error" in locals():
+        if risk_error is not None:
             risk_stage_data["error"] = risk_error
 
         _complete_stage(
@@ -1684,8 +2089,14 @@ def run_scan_pipeline(
             "Generating AI-assisted fixes for eligible findings.",
         )
 
+        fixable_findings = [
+            finding
+            for finding in all_security_findings
+            if finding.get("source_type") != "dependency"
+        ]
+
         grouped_findings = group_findings_by_file(
-            all_security_findings
+            fixable_findings
         )
 
         eligible_files = [
@@ -2017,22 +2428,16 @@ def run_scan_pipeline(
                 repository_understanding,
 
             "findings_count":
+                len(all_security_findings),
+
+            "semgrep_findings_count":
                 len(findings),
 
             "secret_count":
                 len(secret_findings),
 
-            "dependency_count": (
-                dependency_analysis.get(
-                    "count",
-                    0,
-                )
-                if isinstance(
-                    dependency_analysis,
-                    dict,
-                )
-                else 0
-            ),
+            "dependency_count":
+                len(dependency_findings),
 
             "overall_risk":
                 overall_risk,
@@ -2042,6 +2447,12 @@ def run_scan_pipeline(
 
             "secrets":
                 secret_findings,
+
+            "dependency_findings":
+                dependency_findings,
+
+            "all_security_findings":
+                all_security_findings,
 
             "secret_analysis":
                 secret_analysis,
@@ -2575,7 +2986,21 @@ def get_scan_manifest(
         "dependency_count":
             report.get(
                 "dependency_count",
-                0,
+                report.get(
+                    "dependency_analysis",
+                    {},
+                ).get(
+                    "total_vulnerabilities",
+                    0,
+                )
+                if isinstance(
+                    report.get(
+                        "dependency_analysis",
+                        {},
+                    ),
+                    dict,
+                )
+                else 0,
             ),
 
         "successful_fixes":
