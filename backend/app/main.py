@@ -1242,7 +1242,9 @@ def run_scan_pipeline(
             "Securely extracting repository ZIP.",
         )
 
-        repository_path = extract_zip_to_temp(zip_bytes)
+        repository_path = Path(
+    extract_zip_to_temp(zip_bytes)
+).resolve()
 
         _complete_stage(
             scan_id,
