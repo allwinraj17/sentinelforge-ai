@@ -18,7 +18,7 @@ groq==0.37.0
 resend==2.42.0
 
 semgrep==1.173.0
-scikit-learn
+scikit-learn==1.7.2
 pandas
 numpy
 joblib

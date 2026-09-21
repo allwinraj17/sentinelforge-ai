@@ -342,33 +342,48 @@ def run_ml_fix_recommendation(findings):
             )
 
             results.append({
-                "message": finding.get(
-                    "message",
-                    finding.get(
-                        "finding_text",
-                        ""
-                    )
-                ),
+    "finding_id": finding.get(
+        "finding_id"
+    ),
 
-                "vulnerability_type": finding.get(
-                    "vulnerability_type",
-                    ""
-                ),
+    "finding_index": finding.get(
+        "finding_index"
+    ),
 
-                "cwe": finding.get(
-                    "cwe",
-                    ""
-                ),
+    "check_id": finding.get(
+        "check_id"
+    ),
 
-                "path": finding.get(
-                    "path",
-                    ""
-                ),
+    "rule_id": finding.get(
+        "rule_id"
+    ),
 
-                "ml_fix_recommendation":
-                    recommendation
-            })
+    "message": finding.get(
+        "message",
+        finding.get(
+            "finding_text",
+            ""
+        )
+    ),
 
+    "vulnerability_type": finding.get(
+        "vulnerability_type",
+        ""
+    ),
+
+    "cwe": finding.get(
+        "cwe",
+        ""
+    ),
+
+    "path": finding.get(
+        "path",
+        ""
+    ),
+
+    "ml_fix_recommendation":
+        recommendation,
+})
         return {
             "agent":
                 "ML Fix Recommendation Agent",
