@@ -228,7 +228,7 @@ function getSafeRepositoryName(name) {
  *  2. A finding_id match inside the raw scanData.<key>.results array.
  *  3. A finding_index match inside that same array (fallback only).
  */
-function function getMlDataForFinding(scanData, finding, key, index) {
+function getMlDataForFinding(scanData, finding, key, index) {
   // ------------------------------------------------------------
   // Helper: the backend may return either:
   //
