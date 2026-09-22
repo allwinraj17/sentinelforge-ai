@@ -34,7 +34,11 @@ const PIPELINE_STAGES = [
   { id: "understanding", title: "Repository Understanding", message: "Analyzing repository structure, languages and important files." },
   { id: "semgrep", title: "Semgrep Detection", message: "Semgrep is scanning the repository for security vulnerabilities." },
   { id: "secret", title: "Secret Detection", message: "Checking for hardcoded secrets and sensitive credentials." },
-  { id: "dependency", title: "Dependency Vulnerability", message: "Checking repository dependencies for known vulnerabilities." },
+  {
+  id: "dependency",
+  title: "Dependency Analysis",
+  message: "Analyzing repository dependencies separately from source-code findings."
+},
   { id: "ml_triage", title: "ML Vulnerability Triage", message: "Classifying findings as likely vulnerabilities." },
   { id: "ml_classification", title: "ML Classification", message: "Predicting vulnerability categories." },
   { id: "ml_severity", title: "ML Severity Prediction", message: "Predicting finding severity." },
@@ -164,14 +168,14 @@ function getRiskLevel(overallRisk, riskAssessments) {
   const score = Number(overallRisk?.score ?? overallRisk?.overall_score);
 
   if (!Number.isNaN(score)) {
-    if (score >= 9) return "CRITICAL";
-    if (score >= 7) return "HIGH";
-    if (score >= 4) return "MEDIUM";
-    if (score > 0) return "LOW";
+  if (score >= 10) return "CRITICAL";
+  if (score >= 8) return "HIGH";
+  if (score >= 5) return "MEDIUM";
+  if (score >= 2.5) return "LOW";
+  if (score > 0) return "INFO";
 
-    return "SECURE";
-  }
-
+  return "SECURE";
+}
   return "N/A";
 }
 
@@ -938,7 +942,7 @@ export default function App() {
     // DEPENDENCIES
     // ========================================================
 
-    writeText("Vulnerable Dependencies", { fontSize: 14, bold: true });
+    writeText("Dependency Analysis", { fontSize: 14, bold: true });
 
     if (reportDependencies.length === 0) {
 
@@ -1996,10 +2000,9 @@ export default function App() {
               </div>
 
               <div className="stat-card">
-                <span>DEPENDENCIES</span>
-                <strong>{dependencies.length}</strong>
-              </div>
-
+  <span>DEPENDENCY ISSUES</span>
+  <strong>{dependencies.length}</strong>
+</div>
               <div className="stat-card">
                 <span>RISK LEVEL</span>
                 <strong>{riskLevel}</strong>
@@ -2502,8 +2505,8 @@ export default function App() {
 
               <div className="section-heading">
                 <div>
-                  <span>DEPENDENCY VULNERABILITIES</span>
-                  <h3>Known vulnerable packages</h3>
+                  <span>DEPENDENCY ANALYSIS</span>
+<h3>Known vulnerable packages</h3>
                 </div>
               </div>
 
