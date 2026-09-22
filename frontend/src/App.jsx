@@ -228,39 +228,105 @@ function getSafeRepositoryName(name) {
  *  2. A finding_id match inside the raw scanData.<key>.results array.
  *  3. A finding_index match inside that same array (fallback only).
  */
-function getMlDataForFinding(scanData, finding, key, index) {
+function function getMlDataForFinding(scanData, finding, key, index) {
+  // ------------------------------------------------------------
+  // Helper: the backend may return either:
+  //
+  // 1. Direct ML payload:
+  //    {
+  //      predicted_type: "SQL Injection"
+  //    }
+  //
+  // 2. Full finding containing the ML payload:
+  //    {
+  //      finding_id: "F001",
+  //      finding_index: 0,
+  //      ml_classification: {
+  //        predicted_type: "SQL Injection"
+  //      }
+  //    }
+  //
+  // Normalize both formats to the actual ML payload.
+  // ------------------------------------------------------------
+  function unwrapMlResult(value) {
+    if (!value || typeof value !== "object") {
+      return null;
+    }
+
+    // Backend currently returns the complete finding object
+    // inside finding[key].
+    if (
+      value[key] &&
+      typeof value[key] === "object" &&
+      !Array.isArray(value[key])
+    ) {
+      return value[key];
+    }
+
+    // Already-normalized ML result.
+    return value;
+  }
+
+  // ------------------------------------------------------------
+  // 1. Prefer the ML result already attached directly to the
+  //    finding by the backend.
+  // ------------------------------------------------------------
   if (finding?.[key]) {
-    return finding[key];
+    return unwrapMlResult(finding[key]);
   }
 
+  // ------------------------------------------------------------
+  // 2. Check finding.ml_results[key].
+  // ------------------------------------------------------------
   if (finding?.ml_results?.[key]) {
-    return finding.ml_results[key];
+    return unwrapMlResult(finding.ml_results[key]);
   }
 
-  const bucket = scanData?.ml_results?.[key] ?? scanData?.[key];
-  const results = Array.isArray(bucket?.results) ? bucket.results : [];
+  // ------------------------------------------------------------
+  // 3. Check the raw top-level scan response.
+  // ------------------------------------------------------------
+  const bucket =
+    scanData?.ml_results?.[key] ??
+    scanData?.[key];
+
+  const results = Array.isArray(bucket?.results)
+    ? bucket.results
+    : [];
 
   const findingId = getFindingId(finding, index);
 
+  // ------------------------------------------------------------
+  // 4. Match by stable finding ID.
+  // ------------------------------------------------------------
   const byId = results.find(
     (item) =>
       item &&
-      (item.finding_id === findingId ||
+      (
+        item.finding_id === findingId ||
         item.findingId === findingId ||
-        item.id === findingId)
+        item.id === findingId
+      )
   );
 
   if (byId) {
-    return byId;
+    return unwrapMlResult(byId);
   }
 
+  // ------------------------------------------------------------
+  // 5. Fallback to finding index.
+  // ------------------------------------------------------------
   const byIndex = results.find(
-    (item) => item && Number(item.finding_index) === index
+    (item) =>
+      item &&
+      Number(item.finding_index) === index
   );
 
-  return byIndex || null;
-}
+  if (byIndex) {
+    return unwrapMlResult(byIndex);
+  }
 
+  return null;
+}
 function formatMlConfidence(value) {
   const number = Number(value);
 
